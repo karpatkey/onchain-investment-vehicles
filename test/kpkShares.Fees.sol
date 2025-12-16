@@ -1,0 +1,998 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./kpkShares.TestBase.sol";
+import "./constants.sol";
+import "forge-std/console.sol";
+import "test/mocks/tokens.sol";
+
+/// @notice Tests for kpkShares fee functionality
+contract kpkSharesFeesTest is kpkSharesTestBase {
+    function setUp() public virtual override {
+        super.setUp();
+    }
+
+    // ============================================================================
+    // Fee Rate Management Tests
+    // ============================================================================
+
+    function testSetManagementRate() public {
+        uint256 newRate = 200; // 2% in basis points
+
+        vm.prank(admin);
+        kpkSharesContract.setManagementFeeRate(newRate);
+
+        assertEq(kpkSharesContract.managementFeeRate(), newRate);
+    }
+
+    function testSetManagementRateMaxLimit() public {
+        uint256 maxRate = kpkSharesContract.MAX_FEE_RATE(); // 10% in basis points (new maximum)
+
+        vm.prank(admin);
+        kpkSharesContract.setManagementFeeRate(maxRate);
+
+        assertEq(kpkSharesContract.managementFeeRate(), maxRate);
+    }
+
+    function testSetManagementRateExceedsMaxLimit() public {
+        uint256 exceedRate = kpkSharesContract.MAX_FEE_RATE() + 1; // 10.01% in basis points (exceeds new maximum)
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setManagementFeeRate(exceedRate);
+    }
+
+    function testSetManagementRateUnauthorized() public {
+        uint256 newRate = 200;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.setManagementFeeRate(newRate);
+    }
+
+    function testSetManagementRateZero() public {
+        vm.prank(admin);
+        kpkSharesContract.setManagementFeeRate(0);
+        assertEq(kpkSharesContract.managementFeeRate(), 0);
+    }
+
+    function testSetRedeemFeePct() public {
+        uint256 newRate = 100; // 1% in basis points
+
+        vm.prank(admin);
+        kpkSharesContract.setRedemptionFeeRate(newRate);
+
+        assertEq(kpkSharesContract.redemptionFeeRate(), newRate);
+    }
+
+    function testSetRedeemFeePctMaxLimit() public {
+        uint256 maxRate = kpkSharesContract.MAX_FEE_RATE(); // 10% in basis points (new maximum)
+
+        vm.prank(admin);
+        kpkSharesContract.setRedemptionFeeRate(maxRate);
+
+        assertEq(kpkSharesContract.redemptionFeeRate(), maxRate);
+    }
+
+    function testSetRedeemFeePctExceedsMaxLimit() public {
+        uint256 exceedRate = kpkSharesContract.MAX_FEE_RATE() + 1; // 10.01% in basis points (exceeds new maximum)
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setRedemptionFeeRate(exceedRate);
+    }
+
+    function testSetRedeemFeePctUnauthorized() public {
+        uint256 newRate = 100;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.setRedemptionFeeRate(newRate);
+    }
+
+    function testSetRedeemFeePctZero() public {
+        vm.prank(admin);
+        kpkSharesContract.setRedemptionFeeRate(1); // Set to non-zero first
+        vm.prank(admin);
+        kpkSharesContract.setRedemptionFeeRate(0);
+        assertEq(kpkSharesContract.redemptionFeeRate(), 0);
+    }
+
+    function testSetPerfFeePct() public {
+        uint256 newRate = 500; // 5% in basis points
+
+        vm.prank(admin);
+        kpkSharesContract.setPerformanceFeeRate(newRate, address(usdc));
+
+        assertEq(kpkSharesContract.performanceFeeRate(), newRate);
+    }
+
+    function testSetPerfFeePctMaxLimit() public {
+        uint256 maxRate = kpkSharesContract.MAX_FEE_RATE(); // 20% in basis points (new maximum)
+
+        vm.prank(admin);
+        kpkSharesContract.setPerformanceFeeRate(maxRate, address(usdc));
+
+        assertEq(kpkSharesContract.performanceFeeRate(), maxRate);
+    }
+
+    function testSetPerfFeePctExceedsMaxLimit() public {
+        uint256 exceedRate = kpkSharesContract.MAX_FEE_RATE() + 1; // 20.01% in basis points (exceeds new maximum)
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setPerformanceFeeRate(exceedRate, address(usdc));
+    }
+
+    function testSetPerfFeePctUnauthorized() public {
+        uint256 newRate = 500;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.setPerformanceFeeRate(newRate, address(usdc));
+    }
+
+    function testSetPerfFeePctZero() public {
+        vm.prank(admin);
+        kpkSharesContract.setPerformanceFeeRate(1, address(usdc)); // Set to non-zero first
+        vm.prank(admin);
+        kpkSharesContract.setPerformanceFeeRate(0, address(usdc));
+        assertEq(kpkSharesContract.performanceFeeRate(), 0);
+    }
+
+    function testSetFeeReceiver() public {
+        address newFeeReceiver = bob;
+
+        vm.prank(admin);
+        kpkSharesContract.setFeeReceiver(newFeeReceiver);
+
+        assertEq(kpkSharesContract.feeReceiver(), newFeeReceiver);
+    }
+
+    function testSetFeeReceiverUnauthorized() public {
+        address newFeeReceiver = bob;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.setFeeReceiver(newFeeReceiver);
+    }
+
+    function testSetFeeReceiverZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.setFeeReceiver(address(0));
+    }
+
+    function testSetPerfFeeModule() public {
+        address newPerfFeeModule = bob;
+
+        vm.prank(admin);
+        kpkSharesContract.setPerformanceFeeModule(newPerfFeeModule);
+
+        assertEq(address(kpkSharesContract.performanceFeeModule()), newPerfFeeModule);
+    }
+
+    function testSetPerfFeeModuleUnauthorized() public {
+        address newPerfFeeModule = bob;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.setPerformanceFeeModule(newPerfFeeModule);
+    }
+
+    function testSetPerfFeeModuleZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.setPerformanceFeeModule(address(0));
+    }
+
+    // ============================================================================
+    // Fee Calculation Tests
+    // ============================================================================
+
+    function testManagementFeesChargedOnProcessing() public {
+        // Deploy contract with only management fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            100, // 1% management fee
+            0,
+            0
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        uint256 timeElapsed = 365 days; // 1 year
+        skip(timeElapsed);
+
+        uint256 initialFeeReceiverBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Create and process a redemption request (this will charge management fees)
+        uint256 redeemShares = shares / 2;
+
+        // Approve contract to spend shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            redeemShares,
+            kpkSharesWithFees.sharesToAssets(redeemShares, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalFeeReceiverBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Check that management fees were charged (fee receiver balance should increase)
+        assertGt(finalFeeReceiverBalance, initialFeeReceiverBalance);
+    }
+
+    function testChargeManagementFeesWithMinimumRate() public {
+        // Set management fees to minimum (1 basis point = 0.01%)
+        vm.startPrank(admin);
+        uint256 rate = 1;
+        kpkSharesContract.setManagementFeeRate(rate);
+
+        // Set other fees to 0 to isolate the management fee
+        kpkSharesContract.setRedemptionFeeRate(0);
+        kpkSharesContract.setPerformanceFeeRate(0, address(usdc));
+        vm.stopPrank();
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTesting(alice, shares);
+
+        uint256 timeElapsed = 365 days; // 1 year
+        skip(timeElapsed);
+
+        uint256 initialBalance = kpkSharesContract.balanceOf(feeRecipient);
+        uint256 initialSupply = kpkSharesContract.totalSupply();
+
+        // Create and process a redeem request to trigger fee charging
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesContract.requestRedemption(
+            _sharesAmount(100),
+            kpkSharesContract.sharesToAssets(_sharesAmount(100), SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        // Process the request to trigger fee charging
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesContract.balanceOf(feeRecipient);
+        // With minimum rate, some fees should still be charged
+        assertGt(finalBalance, initialBalance);
+        uint256 expectedFee = ((initialSupply - initialBalance) * rate * timeElapsed) / (10_000 * SECONDS_PER_YEAR);
+        uint256 actualFee = finalBalance - initialBalance;
+
+        // Debug output
+        console.log("Initial supply:", initialSupply);
+        console.log("Initial balance:", initialBalance);
+        console.log("Rate:", rate);
+        console.log("Time elapsed:", timeElapsed);
+        console.log("Expected fee:", expectedFee);
+        console.log("Actual fee:", actualFee);
+
+        // Allow for some precision loss in fee calculation (up to 0.1% tolerance)
+        assertApproxEqRel(actualFee, expectedFee, 1e5);
+    }
+
+    function testChargeManagementFeesWithNoTimeElapsed() public {
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(MANAGEMENT_FEE_RATE, 0, 0);
+
+        uint256 sharesToCreate = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, sharesToCreate);
+
+        uint256 sharesToRedeem = _sharesAmount(100);
+
+        // Approve contract to spend shares for the redemption
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), sharesToRedeem);
+
+        // Create and process a redeem request immediately (no time elapsed)
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            sharesToRedeem,
+            kpkSharesWithFees.sharesToAssets(sharesToRedeem, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process the request to trigger fee charging (should not charge since no time elapsed)
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        // No time elapsed, so no management fees should be charged
+        assertEq(finalBalance, initialBalance);
+    }
+
+    function testChargeRedeemFees() public {
+        // Deploy contract with redeem fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0, // No management fee
+            100, // 1% redeem fee
+            0 // No performance fee
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Approve contract to spend Alice's shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        // Request the redemption
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            shares, kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process the redemption request (this will charge fees)
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertGt(finalBalance, initialBalance); // Fees should be charged in shares
+    }
+
+    function testChargeRedeemFeesWithZeroRate() public {
+        // Deploy contract with zero redeem fees
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            MANAGEMENT_FEE_RATE,
+            0, // 0% redeem fee
+            PERFORMANCE_FEE_RATE
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Approve contract to spend shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            shares, kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process the redemption request (this should not charge fees)
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertEq(finalBalance, initialBalance); // No fees should be charged
+    }
+
+    function testChargePerformanceFees() public {
+        // Deploy contract with performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            MANAGEMENT_FEE_RATE,
+            REDEMPTION_FEE_RATE,
+            1000 // 10% performance fee
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Approve the contract to spend Alice's shares for the redemption
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        // Create and process a redeem request to trigger performance fee charging
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            _sharesAmount(100),
+            kpkSharesWithFees.sharesToAssets(_sharesAmount(100), SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        // Set up time elapsed for performance fees
+        skip(365 days);
+
+        // Process the request to trigger fee charging
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertGt(finalBalance, initialBalance); // Fees should be charged in shares
+    }
+
+    function testChargePerformanceFeesWithMinimumRate() public {
+        // Deploy contract with minimum performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0,
+            0,
+            1 // 0.01% performance fee
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Approve contract to spend shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        // Create and process a redeem request to trigger performance fee charging
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            _sharesAmount(100),
+            kpkSharesWithFees.sharesToAssets(_sharesAmount(100), SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        // Set up time elapsed for performance fees
+        skip(365 days);
+
+        // Process the request to trigger fee charging
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        // With minimum rate, some fees should still be charged
+        assertGt(finalBalance, initialBalance);
+    }
+
+    // ============================================================================
+    // Fee Calculation Edge Cases
+    // ============================================================================
+
+    function testChargeFeesWithVerySmallAmounts() public {
+        // Deploy contract with small fee rates
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            1, // 0.01% management fee (1 basis point)
+            REDEMPTION_FEE_RATE,
+            PERFORMANCE_FEE_RATE
+        );
+
+        uint256 shares = _sharesAmount(1); // Very small amount
+        _createSharesForTesting(alice, shares);
+
+        uint256 timeElapsed = 365 days; // 1 year
+        skip(timeElapsed);
+
+        uint256 initialFeeBalance = kpkSharesContract.balanceOf(feeRecipient);
+
+        // Create and process a redeem request to trigger fee charging
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesContract.requestRedemption(
+            shares, kpkSharesContract.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        // Process the request to trigger fee charging
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesContract.balanceOf(feeRecipient);
+
+        // With very small amounts and rates, fees might be 0 due to integer division
+        assertGe(finalFeeBalance, initialFeeBalance);
+    }
+
+    function testChargeRedeemFeeWithVerySmallAmount() public {
+        // Deploy contract with small redeem fee rate
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0,
+            1, // 0.01% redeem fee (1 basis point)
+            0
+        );
+
+        uint256 shares = _sharesAmount(1) / 100; // Small amount that results in >0 assets
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            shares, kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process the redemption request
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // With very small amounts and rates, fees might be 0 due to integer division, but could also be collected
+        assertGe(finalBalance, initialBalance);
+    }
+
+    // ============================================================================
+    // Fee Limit Tests
+    // ============================================================================
+
+    function testAllFeeLimitsTogether() public {
+        // Test that all fee types can be set to their maximum limits
+        uint256 maxManagementRate = 1000; // 10%
+        uint256 maxRedeemFeeRate = 1000; // 10%
+        uint256 maxPerfFeeRate = 2000; // 20%
+
+        vm.startPrank(admin);
+
+        // Set all fees to their maximum limits
+        kpkSharesContract.setManagementFeeRate(maxManagementRate);
+        kpkSharesContract.setRedemptionFeeRate(maxRedeemFeeRate);
+        kpkSharesContract.setPerformanceFeeRate(maxPerfFeeRate, address(usdc));
+
+        // Verify all fees were set correctly
+        assertEq(kpkSharesContract.managementFeeRate(), maxManagementRate);
+        assertEq(kpkSharesContract.redemptionFeeRate(), maxRedeemFeeRate);
+        assertEq(kpkSharesContract.performanceFeeRate(), maxPerfFeeRate);
+
+        vm.stopPrank();
+    }
+
+    function testFeeLimitsExceeded() public {
+        uint256 maxFeeRate = kpkSharesContract.MAX_FEE_RATE();
+        // Test that exceeding any fee limit results in revert
+        vm.startPrank(admin);
+
+        // Try to exceed management fee limit
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setManagementFeeRate(maxFeeRate + 1);
+
+        // Try to exceed redemption fee limit
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setRedemptionFeeRate(maxFeeRate + 1);
+
+        // Try to exceed performance fee limit
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.FeeRateLimitExceeded.selector));
+        kpkSharesContract.setPerformanceFeeRate(maxFeeRate + 1, address(usdc));
+
+        vm.stopPrank();
+    }
+
+    // ============================================================================
+    // Fee Event Tests
+    // ============================================================================
+
+    function testFeeEventsEmitted() public {
+        uint256 newRate = 200;
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IkpkShares.ManagementFeeRateUpdate(newRate);
+        kpkSharesContract.setManagementFeeRate(newRate);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IkpkShares.RedemptionFeeRateUpdate(newRate);
+        kpkSharesContract.setRedemptionFeeRate(newRate);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IkpkShares.PerformanceFeeRateUpdate(newRate);
+        kpkSharesContract.setPerformanceFeeRate(newRate, address(usdc));
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IkpkShares.FeeReceiverUpdate(bob);
+        kpkSharesContract.setFeeReceiver(bob);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IkpkShares.PerformanceFeeModuleUpdate(bob);
+        kpkSharesContract.setPerformanceFeeModule(bob);
+    }
+
+    // ============================================================================
+    // Fee Integration Tests
+    // ============================================================================
+
+    function testMultipleFeeTypesCombined() public {
+        // Deploy contract with all fee types enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            100, // 1% management fee
+            100, // 1% redeem fee
+            1000 // 10% performance fee
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Set up time elapsed for all fee types
+        uint256 timeElapsed = 365 days;
+        skip(timeElapsed);
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Approve contract to spend shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        // Create and process redemption request (this will charge all fee types)
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Check that fees were charged
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertGt(finalFeeBalance, initialFeeBalance);
+    }
+
+    function testFeeCalculationAccuracy() public {
+        // Deploy contract with exact fee rates for testing
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            1000, // 10% management fee
+            500, // 5% redeem fee
+            2000 // 20% performance fee
+        );
+
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Approve contract to spend shares
+        vm.prank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+
+        // Test fee calculation through redeem request processing
+        uint256 timeElapsed = 365 days;
+        skip(timeElapsed);
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Create and process redeem request to trigger fee calculation
+        vm.startPrank(alice);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(
+            shares / 4, kpkSharesWithFees.sharesToAssets(shares / 4, SHARES_PRICE, address(usdc)), address(usdc), alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        uint256 actualFeeAmount = finalFeeBalance - initialFeeBalance;
+
+        // Check that fees were charged
+        assertGt(actualFeeAmount, 0);
+    }
+
+    // ============================================================================
+    // Performance Fee Gaming Prevention Tests
+    // ============================================================================
+
+    /// @notice Test that processing non-USD batches first doesn't prevent performance fees on USD batches
+    /// @dev This tests the non-USD-first sequencing gaming vector
+    function testNonUsdFirstSequencingDoesNotSkipPerformanceFees() public {
+        // Deploy contract with performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0, // No management fee
+            0, // No redemption fee
+            1000 // 10% performance fee
+        );
+
+        // Create a non-USD asset (e.g., ETH)
+        Mock_ERC20 eth = new Mock_ERC20("ETH", 18);
+        eth.mint(address(safe), _sharesAmount(100_000));
+        eth.mint(address(alice), _sharesAmount(10_000));
+        
+        vm.prank(ops);
+        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
+        
+        // Grant allowance for ETH
+        vm.prank(safe);
+        eth.approve(address(kpkSharesWithFees), type(uint256).max);
+        vm.prank(alice);
+        eth.approve(address(kpkSharesWithFees), type(uint256).max);
+
+        // Create shares for testing
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Wait enough time for fees to accrue
+        skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // First, process a non-USD batch (ETH redemption)
+        vm.startPrank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+        uint256 ethRequestId = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(eth)),
+            address(eth),
+            alice
+        );
+        vm.stopPrank();
+
+        // Process non-USD batch first
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = ethRequestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(eth), SHARES_PRICE);
+
+        // Immediately after, process a USD batch (should still charge performance fees)
+        vm.startPrank(alice);
+        uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        // Process USD batch - should charge performance fees based on asset-specific clock
+        vm.prank(ops);
+        approveRequests[0] = usdcRequestId;
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        
+        // Performance fees should have been charged despite processing non-USD first
+        assertGt(finalFeeBalance, initialFeeBalance, "Performance fees should be charged even after non-USD processing");
+    }
+
+    /// @notice Test that multiple USD assets have independent fee clocks
+    /// @dev This tests the multiple USD assets gaming vector
+    function testMultipleUsdAssetsIndependentFeeClocks() public {
+        // Deploy contract with performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0, // No management fee
+            0, // No redemption fee
+            1000 // 10% performance fee
+        );
+
+        // Create a second USD asset (e.g., USDT)
+        Mock_ERC20 usdt = new Mock_ERC20("USDT", 6);
+        usdt.mint(address(safe), _usdcAmount(100_000));
+        usdt.mint(address(alice), _usdcAmount(10_000));
+        
+        vm.prank(ops);
+        kpkSharesWithFees.updateAsset(address(usdt), true, true, true); // isUsd=true
+        
+        // Grant allowance for USDT
+        vm.prank(safe);
+        usdt.approve(address(kpkSharesWithFees), type(uint256).max);
+        vm.prank(alice);
+        usdt.approve(address(kpkSharesWithFees), type(uint256).max);
+
+        // Create shares for testing
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Wait enough time for fees to accrue (for both USDC and USDT)
+        skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process a batch with USDC (first USD asset)
+        vm.startPrank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
+        uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = usdcRequestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 feeBalanceAfterUsdc = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertGt(feeBalanceAfterUsdc, initialFeeBalance, "USDC batch should charge performance fees");
+
+        // Wait a short time (less than MIN_TIME_ELAPSED)
+        skip(1 hours); // Less than 6 hours
+
+        // Process a batch with USDT (second USD asset) - should charge fees based on its own clock
+        // USDT was added before the 7-day skip, so its clock started earlier
+        // The time elapsed for USDT is: 7 days (from when it was added) + 1 hour > MIN_TIME_ELAPSED
+        vm.startPrank(alice);
+        uint256 usdtRequestId = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdt)),
+            address(usdt),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        approveRequests[0] = usdtRequestId;
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdt), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        
+        // USDT should charge fees based on its own clock (7 days + 1 hour > 6 hours)
+        // This demonstrates that each USD asset has its own independent fee clock
+        assertGt(finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees based on its own clock");
+    }
+
+    /// @notice Test that short-interval back-to-back processing doesn't skip fees
+    /// @dev This tests the short-interval back-to-back processing gaming vector
+    function testShortIntervalBackToBackProcessingDoesNotSkipFees() public {
+        // Deploy contract with performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0, // No management fee
+            0, // No redemption fee
+            1000 // 10% performance fee
+        );
+
+        // Create shares for testing
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Wait enough time for fees to accrue
+        skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process first USD batch
+        vm.startPrank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
+        uint256 requestId1 = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId1;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 feeBalanceAfterFirst = kpkSharesWithFees.balanceOf(feeRecipient);
+        assertGt(feeBalanceAfterFirst, initialFeeBalance, "First batch should charge performance fees");
+
+        // Wait a very short time (less than MIN_TIME_ELAPSED)
+        skip(1 hours); // Less than 6 hours
+
+        // Process second USD batch immediately after
+        vm.startPrank(alice);
+        uint256 requestId2 = kpkSharesWithFees.requestRedemption(
+            shares / 2,
+            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        approveRequests[0] = requestId2;
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        
+        // Second batch should NOT charge fees (time elapsed < MIN_TIME_ELAPSED)
+        // This is expected behavior - fees should only be charged when enough time has passed
+        assertEq(finalFeeBalance, feeBalanceAfterFirst, "Second batch should not charge fees due to short interval");
+    }
+
+    /// @notice Test that non-USD redemptions don't trigger performance fees
+    /// @dev This tests the asset choice gaming vector
+    function testNonUsdRedemptionDoesNotTriggerPerformanceFees() public {
+        // Deploy contract with performance fees enabled
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
+            0, // No management fee
+            0, // No redemption fee
+            1000 // 10% performance fee
+        );
+
+        // Create a non-USD asset (e.g., ETH)
+        Mock_ERC20 eth = new Mock_ERC20("ETH", 18);
+        eth.mint(address(safe), _sharesAmount(100_000));
+        eth.mint(address(alice), _sharesAmount(10_000));
+        
+        vm.prank(ops);
+        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
+        
+        // Grant allowance for ETH
+        vm.prank(safe);
+        eth.approve(address(kpkSharesWithFees), type(uint256).max);
+        vm.prank(alice);
+        eth.approve(address(kpkSharesWithFees), type(uint256).max);
+
+        // Create shares for testing
+        uint256 shares = _sharesAmount(1000);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
+
+        // Wait enough time for fees to accrue
+        skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
+
+        uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+
+        // Process a non-USD redemption (should not charge performance fees)
+        vm.startPrank(alice);
+        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
+        uint256 ethRequestId = kpkSharesWithFees.requestRedemption(
+            shares,
+            kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(eth)),
+            address(eth),
+            alice
+        );
+        vm.stopPrank();
+
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = ethRequestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(eth), SHARES_PRICE);
+
+        uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
+        
+        // Non-USD redemptions should not charge performance fees
+        assertEq(finalFeeBalance, initialFeeBalance, "Non-USD redemption should not charge performance fees");
+    }
+
+    // ============================================================================
+    // Helper Functions
+    // ============================================================================
+
+    function abs(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a - b : b - a;
+    }
+}

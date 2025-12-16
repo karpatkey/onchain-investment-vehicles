@@ -1,0 +1,20 @@
+{
+  "lib/chainlink-brownie-contracts": {
+    "tag": {
+      "name": "1.3.0",
+      "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
+    }
+  },
+  "lib/forge-std": {
+    "tag": {
+      "name": "v1.12.0",
+      "rev": "7117c90c8cf6c68e5acce4f09a6b24715cea4de6"
+    }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "37bfda9eeb81cca848a9989118485a73d002eae4"
+  },
+  "lib/openzeppelin-foundry-upgrades": {
+    "rev": "cfd861bc18ef4737e82eae6ec75304e27af699ef"
+  }
+}
