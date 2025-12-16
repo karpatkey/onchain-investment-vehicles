@@ -16,9 +16,9 @@ import {IPerfFeeModule} from "./FeeModules/IPerfFeeModule.sol";
 import {IkpkShares} from "./IkpkShares.sol";
 import {RecoverFunds} from "./utils/RecoverFunds.sol";
 
-/// @title KpkShares - Tokenized Fund Implementation
-/// @author Karpatkey
-/// @notice Tokenized fund shares with subscription/redemption requests and fee management
+/// @title KpkShares - Onchain Investment Vehicles Implementation
+/// @author kpk
+/// @notice Onchain Investment Vehicles shares with subscription/redemption requests and fee management
 contract KpkShares is
     Initializable,
     UUPSUpgradeable,
