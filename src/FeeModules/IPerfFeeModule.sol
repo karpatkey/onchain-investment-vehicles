@@ -12,10 +12,7 @@ interface IPerfFeeModule {
     /// @param feePct The performance fee percentage in basis points
     /// @param netSupply The net supply of shares (totalSupply - feeReceiverBalance), used as the base for fee calculations
     /// @return The calculated performance fee amount
-    function calculatePerformanceFee(
-        uint256 sharesPrice,
-        uint256 timeElapsed,
-        uint256 feePct,
-        uint256 netSupply
-    ) external returns (uint256);
+    function calculatePerformanceFee(uint256 sharesPrice, uint256 timeElapsed, uint256 feePct, uint256 netSupply)
+        external
+        returns (uint256);
 }

@@ -732,10 +732,10 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         Mock_ERC20 eth = new Mock_ERC20("ETH", 18);
         eth.mint(address(safe), _sharesAmount(100_000));
         eth.mint(address(alice), _sharesAmount(10_000));
-        
+
         vm.prank(ops);
         kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
-        
+
         // Grant allowance for ETH
         vm.prank(safe);
         eth.approve(address(kpkSharesWithFees), type(uint256).max);
@@ -755,10 +755,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
         uint256 ethRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(eth)),
-            address(eth),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(eth)), address(eth), alice
         );
         vm.stopPrank();
 
@@ -772,10 +769,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Immediately after, process a USD batch (should still charge performance fees)
         vm.startPrank(alice);
         uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
-            address(usdc),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 
@@ -785,7 +779,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        
+
         // Performance fees should have been charged despite processing non-USD first
         assertGt(finalFeeBalance, initialFeeBalance, "Performance fees should be charged even after non-USD processing");
     }
@@ -804,10 +798,10 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         Mock_ERC20 usdt = new Mock_ERC20("USDT", 6);
         usdt.mint(address(safe), _usdcAmount(100_000));
         usdt.mint(address(alice), _usdcAmount(10_000));
-        
+
         vm.prank(ops);
         kpkSharesWithFees.updateAsset(address(usdt), true, true, true); // isUsd=true
-        
+
         // Grant allowance for USDT
         vm.prank(safe);
         usdt.approve(address(kpkSharesWithFees), type(uint256).max);
@@ -827,10 +821,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
         uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
-            address(usdc),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 
@@ -851,10 +842,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // The time elapsed for USDT is: 7 days (from when it was added) + 1 hour > MIN_TIME_ELAPSED
         vm.startPrank(alice);
         uint256 usdtRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdt)),
-            address(usdt),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdt)), address(usdt), alice
         );
         vm.stopPrank();
 
@@ -863,10 +851,12 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdt), SHARES_PRICE);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        
+
         // USDT should charge fees based on its own clock (7 days + 1 hour > 6 hours)
         // This demonstrates that each USD asset has its own independent fee clock
-        assertGt(finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees based on its own clock");
+        assertGt(
+            finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees based on its own clock"
+        );
     }
 
     /// @notice Test that short-interval back-to-back processing doesn't skip fees
@@ -892,10 +882,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
         uint256 requestId1 = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
-            address(usdc),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 
@@ -914,10 +901,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Process second USD batch immediately after
         vm.startPrank(alice);
         uint256 requestId2 = kpkSharesWithFees.requestRedemption(
-            shares / 2,
-            kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)),
-            address(usdc),
-            alice
+            shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 
@@ -926,7 +910,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        
+
         // Second batch should NOT charge fees (time elapsed < MIN_TIME_ELAPSED)
         // This is expected behavior - fees should only be charged when enough time has passed
         assertEq(finalFeeBalance, feeBalanceAfterFirst, "Second batch should not charge fees due to short interval");
@@ -946,10 +930,10 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         Mock_ERC20 eth = new Mock_ERC20("ETH", 18);
         eth.mint(address(safe), _sharesAmount(100_000));
         eth.mint(address(alice), _sharesAmount(10_000));
-        
+
         vm.prank(ops);
         kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
-        
+
         // Grant allowance for ETH
         vm.prank(safe);
         eth.approve(address(kpkSharesWithFees), type(uint256).max);
@@ -969,10 +953,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
         uint256 ethRequestId = kpkSharesWithFees.requestRedemption(
-            shares,
-            kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(eth)),
-            address(eth),
-            alice
+            shares, kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(eth)), address(eth), alice
         );
         vm.stopPrank();
 
@@ -983,7 +964,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(eth), SHARES_PRICE);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        
+
         // Non-USD redemptions should not charge performance fees
         assertEq(finalFeeBalance, initialFeeBalance, "Non-USD redemption should not charge performance fees");
     }

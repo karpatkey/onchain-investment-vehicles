@@ -322,7 +322,7 @@ contract KpkShares is
 
         // Calculate net shares after fee deduction
         uint256 netShares = shares - redemptionFee;
-        
+
         // Calculate net assets that will be received (after fees)
         // sharesToAssets() checks canRedeem of redemptionAsset
         return sharesToAssets(netShares, sharesPrice, redemptionAsset);
@@ -420,11 +420,11 @@ contract KpkShares is
     ) external isOperator {
         // Validate price deviation from last settled price
         _validatePriceDeviation(asset, sharesPriceInAsset);
-        
+
         _chargeFees(asset, sharesPriceInAsset);
         _processApproved(approveRequests, asset, sharesPriceInAsset);
         _processRejected(rejectRequests, asset);
-        
+
         // Update last settled price after successful processing
         _lastSettledPrice[asset] = sharesPriceInAsset;
     }
@@ -572,7 +572,8 @@ contract KpkShares is
         // Calculate the value of the shares
         // sharesValue = shares * (sharesPrice * 1e18) / 1e8
         // This properly handles different asset decimal places
-        uint256 sharesValue = shares.mulDiv(sharesPrice * _PRECISION_WAD, _NORMALIZED_PRECISION_USD, Math.Rounding.Floor);
+        uint256 sharesValue =
+            shares.mulDiv(sharesPrice * _PRECISION_WAD, _NORMALIZED_PRECISION_USD, Math.Rounding.Floor);
 
         // Convert value to assets
         // assets = sharesValue * 10^assetDec / (10^shareDecimals * 1e18)
@@ -584,7 +585,14 @@ contract KpkShares is
 
     /// @inheritdoc UUPSUpgradeable
     // solhint-disable-next-line no-empty-blocks
-    function _authorizeUpgrade(address /* newImpl */ ) internal view override(UUPSUpgradeable) isAdmin {
+    function _authorizeUpgrade(
+        address /* newImpl */
+    )
+        internal
+        view
+        override(UUPSUpgradeable)
+        isAdmin
+    {
         // Authorization is handled by the isAdmin modifier
     }
 
@@ -605,19 +613,19 @@ contract KpkShares is
         if (token == address(this)) {
             return 0;
         }
-        
+
         // Check if there are pending requests for this asset (even if config is deleted)
         if (_hasPendingRequests(token)) {
             return 0;
         }
-        
+
         // Always exclude recorded escrow, even if asset config is deleted
         // This prevents sweeping funds needed for pending subscriptions
         uint256 escrowed = subscriptionAssets[token];
         if (escrowed > 0) {
             return 0;
         }
-        
+
         return super._assetRecoverableAmount(token);
     }
 
@@ -672,7 +680,7 @@ contract KpkShares is
         // Initialize managementFeeLastUpdate timestamp
         _managementFeeLastUpdate = block.timestamp;
         // Initialize performanceFeeLastUpdate timestamp
-        
+
         _performanceFeeLastUpdate = block.timestamp;
     }
 
@@ -842,7 +850,7 @@ contract KpkShares is
         // --- Effects ---
         // Calculate net shares to redeem after fees
         uint256 netShares = request.sharesAmount - redemptionFee;
-        
+
         // Check if operator price is at least as good as the request price
         // Validate using net shares to ensure slippage protection applies to the actual amount received
         uint256 assetsOutNet = sharesToAssets(netShares, operatorPrice, request.asset);
@@ -880,7 +888,7 @@ contract KpkShares is
     //
     // Share Management
     //
-    
+
     /// @notice Validate that the price deviation from the last settled price is within acceptable bounds
     /// @param asset The asset to validate the price for
     /// @param sharesPriceInAsset The current price per share in normalized USD units (8 decimals)
@@ -888,12 +896,12 @@ contract KpkShares is
     /// @dev If there is a previous price, the deviation must be within MAX_PRICE_DEVIATION_BPS (10%)
     function _validatePriceDeviation(address asset, uint256 sharesPriceInAsset) internal view {
         uint256 lastPrice = _lastSettledPrice[asset];
-        
+
         // If there's no previous settled price, accept the price (first time processing)
         if (lastPrice == 0) {
             return;
         }
-        
+
         // Calculate the absolute deviation
         uint256 deviation;
         if (sharesPriceInAsset > lastPrice) {
@@ -903,17 +911,17 @@ contract KpkShares is
             // Price decreased
             deviation = lastPrice - sharesPriceInAsset;
         }
-        
+
         // Calculate deviation in basis points: (deviation * 10000) / lastPrice
         // Use mulDiv to avoid overflow
         uint256 deviationBps = deviation.mulDiv(_PRECISION_BPS, lastPrice, Math.Rounding.Floor);
-        
+
         // Check if deviation exceeds maximum allowed
         if (deviationBps > MAX_PRICE_DEVIATION_BPS) {
             revert PriceDeviationTooLarge();
         }
     }
-    
+
     /// @notice Charge management and performance fees based on time elapsed
     /// @param asset The asset to charge fees for
     /// @param sharesPriceInAsset The current price per share in normalized USD units (8 decimals, i.e., _NORMALIZED_PRECISION_USD)
@@ -921,7 +929,7 @@ contract KpkShares is
         // Charge management and performance fees based on time elapsed
         uint256 managementFee;
         uint256 performanceFee;
-        
+
         // Management fees use shared managementFeeLastUpdate timestamp
         if (managementFeeRate > 0) {
             uint256 timeElapsed = block.timestamp - _managementFeeLastUpdate;
@@ -933,7 +941,7 @@ contract KpkShares is
         }
 
         // Performance fees use asset-specific performanceFeeLastUpdate to prevent gaming
-        if (performanceFeeRate > 0 && _approvedAssetsMap[asset].isUsd) {              
+        if (performanceFeeRate > 0 && _approvedAssetsMap[asset].isUsd) {
             uint256 perfTimeElapsed = block.timestamp - _performanceFeeLastUpdate;
             if (perfTimeElapsed > MIN_TIME_ELAPSED) {
                 _performanceFeeLastUpdate = block.timestamp;
@@ -967,8 +975,8 @@ contract KpkShares is
     /// @return The amount of management fee charged
     function _chargeManagementFee(uint256 timeElapsed) internal returns (uint256) {
         uint256 feeReceiverBalance = balanceOf(feeReceiver);
-        uint256 feeAmount =
-            ((totalSupply() - feeReceiverBalance) * managementFeeRate * timeElapsed) / (_PRECISION_BPS * SECONDS_PER_YEAR);
+        uint256 feeAmount = ((totalSupply() - feeReceiverBalance) * managementFeeRate * timeElapsed)
+            / (_PRECISION_BPS * SECONDS_PER_YEAR);
         if (feeAmount > 0) {
             _mint(feeReceiver, feeAmount);
         }
@@ -985,9 +993,8 @@ contract KpkShares is
         }
         uint256 feeReceiverBalance = balanceOf(feeReceiver);
         uint256 netSupply = totalSupply() - feeReceiverBalance;
-        uint256 performanceFee = IPerfFeeModule(performanceFeeModule).calculatePerformanceFee(
-            sharesPriceInUSD, timeElapsed, performanceFeeRate, netSupply
-        );
+        uint256 performanceFee = IPerfFeeModule(performanceFeeModule)
+            .calculatePerformanceFee(sharesPriceInUSD, timeElapsed, performanceFeeRate, netSupply);
         if (performanceFee > 0) {
             _mint(feeReceiver, performanceFee);
         }
@@ -1016,12 +1023,12 @@ contract KpkShares is
                 // Check for pending requests using counter
                 if (_pendingRequestsCount[asset] > 0) {
                     revert InvalidArguments(); // Cannot remove asset with pending requests
-                }         
+                }
                 // Prevent removing the last asset
                 if (_approvedAssets.length <= 1) {
                     revert InvalidArguments(); // Cannot remove last asset
                 }
-                
+
                 _shadowAsset(asset);
                 delete _approvedAssetsMap[asset];
                 emit AssetRemove(asset);
@@ -1123,7 +1130,7 @@ contract KpkShares is
         if (performanceFeeRate > 0 && _approvedAssetsMap[usdAsset].isUsd) {
             _chargePerformanceFee(_lastSettledPrice[usdAsset], block.timestamp - _performanceFeeLastUpdate);
         }
-        // if performance fees is not charged due to incompatible asset, update the timestamp 
+        // if performance fees is not charged due to incompatible asset, update the timestamp
         // and forfeit any performance fees that have not been charged yet
         _performanceFeeLastUpdate = block.timestamp;
         performanceFeeRate = newRate;

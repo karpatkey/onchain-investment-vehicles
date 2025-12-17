@@ -10,7 +10,9 @@ import "test/mocks/tokens.sol";
 import "test/errors.sol";
 import "src/FeeModules/WatermarkFee.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {AggregatorV3Interface} from "chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {
+    AggregatorV3Interface
+} from "chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 // Mock price oracle for testing
 contract MockPriceOracle is AggregatorV3Interface {
@@ -102,8 +104,7 @@ contract kpkSharesTestBase is Test {
             kpkSharesImpl,
             abi.encodeCall(
                 KpkShares.initialize,
-                (
-                    KpkShares.ConstructorParams({
+                (KpkShares.ConstructorParams({
                         asset: address(usdc),
                         admin: admin,
                         name: "kpk",
@@ -116,8 +117,7 @@ contract kpkSharesTestBase is Test {
                         redemptionFeeRate: REDEMPTION_FEE_RATE,
                         performanceFeeModule: address(perfFeeModule),
                         performanceFeeRate: PERFORMANCE_FEE_RATE
-                    })
-                )
+                    }))
             )
         );
         kpkSharesContract = KpkShares(kpkSharesProxy);
@@ -170,8 +170,7 @@ contract kpkSharesTestBase is Test {
             kpkSharesImpl,
             abi.encodeCall(
                 KpkShares.initialize,
-                (
-                    KpkShares.ConstructorParams({
+                (KpkShares.ConstructorParams({
                         asset: address(usdc),
                         admin: admin,
                         name: "kpk",
@@ -184,8 +183,7 @@ contract kpkSharesTestBase is Test {
                         redemptionFeeRate: redemptionFeeRate,
                         performanceFeeModule: address(perfFeeModule),
                         performanceFeeRate: performanceFeeRate
-                    })
-                )
+                    }))
             )
         );
         KpkShares kpkSharesWithFees = KpkShares(kpkSharesProxy);
