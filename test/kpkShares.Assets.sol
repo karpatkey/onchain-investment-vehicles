@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
-import "src/IkpkShares.sol";
 
 /// @notice Tests for kpkShares asset management functionality
 contract kpkSharesAssetsTest is kpkSharesTestBase {

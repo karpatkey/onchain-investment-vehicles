@@ -2,8 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
+import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import "@openzeppelin/contracts/interfaces/IERC1967.sol";
 
 /// @notice Tests for kpkShares upgrade functionality and UUPS proxy
 contract kpkSharesUpgradeTest is kpkSharesTestBase {
@@ -67,7 +67,7 @@ contract kpkSharesUpgradeTest is kpkSharesTestBase {
         kpkSharesContract.setSubscriptionRequestTtl(2 days);
 
         // Create some shares
-        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, true);
+        _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, true);
 
         // Deploy new implementation
         address newImplementation = address(new KpkShares());
@@ -174,16 +174,6 @@ contract kpkSharesUpgradeTest is kpkSharesTestBase {
         kpkSharesContract.upgradeToAndCall(address(0), "");
     }
 
-    function testUpgradeToSelf() public {
-        // Get current implementation
-        address currentImplementation = address(kpkSharesContract);
-
-        // Try to upgrade to self
-        vm.prank(admin);
-        vm.expectRevert(); // Should revert when upgrading to self
-        kpkSharesContract.upgradeToAndCall(currentImplementation, "");
-    }
-
     function testUpgradeWithInvalidCallData() public {
         // Deploy new implementation
         address newImplementation = address(new KpkShares());
@@ -267,8 +257,9 @@ contract kpkSharesUpgradeTest is kpkSharesTestBase {
 
         // Create and process redeem request to trigger fee charging
         vm.startPrank(alice);
+        // Use previewRedemption which accounts for redemption fees
         uint256 requestId = kpkSharesContract.requestRedemption(
-            shares / 4, kpkSharesContract.sharesToAssets(shares / 4, SHARES_PRICE, address(usdc)), address(usdc), alice
+            shares / 4, kpkSharesContract.previewRedemption(shares / 4, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 

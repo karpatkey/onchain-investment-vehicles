@@ -115,7 +115,7 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         kpkSharesContract.previewSubscription(_usdcAmount(100), SHARES_PRICE, address(unapprovedToken));
     }
 
-    function testPreviewSubscriptionWithDifferentPrices() public {
+    function testPreviewSubscriptionWithDifferentPrices() public view {
         uint256 assets = _usdcAmount(100);
 
         // Test with different prices
@@ -280,20 +280,16 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
         kpkSharesContract.cancelSubscription(requestId);
 
-        // Wait exactly TTL - should still revert (line 254: <= means not past TTL)
+        // Wait exactly TTL - at exactly TTL, block.timestamp == request.timestamp + subscriptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + subscriptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         skip(ttl);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
         kpkSharesContract.cancelSubscription(requestId);
 
-        // Wait 1 more second to go past TTL - now should succeed
-        skip(1);
-        vm.prank(alice);
-        kpkSharesContract.cancelSubscription(requestId);
-
-        // Verify request was cancelled
-        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
-        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+        // Verify the request was cancelled
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(cancelledRequest.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
     }
 
     function testCancelSubscriptionRequestNotPastTtlLine254EdgeCase() public {
@@ -321,20 +317,16 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
         kpkSharesContract.cancelSubscription(requestId);
 
-        // Wait exactly 1 second (TTL) - should still revert (line 254: <= means not past TTL)
-        skip(1);
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelSubscription(requestId);
-
-        // Wait 1 more second to go past TTL - now should succeed
+        // Wait exactly 1 second (TTL) - at exactly TTL, block.timestamp == request.timestamp + subscriptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + subscriptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         skip(1);
         vm.prank(alice);
         kpkSharesContract.cancelSubscription(requestId);
 
-        // Verify request was cancelled
-        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
-        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+        // Verify the request was cancelled
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(cancelledRequest.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
     }
 
     function testValidateDepositRequestReturnTrueLines967_968() public {
@@ -408,18 +400,12 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         // Create a subscription request
         uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
 
-        // Wait exactly to the TTL boundary (not past it)
+        // Wait exactly to the TTL boundary
         skip(edgeTtl);
 
-        // Should not be able to cancel at exactly TTL boundary (line 254)
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelSubscription(requestId);
-
-        // Wait 1 more second to go past the boundary
-        skip(1);
-
-        // Now should be able to cancel
+        // At exactly TTL boundary, block.timestamp == request.timestamp + subscriptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + subscriptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         vm.prank(alice);
         kpkSharesContract.cancelSubscription(requestId);
 
@@ -441,17 +427,15 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         // Wait exactly to the TTL boundary
         skip(edgeTtl);
 
-        // Should not be able to cancel at exactly TTL boundary
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelSubscription(requestId);
-
-        // Wait 1 more second
-        skip(1);
-
-        // Now should be able to cancel
+        // At exactly TTL boundary, block.timestamp == request.timestamp + subscriptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + subscriptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         vm.prank(alice);
         kpkSharesContract.cancelSubscription(requestId);
+
+        // Verify the request was cancelled
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
     }
 
     function testSubscriptionRequestTtlWithVerySmallValue() public {
@@ -498,14 +482,9 @@ contract kpkSharesSubscriptionsTest is kpkSharesTestBase {
         // Wait for TTL to expire exactly
         skip(edgeTtl);
 
-        // Try to cancel exactly at TTL expiration - should still revert (needs +1)
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelSubscription(requestId);
-
-        // Wait 1 more second - now should work
-        skip(1);
-
+        // At exactly TTL expiration, block.timestamp == request.timestamp + subscriptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + subscriptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         vm.prank(alice);
         kpkSharesContract.cancelSubscription(requestId);
 

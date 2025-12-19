@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 import "./kpkShares.TestBase.sol";
-import "./kpkShares.Initialization.sol";
-import "./kpkShares.Subscriptions.sol";
-import "./kpkShares.Redemptions.sol";
-import "./kpkShares.Fees.sol";
-import "./kpkShares.Assets.sol";
-import "./kpkShares.Admin.sol";
-import "./kpkShares.Integration.sol";
-import "./kpkShares.Upgrade.sol";
+import {kpkSharesInitializationTest} from "./kpkShares.Initialization.sol";
+import {kpkSharesSubscriptionsTest} from "./kpkShares.Subscriptions.sol";
+import {kpkSharesRedemptionsTest} from "./kpkShares.Redemptions.sol";
+import {kpkSharesFeesTest} from "./kpkShares.Fees.sol";
+import {kpkSharesAssetsTest} from "./kpkShares.Assets.sol";
+import {kpkSharesAdminTest} from "./kpkShares.Admin.sol";
+import {kpkSharesIntegrationTest} from "./kpkShares.Integration.sol";
+import {kpkSharesUpgradeTest} from "./kpkShares.Upgrade.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {Mock_ERC20} from "test/mocks/tokens.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @notice Main test contract that runs all kpkShares tests
 /// @dev This contract inherits from all domain-specific test contracts to run them together
@@ -107,7 +109,7 @@ contract kpkSharesMainTest is
     // ============================================================================
 
     /// @notice Test that the contract supports the expected interfaces
-    function testSupportsInterface() public {
+    function testSupportsInterface() public view {
         // Test support for IkpkShares interface
         assertTrue(kpkSharesContract.supportsInterface(type(IkpkShares).interfaceId));
 
@@ -155,7 +157,7 @@ contract kpkSharesMainTest is
     }
 
     /// @notice Test that all constants are accessible
-    function testAllConstants() public {
+    function testAllConstants() public pure {
         assertEq(SUBSCRIPTION_REQUEST_TTL, SUBSCRIPTION_REQUEST_TTL);
         assertEq(REDEMPTION_REQUEST_TTL, REDEMPTION_REQUEST_TTL);
         assertEq(MANAGEMENT_FEE_RATE, 100);
@@ -169,7 +171,7 @@ contract kpkSharesMainTest is
     // ============================================================================
 
     /// @notice Verify that all test domains are properly integrated
-    function testTestSuiteCompleteness() public {
+    function testTestSuiteCompleteness() public pure {
         // This test ensures that all domain-specific test contracts are properly inherited
         // and that their functionality is accessible
 
@@ -181,7 +183,7 @@ contract kpkSharesMainTest is
     }
 
     /// @notice Test that the base contract provides all necessary functionality
-    function testBaseContractCompleteness() public {
+    function testBaseContractCompleteness() public view {
         // Test that all base contract functions are accessible
         assertEq(kpkSharesContract.name(), "kpk");
         assertEq(kpkSharesContract.symbol(), "kpk");

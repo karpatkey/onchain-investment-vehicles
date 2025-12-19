@@ -2,9 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
-import "src/FeeModules/WatermarkFee.sol";
-import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /// @notice Tests for kpkShares initialization and constructor functionality
 contract kpkSharesInitializationTest is kpkSharesTestBase {
@@ -19,7 +16,7 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
     // Basic Initialization Tests
     // ============================================================================
 
-    function testInitializeWithValidParameters() public {
+    function testInitializeWithValidParameters() public view {
         // Test that the contract initializes correctly with valid parameters
         assertEq(kpkSharesContract.name(), "kpk");
         assertEq(kpkSharesContract.symbol(), "kpk");
@@ -96,134 +93,135 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
         // Test initialization with zero address asset (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(0),
-                    admin: admin,
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: safe,
-                    subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                    redemptionRequestTtl: REDEMPTION_TTL,
-                    feeReceiver: feeRecipient,
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(0),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     function testInitializeWithZeroAddressSafe() public {
         // Test initialization with zero address safe (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(usdc),
-                    admin: admin,
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: address(0),
-                    subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                    redemptionRequestTtl: REDEMPTION_TTL,
-                    feeReceiver: feeRecipient,
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: address(0),
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     function testInitializeWithZeroAddressAdmin() public {
         // Test initialization with zero address admin (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(usdc),
-                    admin: address(0),
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: safe,
-                    subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                    redemptionRequestTtl: REDEMPTION_TTL,
-                    feeReceiver: feeRecipient,
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: address(0),
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     function testInitializeWithZeroAddressFeeReceiver() public {
         // Test initialization with zero address fee receiver (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(usdc),
-                    admin: admin,
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: safe,
-                    subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                    redemptionRequestTtl: REDEMPTION_TTL,
-                    feeReceiver: address(0),
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: address(0),
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     function testInitializeWithZeroAddressPerfFeeModule() public {
         // Test initialization with zero address performance fee module (should succeed)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
-        KpkShares kpkSharesZeroPerfFee = KpkShares(kpkSharesProxy);
-        kpkSharesZeroPerfFee.initialize(
-            KpkShares.ConstructorParams({
-                asset: address(usdc),
-                admin: admin,
-                name: "kpk",
-                symbol: "kpk",
-                safe: safe,
-                subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                redemptionRequestTtl: REDEMPTION_TTL,
-                feeReceiver: feeRecipient,
-                managementFeeRate: MANAGEMENT_FEE_RATE,
-                redemptionFeeRate: REDEMPTION_FEE_RATE,
-                performanceFeeModule: address(0),
-                performanceFeeRate: PERFORMANCE_FEE_RATE
-            })
+        address kpkSharesProxy = UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(0),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
         );
+        KpkShares kpkSharesZeroPerfFee = KpkShares(kpkSharesProxy);
 
         // Should succeed and have zero address for performance fee module
         assertEq(address(kpkSharesZeroPerfFee.performanceFeeModule()), address(0));
@@ -237,54 +235,54 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
         // Test initialization with zero deposit request TTL (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(usdc),
-                    admin: admin,
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: safe,
-                    subscriptionRequestTtl: 0,
-                    redemptionRequestTtl: REDEMPTION_TTL,
-                    feeReceiver: feeRecipient,
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: 0,
+                        redemptionRequestTtl: REDEMPTION_TTL,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     function testInitializeWithZeroRedeemRequestTtl() public {
         // Test initialization with zero redeem request TTL (should revert)
         address kpkSharesImpl = address(new KpkShares());
 
-        // Deploy proxy manually first
-        address kpkSharesProxy = address(new ERC1967Proxy(kpkSharesImpl, ""));
-
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        KpkShares(kpkSharesProxy)
-            .initialize(
-                KpkShares.ConstructorParams({
-                    asset: address(usdc),
-                    admin: admin,
-                    name: "kpk",
-                    symbol: "kpk",
-                    safe: safe,
-                    subscriptionRequestTtl: SUBSCRIPTION_TTL,
-                    redemptionRequestTtl: 0,
-                    feeReceiver: feeRecipient,
-                    managementFeeRate: MANAGEMENT_FEE_RATE,
-                    redemptionFeeRate: REDEMPTION_FEE_RATE,
-                    performanceFeeModule: address(perfFeeModule),
-                    performanceFeeRate: PERFORMANCE_FEE_RATE
-                })
-            );
+        UnsafeUpgrades.deployUUPSProxy(
+            kpkSharesImpl,
+            abi.encodeCall(
+                KpkShares.initialize,
+                (KpkShares.ConstructorParams({
+                        asset: address(usdc),
+                        admin: admin,
+                        name: "kpk",
+                        symbol: "kpk",
+                        safe: safe,
+                        subscriptionRequestTtl: SUBSCRIPTION_TTL,
+                        redemptionRequestTtl: 0,
+                        feeReceiver: feeRecipient,
+                        managementFeeRate: MANAGEMENT_FEE_RATE,
+                        redemptionFeeRate: REDEMPTION_FEE_RATE,
+                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeRate: PERFORMANCE_FEE_RATE
+                    }))
+            )
+        );
     }
 
     // ============================================================================
@@ -414,7 +412,7 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
     // Role Assignment Tests
     // ============================================================================
 
-    function testInitializationSetsCorrectRoles() public {
+    function testInitializationSetsCorrectRoles() public view {
         // Test that initialization sets the correct roles
         assertTrue(kpkSharesContract.hasRole(DEFAULT_ADMIN_ROLE, admin));
         assertTrue(kpkSharesContract.hasRole(OPERATOR, ops));
@@ -422,7 +420,7 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
         assertFalse(kpkSharesContract.hasRole(OPERATOR, bob));
     }
 
-    function testInitializationSetsCorrectOwner() public {
+    function testInitializationSetsCorrectOwner() public view {
         // Test that initialization sets the correct owner
         assertTrue(kpkSharesContract.hasRole(DEFAULT_ADMIN_ROLE, admin));
     }
@@ -431,7 +429,7 @@ contract kpkSharesInitializationTest is kpkSharesTestBase {
     // State Initialization Tests
     // ============================================================================
 
-    function testInitializationSetsCorrectState() public {
+    function testInitializationSetsCorrectState() public view {
         // Test that initialization sets the correct initial state
         assertTrue(kpkSharesContract.isApprovedAsset(address(usdc)));
         assertEq(kpkSharesContract.assetDecimals(address(usdc)), 6);

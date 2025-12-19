@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
-import "./constants.sol";
 
 /// @notice Tests for kpkShares precision functionality
 /// @dev Focuses on shares and assets conversion precision, preview functions, and fee functions
@@ -16,7 +15,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
     // ============================================================================
     // Tests for shares and assets conversion precision, preview functions, and fee functions
 
-    function testPrecisionAssetsToSharesConversion() public {
+    function testPrecisionAssetsToSharesConversion() public view {
         // Test with very small amounts to check precision
         uint256 smallAssets = 1e6; // 1 USDC (6 decimals)
         uint256 expectedShares = kpkSharesContract.assetsToShares(smallAssets, SHARES_PRICE, address(usdc));
@@ -43,7 +42,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertLt(sharesHighPrice, sharesLowPrice);
     }
 
-    function testPrecisionSharesToAssetsConversion() public {
+    function testPrecisionSharesToAssetsConversion() public view {
         // Test with very small share amounts
         uint256 smallShares = 2e12; // 2e12 wei of shares (18 decimals)
         uint256 expectedAssets = kpkSharesContract.sharesToAssets(smallShares, SHARES_PRICE, address(usdc));
@@ -70,7 +69,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertGt(assetsHighPrice, assetsLowPrice);
     }
 
-    function testPrecisionPreviewDeposit() public {
+    function testPrecisionPreviewDeposit() public view {
         // Test with very small asset amounts
         uint256 smallAssets = _usdcAmount(1); // 1 USDC
         uint256 shares = kpkSharesContract.previewSubscription(smallAssets, SHARES_PRICE, address(usdc));
@@ -89,7 +88,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertEq(sharesLarge, directShares);
     }
 
-    function testPrecisionPreviewRedeem() public {
+    function testPrecisionPreviewRedeem() public view {
         // Test with very small share amounts
         uint256 smallShares = 1e12;
         uint256 assets = kpkSharesContract.previewRedemption(smallShares, SHARES_PRICE, address(usdc));
@@ -101,7 +100,9 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
 
         uint256 assetsBarelyAny = kpkSharesContract.previewRedemption(barelyAnyShares, SHARES_PRICE, address(usdc));
 
-        assertApproxEqRel(assetsBarelyAny, 0, 1);
+        // For very small amounts, assets might be 0 due to rounding
+        // Just verify it's a small non-negative value
+        assertLe(assetsBarelyAny, 1);
 
         // Test with larger amounts
         uint256 largeShares = _sharesAmount(1_000_000); // 1M shares
@@ -174,8 +175,16 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
 
         vm.startPrank(alice);
+        // Calculate adjusted expected assets (no time elapsed, but account for potential fees from share creation)
+        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
+            kpkSharesWithFees,
+            shares,
+            SHARES_PRICE,
+            address(usdc),
+            0
+        );
         uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares, kpkSharesWithFees.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+            shares, minAssetsOut, address(usdc), alice
         );
         vm.stopPrank();
 
@@ -236,7 +245,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertGt(actualFee, 0);
     }
 
-    function testPrecisionRoundingBehavior() public {
+    function testPrecisionRoundingBehavior() public view {
         // Test that rounding behavior is consistent and predictable
         uint256 testShares = _sharesAmount(1001); // 1001 shares
         uint256 testPrice = 100_000_001; // $1.00000001 (slightly above $1)
@@ -259,7 +268,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertLe(_abs(testShares, preciseSharesBack), 1e12);
     }
 
-    function testPrecisionEdgeCases() public {
+    function testPrecisionEdgeCases() public view {
         // Test with maximum possible values
         uint256 maxShares = 1e30;
         uint256 maxPrice = 1e30;
@@ -287,7 +296,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertEq(zeroShares, 0);
     }
 
-    function testPrecisionConsistencyAcrossOperations() public {
+    function testPrecisionConsistencyAcrossOperations() public view {
         // Test that precision is maintained across multiple operations
         uint256 initialShares = _sharesAmount(1000);
         uint256 initialPrice = SHARES_PRICE;
@@ -307,7 +316,12 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         // Test with preview functions to ensure consistency
         uint256 previewAssets = kpkSharesContract.previewRedemption(initialShares, initialPrice, address(usdc));
 
-        assertEq(previewAssets, assets);
+        // previewAssets accounts for redemption fees, so it should be less than assets
+        // Calculate expected assets after redemption fee
+        uint256 redemptionFee = (initialShares * kpkSharesContract.redemptionFeeRate()) / 10000;
+        uint256 netShares = initialShares - redemptionFee;
+        uint256 expectedPreviewAssets = kpkSharesContract.sharesToAssets(netShares, initialPrice, address(usdc));
+        assertEq(previewAssets, expectedPreviewAssets);
 
         uint256 previewShares = kpkSharesContract.previewSubscription(assets, initialPrice, address(usdc));
 
@@ -318,7 +332,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
     function testPrecisionWithDifferentAssetDecimals() public {
         // Test precision with assets that have different decimal places
         // Create a mock token with 18 decimals
-        Mock_ERC20 token18Decimals = new Mock_ERC20("TOKEN18", 18);
+        // Mock_ERC20 token18Decimals = new Mock_ERC20("TOKEN18", 18);
 
         // Add it as an approved asset (this would require modifying the contract setup)
         // For now, we'll test with the existing USDC (6 decimals)
@@ -359,10 +373,24 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         for (uint256 i = 0; i < 10; i++) {
             skip(30 days); // Skip 30 days
 
+            // Check alice's balance and only redeem what she has
+            uint256 aliceBalance = kpkSharesWithFees.balanceOf(alice);
+            if (aliceBalance < _sharesAmount(100)) {
+                break; // Not enough shares to continue
+            }
+
             vm.startPrank(alice);
+            // Calculate adjusted expected assets accounting for fee dilution (30 days elapsed per iteration)
+            uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
+                kpkSharesWithFees,
+                _sharesAmount(100),
+                SHARES_PRICE,
+                address(usdc),
+                30 days
+            );
             uint256 requestId = kpkSharesWithFees.requestRedemption(
                 _sharesAmount(100),
-                kpkSharesWithFees.sharesToAssets(_sharesAmount(100), SHARES_PRICE, address(usdc)),
+                minAssetsOut,
                 address(usdc),
                 alice
             );
