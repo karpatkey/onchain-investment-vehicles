@@ -353,9 +353,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
             address(usdc),
             0 // No additional time elapsed, but helper will check if fees were already charged
         );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares, minAssetsOut, address(usdc), alice
-        );
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
@@ -430,18 +428,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
         uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            _sharesAmount(100),
-            SHARES_PRICE,
-            address(usdc),
-            365 days
+            kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 365 days
         );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            _sharesAmount(100),
-            minAssetsOut,
-            address(usdc),
-            alice
-        );
+        uint256 requestId = kpkSharesWithFees.requestRedemption(_sharesAmount(100), minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         // Process the request to trigger fee charging
@@ -479,18 +468,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
         uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            _sharesAmount(100),
-            SHARES_PRICE,
-            address(usdc),
-            365 days
+            kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 365 days
         );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            _sharesAmount(100),
-            minAssetsOut,
-            address(usdc),
-            alice
-        );
+        uint256 requestId = kpkSharesWithFees.requestRedemption(_sharesAmount(100), minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         // Process the request to trigger fee charging
@@ -564,9 +544,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Calculate adjusted expected assets accounting for fee dilution
         // For very small amounts with no time elapsed, fees won't be charged, so use previewRedemption directly
         uint256 minAssetsOut = kpkSharesWithFees.previewRedemption(shares, SHARES_PRICE, address(usdc));
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares, minAssetsOut, address(usdc), alice
-        );
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
@@ -690,16 +668,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Create and process redemption request (this will charge all fee types)
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares / 2,
-            SHARES_PRICE,
-            address(usdc),
-            timeElapsed
-        );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares / 2, minAssetsOut, address(usdc), alice
-        );
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 2, SHARES_PRICE, address(usdc), timeElapsed);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares / 2, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         vm.prank(ops);
@@ -737,16 +708,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Create and process redeem request to trigger fee calculation
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares / 4,
-            SHARES_PRICE,
-            address(usdc),
-            timeElapsed
-        );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares / 4, minAssetsOut, address(usdc), alice
-        );
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 4, SHARES_PRICE, address(usdc), timeElapsed);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares / 4, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         vm.prank(ops);
@@ -869,16 +833,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
         // Calculate adjusted expected assets accounting for fee dilution (7 days elapsed)
-        uint256 usdcMinAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares / 2,
-            SHARES_PRICE,
-            address(usdc),
-            7 days
-        );
-        uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2, usdcMinAssetsOut, address(usdc), alice
-        );
+        uint256 usdcMinAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 2, SHARES_PRICE, address(usdc), 7 days);
+        uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(shares / 2, usdcMinAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         vm.prank(ops);
@@ -899,16 +856,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // After waiting 7 days, performance fees should be charged again
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (7 days elapsed)
-        uint256 usdtMinAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares / 2,
-            SHARES_PRICE,
-            address(usdt),
-            7 days
-        );
-        uint256 usdtRequestId = kpkSharesWithFees.requestRedemption(
-            shares / 2, usdtMinAssetsOut, address(usdt), alice
-        );
+        uint256 usdtMinAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 2, SHARES_PRICE, address(usdt), 7 days);
+        uint256 usdtRequestId = kpkSharesWithFees.requestRedemption(shares / 2, usdtMinAssetsOut, address(usdt), alice);
         vm.stopPrank();
 
         vm.prank(ops);

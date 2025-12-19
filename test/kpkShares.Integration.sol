@@ -156,16 +156,9 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
         // Create redeem request to trigger fee charging
         vm.startPrank(alice);
         // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares / 4,
-            SHARES_PRICE,
-            address(usdc),
-            timeElapsed
-        );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares / 4, minAssetsOut, address(usdc), alice
-        );
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 4, SHARES_PRICE, address(usdc), timeElapsed);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares / 4, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         // Process the request to trigger all fee types

@@ -278,17 +278,10 @@ contract kpkSharesTestBase is Test {
 
         // Create redeem request
         // Calculate adjusted expected assets accounting for fee dilution
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares,
-            SHARES_PRICE,
-            address(usdc),
-            timeElapsed
-        );
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares, SHARES_PRICE, address(usdc), timeElapsed);
         vm.startPrank(alice);
-        requestId = kpkSharesWithFees.requestRedemption(
-            shares, minAssetsOut, address(usdc), alice
-        );
+        requestId = kpkSharesWithFees.requestRedemption(shares, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         // Process the request
@@ -336,20 +329,20 @@ contract kpkSharesTestBase is Test {
         uint256 targetShares = sharesAmount;
         uint256 currentBalance = kpkSharesContract.balanceOf(investor);
         uint256 sharesNeeded = targetShares > currentBalance ? targetShares - currentBalance : 0;
-        
+
         if (sharesNeeded == 0) {
             // Already have enough shares
             vm.prank(investor);
             kpkSharesContract.approve(address(kpkSharesContract), sharesAmount);
             return 0;
         }
-        
+
         // Calculate assets needed - use a multiplier to account for fee dilution
         // Fees can dilute NAV by a small amount, so we request slightly more assets
         uint256 assetsNeeded = kpkSharesContract.previewRedemption(sharesNeeded, SHARES_PRICE, address(usdc));
         // Add 1% buffer to account for fee dilution
         assetsNeeded = assetsNeeded + (assetsNeeded / 100);
-        
+
         usdc.mint(address(investor), assetsNeeded);
 
         // Approve the contract to spend USDC
@@ -428,49 +421,47 @@ contract kpkSharesTestBase is Test {
     ) internal view returns (uint256) {
         // Calculate base shares without fee dilution
         uint256 baseShares = contractInstance.assetsToShares(assetsAmount, sharesPrice, asset);
-        
+
         // If no time elapsed or fees won't be charged, return base shares
         if (timeElapsed <= MIN_TIME_ELAPSED) {
             return baseShares;
         }
-        
+
         uint256 totalSupply = contractInstance.totalSupply();
         uint256 feeReceiverBalance = contractInstance.balanceOf(feeRecipient);
         uint256 netSupply = totalSupply > feeReceiverBalance ? totalSupply - feeReceiverBalance : 1;
-        
+
         if (netSupply == 0 || totalSupply == 0) {
             return baseShares;
         }
-        
+
         uint256 managementFeeRate = contractInstance.managementFeeRate();
         uint256 performanceFeeRate = contractInstance.performanceFeeRate();
-        
+
         // Calculate estimated fee shares that will be minted (fees are based on netSupply)
         uint256 estimatedManagementFee = 0;
         if (managementFeeRate > 0) {
-            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) 
-                / (10000 * SECONDS_PER_YEAR);
+            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR);
         }
-        
+
         // For performance fees, use same formula (conservative estimate)
         uint256 estimatedPerformanceFee = 0;
         if (performanceFeeRate > 0 && contractInstance.getApprovedAsset(asset).isUsd) {
-            estimatedPerformanceFee = (netSupply * performanceFeeRate * timeElapsed) 
-                / (10000 * SECONDS_PER_YEAR);
+            estimatedPerformanceFee = (netSupply * performanceFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR);
         }
-        
+
         uint256 totalEstimatedFees = estimatedManagementFee + estimatedPerformanceFee;
-        
+
         if (totalEstimatedFees == 0) {
             return baseShares;
         }
-        
-        // Apply dilution factor: 
+
+        // Apply dilution factor:
         // After fees, new totalSupply = totalSupply + totalEstimatedFees
         // Dilution factor = totalSupply / (totalSupply + totalEstimatedFees)
         // Adjusted shares = baseShares * totalSupply / (totalSupply + totalEstimatedFees)
         uint256 adjustedShares = (baseShares * totalSupply) / (totalSupply + totalEstimatedFees);
-        
+
         // Apply additional 3% safety margin to account for rounding and estimation errors
         return adjustedShares;
     }
@@ -491,48 +482,46 @@ contract kpkSharesTestBase is Test {
     ) internal view returns (uint256) {
         // Calculate base assets using previewRedemption (accounts for redemption fees)
         uint256 baseAssets = contractInstance.previewRedemption(sharesAmount, sharesPrice, asset);
-        
+
         // If no time elapsed or fees won't be charged, return base assets
         if (timeElapsed <= MIN_TIME_ELAPSED) {
             return baseAssets;
         }
-        
+
         uint256 totalSupply = contractInstance.totalSupply();
         uint256 feeReceiverBalance = contractInstance.balanceOf(feeRecipient);
         uint256 netSupply = totalSupply > feeReceiverBalance ? totalSupply - feeReceiverBalance : 1;
-        
+
         if (netSupply == 0 || totalSupply == 0) {
             return baseAssets;
         }
-        
+
         uint256 managementFeeRate = contractInstance.managementFeeRate();
         uint256 performanceFeeRate = contractInstance.performanceFeeRate();
-        
+
         // Calculate estimated fee shares that will be minted (fees are based on netSupply)
         uint256 estimatedManagementFee = 0;
         if (managementFeeRate > 0) {
-            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) 
-                / (10000 * SECONDS_PER_YEAR);
+            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR);
         }
-        
+
         uint256 estimatedPerformanceFee = 0;
         if (performanceFeeRate > 0 && contractInstance.getApprovedAsset(asset).isUsd) {
-            estimatedPerformanceFee = (netSupply * performanceFeeRate * timeElapsed) 
-                / (10000 * SECONDS_PER_YEAR);
+            estimatedPerformanceFee = (netSupply * performanceFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR);
         }
-        
+
         uint256 totalEstimatedFees = estimatedManagementFee + estimatedPerformanceFee;
-        
+
         if (totalEstimatedFees == 0) {
             return baseAssets;
         }
-        
+
         // Apply dilution factor:
         // After fees, new totalSupply = totalSupply + totalEstimatedFees
         // Dilution factor = totalSupply / (totalSupply + totalEstimatedFees)
         // Adjusted assets = baseAssets * totalSupply / (totalSupply + totalEstimatedFees)
         uint256 adjustedAssets = (baseAssets * totalSupply) / (totalSupply + totalEstimatedFees);
-        
+
         // Apply additional 10% safety margin to ensure tests pass
         // This accounts for:
         // - Performance fee calculation complexity (watermark-based, hard to predict exactly)
@@ -560,25 +549,24 @@ contract kpkSharesTestBase is Test {
         if (timeElapsed <= MIN_TIME_ELAPSED) {
             return originalPrice;
         }
-        
+
         uint256 totalSupply = contractInstance.totalSupply();
         uint256 feeReceiverBalance = contractInstance.balanceOf(feeRecipient);
         uint256 netSupply = totalSupply > feeReceiverBalance ? totalSupply - feeReceiverBalance : 1;
-        
+
         if (netSupply == 0 || totalSupply == 0) {
             return originalPrice;
         }
-        
+
         uint256 managementFeeRate = contractInstance.managementFeeRate();
         uint256 performanceFeeRate = contractInstance.performanceFeeRate();
-        
+
         // Calculate estimated management fee (time-based, exact formula)
         uint256 estimatedManagementFee = 0;
         if (managementFeeRate > 0) {
-            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) 
-                / (10000 * SECONDS_PER_YEAR);
+            estimatedManagementFee = (netSupply * managementFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR);
         }
-        
+
         // For performance fees, calculate conservative estimate
         // Performance fees are watermark-based, so we use a conservative worst-case estimate
         uint256 estimatedPerformanceFee = 0;
@@ -587,20 +575,20 @@ contract kpkSharesTestBase is Test {
             // This is intentionally conservative to ensure tests pass
             estimatedPerformanceFee = (netSupply * performanceFeeRate) / 20000;
         }
-        
+
         uint256 totalEstimatedFees = estimatedManagementFee + estimatedPerformanceFee;
-        
+
         if (totalEstimatedFees == 0) {
             return originalPrice;
         }
-        
+
         // Apply dilution factor to price:
         // After fees, new totalSupply = totalSupply + totalEstimatedFees
         // NAV per share decreases: newNAV = oldNAV * (totalSupply / (totalSupply + totalEstimatedFees))
         // So adjusted price = originalPrice * (totalSupply / (totalSupply + totalEstimatedFees))
         uint256 adjustedPrice = (originalPrice * totalSupply) / (totalSupply + totalEstimatedFees);
-        
+
         // Apply additional 5% safety margin to account for estimation inaccuracies
-        return adjustedPrice ;
+        return adjustedPrice;
     }
 }

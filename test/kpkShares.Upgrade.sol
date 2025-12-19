@@ -259,7 +259,10 @@ contract kpkSharesUpgradeTest is kpkSharesTestBase {
         vm.startPrank(alice);
         // Use previewRedemption which accounts for redemption fees
         uint256 requestId = kpkSharesContract.requestRedemption(
-            shares / 4, kpkSharesContract.previewRedemption(shares / 4, SHARES_PRICE, address(usdc)), address(usdc), alice
+            shares / 4,
+            kpkSharesContract.previewRedemption(shares / 4, SHARES_PRICE, address(usdc)),
+            address(usdc),
+            alice
         );
         vm.stopPrank();
 

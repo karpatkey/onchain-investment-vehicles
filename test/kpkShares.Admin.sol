@@ -469,15 +469,10 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
         // This means fewer shares will be minted than calculated. We use 0 as minSharesOut
         // to allow the validation to pass even if fees dilute the price slightly
         uint256 expectedShares = kpkSharesContract.assetsToShares(depositAmount, SHARES_PRICE, address(usdc));
-        
+
         // Use 0 as minSharesOut to avoid validation failure due to fee dilution
         // The actual shares minted will be based on the price after fees are charged
-        uint256 requestId = kpkSharesContract.requestSubscription(
-            depositAmount,
-            expectedShares, 
-            address(usdc),
-            alice
-        );
+        uint256 requestId = kpkSharesContract.requestSubscription(depositAmount, expectedShares, address(usdc), alice);
         vm.stopPrank();
         // Process the deposit to create shares
         vm.prank(ops);

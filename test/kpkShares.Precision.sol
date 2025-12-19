@@ -176,16 +176,9 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
 
         vm.startPrank(alice);
         // Calculate adjusted expected assets (no time elapsed, but account for potential fees from share creation)
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees,
-            shares,
-            SHARES_PRICE,
-            address(usdc),
-            0
-        );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares, minAssetsOut, address(usdc), alice
-        );
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares, SHARES_PRICE, address(usdc), 0);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
@@ -382,18 +375,10 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
             vm.startPrank(alice);
             // Calculate adjusted expected assets accounting for fee dilution (30 days elapsed per iteration)
             uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-                kpkSharesWithFees,
-                _sharesAmount(100),
-                SHARES_PRICE,
-                address(usdc),
-                30 days
+                kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 30 days
             );
-            uint256 requestId = kpkSharesWithFees.requestRedemption(
-                _sharesAmount(100),
-                minAssetsOut,
-                address(usdc),
-                alice
-            );
+            uint256 requestId =
+                kpkSharesWithFees.requestRedemption(_sharesAmount(100), minAssetsOut, address(usdc), alice);
             vm.stopPrank();
 
             vm.prank(ops);

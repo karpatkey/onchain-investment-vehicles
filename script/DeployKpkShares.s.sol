@@ -11,14 +11,14 @@ import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
  * @notice Deployment script for kpkShares contract using UUPS proxy pattern
  * @dev This script deploys the kpkShares implementation and a UUPS proxy
  *      Constructor parameters are loaded from a JSON file in the script folder
- * 
+ *
  * Usage:
  *   forge script script/DeployKpkShares.s.sol:DeployKpkShares \
  *     --rpc-url $ETH_RPC_URL \
  *     --broadcast \
  *     --verify \
  *     --sig "run(string)" "vault1"
- * 
+ *
  */
 contract DeployKpkShares is Script {
     using stdJson for string;
@@ -69,7 +69,7 @@ contract DeployKpkShares is Script {
         address feeReceiver = json.readAddress(string.concat(vaultPath, ".feeReceiver"));
         uint256 managementFeeRate = json.readUint(string.concat(vaultPath, ".managementFeeRate"));
         uint256 redemptionFeeRate = json.readUint(string.concat(vaultPath, ".redemptionFeeRate"));
-        
+
         // Performance fee module is optional (can be address(0))
         address performanceFeeModule = address(0);
         if (json.keyExists(string.concat(vaultPath, ".performanceFeeModule"))) {
@@ -78,7 +78,7 @@ contract DeployKpkShares is Script {
                 performanceFeeModule = perfModule;
             }
         }
-        
+
         uint256 performanceFeeRate = json.readUint(string.concat(vaultPath, ".performanceFeeRate"));
 
         // Validate required parameters
@@ -117,10 +117,7 @@ contract DeployKpkShares is Script {
         bytes memory initializerData = abi.encodeCall(KpkShares.initialize, (params));
 
         // Deploy UUPS proxy using OpenZeppelin Foundry Upgrades
-        address proxy = Upgrades.deployUUPSProxy(
-            "kpkShares.sol:KpkShares",
-            initializerData
-        );
+        address proxy = Upgrades.deployUUPSProxy("kpkShares.sol:KpkShares", initializerData);
 
         vm.stopBroadcast();
 
@@ -145,6 +142,5 @@ contract DeployKpkShares is Script {
         console.log("Chain ID:", block.chainid);
         console.log("==========================================");
     }
-
 }
 
