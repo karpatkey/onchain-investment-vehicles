@@ -1,0 +1,31 @@
+{
+  "kpkETH": {
+    "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "admin": "0x0000000000000000000000000000000000000000",
+    "name": "kpk ETH Alpha Fund ",
+    "symbol": "kpkETH",
+    "safe": "0x0000000000000000000000000000000000000000",
+    "subscriptionRequestTtl": 86400,
+    "redemptionRequestTtl": 86400,
+    "feeReceiver": "0x0000000000000000000000000000000000000000",
+    "managementFeeRate": 0,
+    "redemptionFeeRate": 0,
+    "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+    "performanceFeeRate": 0
+  },
+  "kpkUSD": {
+    "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "admin": "0x0000000000000000000000000000000000000000",
+    "name": "kpk USD Alpha Fund ",
+    "symbol": "kpkUSD",
+    "safe": "0x0000000000000000000000000000000000000000",
+    "subscriptionRequestTtl": 172800,
+    "redemptionRequestTtl": 172800,
+    "feeReceiver": "0x0000000000000000000000000000000000000000",
+    "managementFeeRate": 300,
+    "redemptionFeeRate": 150,
+    "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+    "performanceFeeRate": 2000
+  }
+}
+
