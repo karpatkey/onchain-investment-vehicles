@@ -2,8 +2,15 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-evm_version = "cancun"
-solc = "0.8.27"
+fs_permissions = [
+  { access = "read-write", path = "script" },
+  { access = "read-write", path = "out" },
+]
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
+
 
 # Default behaviour changed on commit https://github.com/foundry-rs/foundry/commit/39f13df8971b02f5961d4fd2cb278f44e19a717a
 optimizer = true
@@ -11,3 +18,6 @@ optimizer_runs = 2000
 
 via_ir = true
 no_match_test = "upgrade"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}" }

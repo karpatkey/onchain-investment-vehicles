@@ -4,38 +4,44 @@ pragma solidity ^0.8.0;
 import {Script, console} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {KpkShares} from "../src/kpkShares.sol";
-import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 /**
- * @title DeployKpkShares
- * @notice Deployment script for kpkShares contract using UUPS proxy pattern
+ * @title DeployKpkSharesSepolia
+ * @notice Deployment script for kpkShares contract using UUPS proxy pattern on Sepolia testnet
  * @dev This script deploys the kpkShares implementation and a UUPS proxy
  *      Constructor parameters are loaded from a JSON file in the script folder
  *
  * Usage:
- *   forge script script/DeployKpkShares.s.sol:DeployKpkShares \
- *     --rpc-url $ETH_RPC_URL \
+ *   forge script script/DeployKpkSharesSepolia.s.sol:DeployKpkSharesSepolia \
+ *     --rpc-url $SEPOLIA_RPC_URL \
  *     --broadcast \
  *     --verify \
  *     --sig "run(string)" "vault1"
  *
  */
-contract DeployKpkShares is Script {
+contract DeployKpkSharesSepolia is Script {
     using stdJson for string;
 
-    /// @notice Mainnet chain ID
-    uint256 private constant MAINNET_CHAIN_ID = 1;
+    /// @notice Sepolia chain ID
+    uint256 private constant SEPOLIA_CHAIN_ID = 11155111;
 
     /// @notice Default JSON file path
     string private constant VAULTS_JSON_PATH = "script/vaults.json";
+
+    /// @notice OPERATOR role identifier
+    bytes32 private constant OPERATOR = keccak256("OPERATOR");
+
+    /// @notice DEFAULT_ADMIN_ROLE identifier
+    bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
 
     /**
      * @notice Deploy a specific vault from JSON configuration
      * @param vaultName Name of the vault to deploy (from JSON). Must be non-empty
      */
     function run(string memory vaultName) external {
-        // Verify we're on mainnet
-        require(block.chainid == MAINNET_CHAIN_ID, "This script is only for Ethereum mainnet");
+        // Verify we're on Sepolia
+        require(block.chainid == SEPOLIA_CHAIN_ID, "This script is only for Sepolia testnet");
 
         // Require vault name to be specified
         require(bytes(vaultName).length > 0, "Vault name must be specified");
@@ -101,7 +107,7 @@ contract DeployKpkShares is Script {
 
 
         address deployerAddress = vm.addr(vm.envUint("PRIVATE_KEY"));
-
+        
         // Prepare initialization parameters
         KpkShares.ConstructorParams memory params = KpkShares.ConstructorParams({
             asset: asset,
@@ -137,7 +143,7 @@ contract DeployKpkShares is Script {
         // Log deployment information
         console.log("==========================================");
         console.log("kpkShares Deployment Complete");
-        console.log("=========================================="); 
+        console.log("==========================================");
         console.log("Vault Name:", vaultName);
         console.log("Proxy Address:", proxy);
         console.log("Admin:", admin);
