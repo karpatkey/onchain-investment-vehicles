@@ -135,7 +135,7 @@ contract KpkShares is
     //
 
     /// @notice Parameters for fund initialization
-    /// @param asset The address of the underlying asset (MUST be USDC or a USD stablecoin, as it is configured with isUsd=true)
+    /// @param asset The address of the underlying asset (MUST be configured with isFeeModuleAsset=true to initialize performance fee calculations)
     /// @param admin The address of the initial default admin
     /// @param name The name of the shares
     /// @param symbol The symbol of the shares
@@ -430,8 +430,8 @@ contract KpkShares is
     }
 
     /// @inheritdoc IkpkShares
-    function updateAsset(address asset, bool isUsd, bool canDeposit, bool canRedeem) external isOperator {
-        _updateAsset(asset, isUsd, canDeposit, canRedeem);
+    function updateAsset(address asset, bool isFeeModuleAsset, bool canDeposit, bool canRedeem) external isOperator {
+        _updateAsset(asset, isFeeModuleAsset, canDeposit, canRedeem);
     }
 
     //
@@ -661,8 +661,8 @@ contract KpkShares is
 
     /// @notice Initialize contract state variables
     /// @param params The initialization parameters
-    /// @dev The base asset MUST be USDC or a USD stablecoin, as it is configured with isUsd=true.
-    ///      This is required because the asset is used as the base pricing unit.
+    /// @dev The base asset MUST be configured with isFeeModuleAsset=true to enable performance fee calculations.
+    ///      This asset is used as the base pricing unit for fee module operations.
     function _initializeState(ConstructorParams memory params) internal {
         _updateAsset(params.asset, true, true, true);
         portfolioSafe = params.safe;
@@ -941,7 +941,7 @@ contract KpkShares is
         }
 
         // Performance fees use asset-specific performanceFeeLastUpdate to prevent gaming
-        if (performanceFeeRate > 0 && _approvedAssetsMap[asset].isUsd) {
+        if (performanceFeeRate > 0 && _approvedAssetsMap[asset].isFeeModuleAsset) {
             uint256 perfTimeElapsed = block.timestamp - _performanceFeeLastUpdate;
             if (perfTimeElapsed > MIN_TIME_ELAPSED) {
                 _performanceFeeLastUpdate = block.timestamp;
@@ -1003,11 +1003,11 @@ contract KpkShares is
 
     /// @notice Update asset configuration for deposits and redemptions
     /// @param asset The asset address to configure
-    /// @param isUsd Whether the asset is a USD stablecoin
+    /// @param isFeeModuleAsset Whether the asset can be used for performance fee module calculations
     /// @param canDeposit Whether the asset is approved for deposits
     /// @param canRedeem Whether the asset is approved for redemptions
     /// @dev WARNING: Rebasing tokens (e.g., sUSDe) and fee-on-transfer tokens are NOT supported.
-    function _updateAsset(address asset, bool isUsd, bool canDeposit, bool canRedeem) internal {
+    function _updateAsset(address asset, bool isFeeModuleAsset, bool canDeposit, bool canRedeem) internal {
         if (asset == address(0)) revert InvalidArguments();
         if (asset == address(this)) revert InvalidArguments();
 
@@ -1034,10 +1034,10 @@ contract KpkShares is
                 emit AssetRemove(asset);
             } else {
                 //update asset configuration
-                _approvedAssetsMap[asset].isUsd = isUsd;
+                _approvedAssetsMap[asset].isFeeModuleAsset = isFeeModuleAsset;
                 _approvedAssetsMap[asset].canDeposit = canDeposit;
                 _approvedAssetsMap[asset].canRedeem = canRedeem;
-                emit AssetUpdate(asset, isUsd, canDeposit, canRedeem);
+                emit AssetUpdate(asset, isFeeModuleAsset, canDeposit, canRedeem);
             }
         } else {
             if (!canDeposit && !canRedeem) {
@@ -1050,13 +1050,13 @@ contract KpkShares is
                 uint8 thisDecimals = IERC20Metadata(asset).decimals();
                 if (thisDecimals > 36) revert InvalidArguments(); // Prevent overflow risks
                 _approvedAssetsMap[asset].decimals = thisDecimals;
-                _approvedAssetsMap[asset].isUsd = isUsd;
+                _approvedAssetsMap[asset].isFeeModuleAsset = isFeeModuleAsset;
                 _approvedAssetsMap[asset].canDeposit = canDeposit;
                 _approvedAssetsMap[asset].canRedeem = canRedeem;
                 //add asset
                 _approvedAssets.push(asset);
                 emit AssetAdd(asset);
-                emit AssetUpdate(asset, isUsd, canDeposit, canRedeem);
+                emit AssetUpdate(asset, isFeeModuleAsset, canDeposit, canRedeem);
             }
         }
     }
@@ -1127,7 +1127,7 @@ contract KpkShares is
     /// @notice Set the performance fee rate
     /// @param newRate The new performance fee rate in basis points
     function _setPerformanceFeeRate(uint256 newRate, address usdAsset) internal {
-        if (performanceFeeRate > 0 && _approvedAssetsMap[usdAsset].isUsd) {
+        if (performanceFeeRate > 0 && _approvedAssetsMap[usdAsset].isFeeModuleAsset) {
             _chargePerformanceFee(_lastSettledPrice[usdAsset], block.timestamp - _performanceFeeLastUpdate);
         }
         // if performance fees is not charged due to incompatible asset, update the timestamp

@@ -79,14 +79,14 @@ interface IkpkShares is IERC165 {
     /// @param asset The address of the asset
     /// @param symbol The asset's symbol (e.g., "USDC", "ETH")
     /// @param decimals The number of decimal places for the asset
-    /// @param isUsd Whether the asset is a USD stablecoin
+    /// @param isFeeModuleAsset Whether the asset can be used for performance fee module calculations
     /// @param canDeposit Whether the asset is approved for deposits
     /// @param canRedeem Whether the asset is approved for redemptions
     struct ApprovedAsset {
         address asset;
         string symbol;
         uint8 decimals;
-        bool isUsd;
+        bool isFeeModuleAsset;
         bool canDeposit;
         bool canRedeem;
     }
@@ -263,10 +263,10 @@ interface IkpkShares is IERC165 {
 
     /// @notice Event emitted when an asset is updated
     /// @param asset The address of the asset
-    /// @param isUSD Whether the asset is a USD stablecoin
+    /// @param isFeeModuleAsset Whether the asset can be used for performance fee module calculations
     /// @param canDeposit Whether the asset is approved for deposits
     /// @param canRedeem Whether the asset is approved for redemptions
-    event AssetUpdate(address indexed asset, bool isUSD, bool canDeposit, bool canRedeem);
+    event AssetUpdate(address indexed asset, bool isFeeModuleAsset, bool canDeposit, bool canRedeem);
 
     /// @notice Event emitted when an asset is added
     /// @param asset The address of the asset
@@ -441,10 +441,10 @@ interface IkpkShares is IERC165 {
 
     /// @notice Updates an asset configuration for deposits and redemption
     /// @param asset The asset address to configure
-    /// @param isUSD Whether the asset is a USD stablecoin
+    /// @param isFeeModuleAsset Whether the asset can be used for performance fee module calculations
     /// @param canDeposit Whether the asset is approved for deposits
     /// @param canRedeem Whether the asset is approved for redemptions
-    function updateAsset(address asset, bool isUSD, bool canDeposit, bool canRedeem) external;
+    function updateAsset(address asset, bool isFeeModuleAsset, bool canDeposit, bool canRedeem) external;
 
     /// @notice Returns a request (deposit or redeem) by ID
     /// @param id The request IDs
