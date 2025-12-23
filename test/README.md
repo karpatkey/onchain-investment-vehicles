@@ -182,7 +182,7 @@ forge test --contracts test/fund/kpkShares.Main.sol --match-test "testUpgrade*"
 
 ### Using Coverage Analysis Tools
 
-**Important**: Coverage analysis commands should be run from the contracts directory (`karpatkey-tokenized-fund/contracts`). The scripts use paths relative to the contracts directory.
+**Important**: The scripts use paths relative to the root directory.
 
 #### Quick Coverage Summary
 ```bash
