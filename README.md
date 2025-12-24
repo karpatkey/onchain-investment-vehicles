@@ -156,7 +156,7 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 | Fee Type | Trigger | Calculation Method | Collection Method | Frequency | Destination | Event Emission |
 |----------|---------|-------------------|-------------------|-----------|-------------|----------------|
 | **Management Fee** | Any request processing | `(totalSupply - feeReceiverBalance) * managementFeeRate * timeElapsed / (10_000 * SECONDS_PER_YEAR)` | New shares minted | Only when `timeElapsed > MIN_TIME_ELAPSED` | Fee Receiver | Only when fee > 0 |
-| **Performance Fee** | Any request processing | Via performance fee module based on price appreciation | New shares minted | Only when `timeElapsed > MIN_TIME_ELAPSED` and `asset.isUsd == true` | Fee Receiver | Only when fee > 0 |
+| **Performance Fee** | Any request processing | Via performance fee module based on price appreciation | New shares minted | Only when `timeElapsed > MIN_TIME_ELAPSED` and `asset.isFeeModuleAsset == true` | Fee Receiver | Only when fee > 0 |
 | **Redemption Fee** | Redemption request processing only | `request.shares * redemptionFeeRate / 10000` | Shares transferred from escrow | Every redemption approval | Fee Receiver | `RedemptionApproval` event (includes `redemptionFee` parameter) |
 
 ### Request Status Transitions
@@ -263,7 +263,7 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 ### Constructor Parameters
 ```solidity
 struct ConstructorParams {
-    address asset;           // Base asset address (MUST be USDC or a USD stablecoin)
+    address asset;           // Base asset address
     address admin;           // Initial admin address
     string name;             // Share token name
     string symbol;           // Share token symbol
@@ -281,11 +281,11 @@ struct ConstructorParams {
 ### Initialization Flow
 1. Contract deployment via proxy
 2. Parameter validation
-3. Asset configuration setup (base asset configured as USD stablecoin with isUsd=true)
+3. Asset configuration setup (base asset configured with isFeeModuleAsset=true)
 4. Role assignment
 5. State initialization
 
-**Important**: The base asset (`asset` parameter) MUST be USDC or a USD stablecoin, as it is automatically configured with `isUsd=true` during initialization. This is required because the base asset is used as the pricing unit without requiring an oracle (assumed $1.00 value).
+**Important**: The base asset (`asset` parameter) is automatically configured with `isFeeModuleAsset=true` during initialization. Performance fees are only calculated when processing requests for assets that have `isFeeModuleAsset=true` enabled. The base asset must have this flag enabled to ensure performance fees can be calculated for that asset.
 
 ## Testing & Verification
 

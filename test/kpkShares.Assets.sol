@@ -69,7 +69,7 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         // Asset removal now properly clears the mapping data
         assertFalse(asset.canDeposit); // Cleared by removal logic
         assertFalse(asset.canRedeem); // Cleared by removal logic
-        assertEq(asset.isUsd, false); // Cleared by removal logic
+        assertEq(asset.isFeeModuleAsset, false); // Cleared by removal logic
         assertEq(asset.asset, address(0)); // Asset address cleared
         assertEq(asset.decimals, 0); // Decimals cleared
     }
@@ -132,7 +132,7 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         assertTrue(asset.canRedeem); // Set to true during setup
         assertEq(asset.decimals, 6);
         assertEq(asset.asset, address(usdc));
-        assertEq(asset.isUsd, true);
+        assertEq(asset.isFeeModuleAsset, true);
         // Non-existent asset should return default values
         assertFalse(kpkSharesContract.getApprovedAsset(address(alice)).canDeposit);
 
@@ -342,20 +342,20 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
     }
 
     function testAssetUpdateWithNewIsUsd() public {
-        // Test updating an asset with a new isUsd value
+        // Test updating an asset with a new isFeeModuleAsset value
         Mock_ERC20 asset = new Mock_ERC20("ASSET", 18);
 
         // Add asset initially
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(asset), true, true, true);
 
-        // Update with new isUsd value
+        // Update with new isFeeModuleAsset value
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(asset), false, true, true);
 
-        // Check that the isUsd was updated
+        // Check that the isFeeModuleAsset was updated
         IkpkShares.ApprovedAsset memory assetConfig = kpkSharesContract.getApprovedAsset(address(asset));
-        assertEq(assetConfig.isUsd, false);
+        assertEq(assetConfig.isFeeModuleAsset, false);
     }
 
     function testAssetUpdateWithSymbolAndDecimals() public {
@@ -412,7 +412,7 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(newAsset), true, true, true);
 
-        // Test AssetUpdated event when changing isUsd
+        // Test AssetUpdated event when changing isFeeModuleAsset
         vm.prank(ops);
         vm.expectEmit(true, true, false, true);
         emit IkpkShares.AssetUpdate(address(newAsset), false, true, true);
@@ -453,7 +453,7 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         assertFalse(removedAsset.canDeposit); // Cleared by removal logic
         assertFalse(removedAsset.canRedeem); // Cleared by removal logic
         assertEq(removedAsset.decimals, 0); // Decimals cleared
-        assertEq(removedAsset.isUsd, false); // isUsd cleared
+        assertEq(removedAsset.isFeeModuleAsset, false); // isFeeModuleAsset cleared
         assertEq(removedAsset.asset, address(0)); // Asset address cleared
 
         // Check that it's not in the list

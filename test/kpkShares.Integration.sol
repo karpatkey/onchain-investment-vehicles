@@ -274,8 +274,7 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
         asset1.mint(carol, 100e8);
         asset1.approve(address(kpkSharesContract), type(uint256).max);
 
-        uint256 shares = kpkSharesContract.assetsToShares(100e8, SHARES_PRICE, address(asset1));
-
+        uint256 shares = 100e18; // Approximate shares for 100e8 assets at SHARES_PRICE
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAnApprovedAsset.selector));
         kpkSharesContract.requestSubscription(100e8, shares, address(asset1), carol);
         vm.stopPrank();

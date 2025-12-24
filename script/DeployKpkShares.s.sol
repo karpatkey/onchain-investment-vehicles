@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {Script, console} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {KpkShares} from "../src/kpkShares.sol";
-import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 /**
  * @title DeployKpkShares
@@ -28,6 +28,12 @@ contract DeployKpkShares is Script {
 
     /// @notice Default JSON file path
     string private constant VAULTS_JSON_PATH = "script/vaults.json";
+
+    /// @notice OPERATOR role identifier
+    bytes32 private constant OPERATOR = keccak256("OPERATOR");
+
+    /// @notice DEFAULT_ADMIN_ROLE identifier
+    bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
 
     /**
      * @notice Deploy a specific vault from JSON configuration

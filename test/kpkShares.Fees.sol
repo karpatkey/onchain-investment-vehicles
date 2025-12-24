@@ -746,7 +746,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         eth.mint(address(alice), _sharesAmount(10_000));
 
         vm.prank(ops);
-        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
+        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isFeeModuleAsset=false
 
         // Grant allowance for ETH
         vm.prank(safe);
@@ -796,9 +796,12 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         assertGt(finalFeeBalance, initialFeeBalance, "Performance fees should be charged even after non-USD processing");
     }
 
-    /// @notice Test that multiple USD assets have independent fee clocks
-    /// @dev This tests the multiple USD assets gaming vector
-    function testMultipleUsdAssetsIndependentFeeClocks() public {
+    /// @notice Test that performance fees use a shared clock and watermark across all USD assets
+    /// @dev This verifies that:
+    ///      1. All USD assets share the same performance fee clock (_performanceFeeLastUpdate)
+    ///      2. Performance fees are watermark-based and only charge when price increases above watermark
+    ///      3. After sufficient time passes and price increases, fees are charged again
+    function testSharedPerformanceFeeClockAndWatermarkAcrossUsdAssets() public {
         // Deploy contract with performance fees enabled
         KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
             0, // No management fee
@@ -812,7 +815,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         usdt.mint(address(alice), _usdcAmount(10_000));
 
         vm.prank(ops);
-        kpkSharesWithFees.updateAsset(address(usdt), true, true, true); // isUsd=true
+        kpkSharesWithFees.updateAsset(address(usdt), true, true, true); // isFeeModuleAsset=true
 
         // Grant allowance for USDT
         vm.prank(safe);
@@ -848,29 +851,27 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         assertGt(feeBalanceAfterUsdc, initialFeeBalance, "USDC batch should charge performance fees");
 
         // Wait enough time (more than MIN_TIME_ELAPSED) for performance fees to accrue again
-        // Note: Performance fee clock is shared across all USD assets, so we need to wait
-        // at least MIN_TIME_ELAPSED (6 hours) after the USDC processing
+        // Note: Performance fee clock is SHARED across all USD assets (single _performanceFeeLastUpdate),
+        // so we need to wait at least MIN_TIME_ELAPSED (6 hours) after the USDC processing
         skip(7 days); // More than MIN_TIME_ELAPSED
 
-        // Process a batch with USDT (second USD asset)
-        // After waiting 7 days, performance fees should be charged again
+        // Process USDT batch with increased price to trigger watermark-based performance fees
+        uint256 increasedPrice = SHARES_PRICE + (SHARES_PRICE / 100); // 1% price increase
         vm.startPrank(alice);
-        // Calculate adjusted expected assets accounting for fee dilution (7 days elapsed)
         uint256 usdtMinAssetsOut =
-            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 2, SHARES_PRICE, address(usdt), 7 days);
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 2, increasedPrice, address(usdt), 7 days);
         uint256 usdtRequestId = kpkSharesWithFees.requestRedemption(shares / 2, usdtMinAssetsOut, address(usdt), alice);
         vm.stopPrank();
 
         vm.prank(ops);
         approveRequests[0] = usdtRequestId;
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdt), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdt), increasedPrice);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
-        // USDT should charge fees based on its own clock (7 days + 1 hour > 6 hours)
-        // This demonstrates that each USD asset has its own independent fee clock
+        // Fees should charge: shared clock allows it (7 days elapsed) and price increased above watermark
         assertGt(
-            finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees based on its own clock"
+            finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees when price increases above watermark"
         );
     }
 
@@ -947,7 +948,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         eth.mint(address(alice), _sharesAmount(10_000));
 
         vm.prank(ops);
-        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isUsd=false
+        kpkSharesWithFees.updateAsset(address(eth), false, true, true); // isFeeModuleAsset=false
 
         // Grant allowance for ETH
         vm.prank(safe);
