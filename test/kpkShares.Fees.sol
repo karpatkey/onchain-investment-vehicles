@@ -871,7 +871,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
 
         // Fees should charge: shared clock allows it (7 days elapsed) and price increased above watermark
         assertGt(
-            finalFeeBalance, feeBalanceAfterUsdc, "USDT batch should charge performance fees when price increases above watermark"
+            finalFeeBalance,
+            feeBalanceAfterUsdc,
+            "USDT batch should charge performance fees when price increases above watermark"
         );
     }
 

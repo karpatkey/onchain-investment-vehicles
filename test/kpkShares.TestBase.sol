@@ -380,9 +380,8 @@ contract kpkSharesTestBase is Test {
         returns (uint256)
     {
         // Calculate assets needed accounting for exact fee dilution that will occur during processing
-        uint256 assets = _calculateAssetsForSubscriptionWithFeeDilution(
-            contractInstance, sharesAmount, SHARES_PRICE, address(usdc)
-        );
+        uint256 assets =
+            _calculateAssetsForSubscriptionWithFeeDilution(contractInstance, sharesAmount, SHARES_PRICE, address(usdc));
         usdc.mint(address(investor), assets);
 
         // Approve the new contract instance to spend USDC
@@ -448,7 +447,7 @@ contract kpkSharesTestBase is Test {
         // Calculate fees using the exact formulas from the contract
         // For new contracts (first subscription), timeElapsed will be very small (< MIN_TIME_ELAPSED),
         // so fees won't be charged. We check this by comparing totalSupply.
-        
+
         // Estimate timeElapsed: if totalSupply is very small, this is likely the first subscription
         // and fees won't be charged. Otherwise, we estimate conservatively.
         uint256 estimatedTimeElapsed = 0;
@@ -461,7 +460,8 @@ contract kpkSharesTestBase is Test {
         if (managementFeeRate > 0 && estimatedTimeElapsed > 0) {
             // Exact formula from _chargeManagementFee:
             // feeAmount = ((totalSupply - feeReceiverBalance) * managementFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR)
-            estimatedManagementFee = (netSupply * managementFeeRate * estimatedTimeElapsed) / (10_000 * SECONDS_PER_YEAR);
+            estimatedManagementFee =
+                (netSupply * managementFeeRate * estimatedTimeElapsed) / (10_000 * SECONDS_PER_YEAR);
         }
 
         uint256 estimatedPerformanceFee = 0;
@@ -489,7 +489,7 @@ contract kpkSharesTestBase is Test {
         // adjustedAssets = baseAssets * (newTotalSupply / totalSupply)
         uint256 newTotalSupply = totalSupply + totalEstimatedFees;
         uint256 adjustedAssets = (baseAssets * newTotalSupply) / totalSupply;
-        
+
         // Add 1 wei buffer to account for rounding errors in the calculation
         return adjustedAssets + 1;
     }

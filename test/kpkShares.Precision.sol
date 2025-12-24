@@ -93,10 +93,10 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         // With redemption fee rate of 0.5% (50 bps), we need enough shares to cover fee and result in >0 assets
         uint256 smallShares = 1e15; // 1000x larger to ensure non-zero result after fees
         uint256 assets = kpkSharesContract.previewRedemption(smallShares, SHARES_PRICE, address(usdc));
-        
+
         // Should get non-zero assets for this amount
         assertGt(assets, 0, "Small shares should result in non-zero assets");
-        
+
         // Calculate expected: (shares - redemptionFee) converted to assets
         uint256 redemptionFee = (smallShares * kpkSharesContract.redemptionFeeRate()) / 10000;
         uint256 netShares = smallShares - redemptionFee;
@@ -108,7 +108,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         // Test that very small amounts may round to zero (expected behavior)
         uint256 barelyAnyShares = 1e11; // Very small amount
         uint256 assetsBarelyAny = kpkSharesContract.previewRedemption(barelyAnyShares, SHARES_PRICE, address(usdc));
-        
+
         // For very small amounts, assets might be 0 due to rounding - this is expected
         // Verify it's non-negative and doesn't revert
         assertGe(assetsBarelyAny, 0, "Very small shares should not revert, may round to 0");
@@ -132,11 +132,11 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         uint256 testShares = _sharesAmount(1000);
         uint256 testAssets = kpkSharesContract.previewRedemption(testShares, SHARES_PRICE, address(usdc));
         uint256 sharesBack = kpkSharesContract.assetsToShares(testAssets, SHARES_PRICE, address(usdc));
-        
+
         // After redemption fee, we should get back approximately the net shares
         uint256 testRedemptionFee = (testShares * kpkSharesContract.redemptionFeeRate()) / 10000;
         uint256 expectedNetShares = testShares - testRedemptionFee;
-        
+
         // Allow small tolerance for rounding in the round-trip
         assertApproxEqRel(sharesBack, expectedNetShares, 1e4); // 1% tolerance for round-trip precision
     }
@@ -185,7 +185,7 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         // Calculate expected fee using the exact formula from _chargeManagementFee:
         // feeAmount = ((totalSupply - feeReceiverBalance) * managementFeeRate * timeElapsed) / (10000 * SECONDS_PER_YEAR)
         uint256 expectedFee = (netSupply * 1 * timeElapsed) / (10_000 * SECONDS_PER_YEAR);
-        
+
         // Allow small tolerance for rounding differences (management fees use Floor rounding)
         // The actual fee might be slightly different due to the state at the time of calculation
         assertApproxEqRel(actualFee, expectedFee, 1e3); // Allow 0.1% tolerance for rounding

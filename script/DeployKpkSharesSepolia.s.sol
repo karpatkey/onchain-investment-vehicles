@@ -77,7 +77,6 @@ contract DeployKpkSharesSepolia is Script {
         uint256 managementFeeRate = json.readUint(string.concat(vaultPath, ".managementFeeRate"));
         uint256 redemptionFeeRate = json.readUint(string.concat(vaultPath, ".redemptionFeeRate"));
 
-
         // Performance fee module is optional (can be address(0))
         address performanceFeeModule = address(0);
         if (json.keyExists(string.concat(vaultPath, ".performanceFeeModule"))) {
@@ -105,9 +104,8 @@ contract DeployKpkSharesSepolia is Script {
 
         vm.startBroadcast();
 
-
         address deployerAddress = vm.addr(vm.envUint("PRIVATE_KEY"));
-        
+
         // Prepare initialization parameters
         KpkShares.ConstructorParams memory params = KpkShares.ConstructorParams({
             asset: asset,

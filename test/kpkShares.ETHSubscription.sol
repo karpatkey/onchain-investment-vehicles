@@ -69,9 +69,8 @@ contract kpkSharesETHSubscriptionTest is kpkSharesTestBase {
         // Calculate shares using the contract's assetsToShares function to get exact calculation
         // 10 ETH at $3500/ETH = $35,000 worth, but we need to use the contract's formula
         // which accounts for decimal conversions properly
-        uint256 sharesOut = kpkSharesContract.assetsToShares(
-            ethSubscriptionAmount, _ETH_PRICE_USD_8_DECIMALS, address(mockEth)
-        );
+        uint256 sharesOut =
+            kpkSharesContract.assetsToShares(ethSubscriptionAmount, _ETH_PRICE_USD_8_DECIMALS, address(mockEth));
         uint256 initialAliceUsdc = usdc.balanceOf(alice);
 
         vm.startPrank(alice);
@@ -129,13 +128,14 @@ contract kpkSharesETHSubscriptionTest is kpkSharesTestBase {
         // The actual shares minted may differ slightly from the initial calculation due to
         // decimal precision in the conversion formula
         uint256 actualSharesMinted = sharesMinted;
-        uint256 expectedUsdcFromShares = kpkSharesContract.sharesToAssets(actualSharesMinted, SHARES_PRICE, address(usdc));
-        
+        uint256 expectedUsdcFromShares =
+            kpkSharesContract.sharesToAssets(actualSharesMinted, SHARES_PRICE, address(usdc));
+
         // Account for redemption fees (0% in this test, but previewRedemption handles it)
         uint256 redemptionFee = (actualSharesMinted * kpkSharesContract.redemptionFeeRate()) / 10000;
         uint256 netShares = actualSharesMinted - redemptionFee;
         uint256 expectedUsdc = kpkSharesContract.sharesToAssets(netShares, SHARES_PRICE, address(usdc));
-        
+
         assertApproxEqAbs(
             finalUsdc - initialAliceUsdc,
             expectedUsdc,

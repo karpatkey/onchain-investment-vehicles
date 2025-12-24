@@ -77,7 +77,6 @@ contract DeployKpkShares is Script {
         uint256 managementFeeRate = json.readUint(string.concat(vaultPath, ".managementFeeRate"));
         uint256 redemptionFeeRate = json.readUint(string.concat(vaultPath, ".redemptionFeeRate"));
 
-
         // Performance fee module is optional (can be address(0))
         address performanceFeeModule = address(0);
         if (json.keyExists(string.concat(vaultPath, ".performanceFeeModule"))) {
@@ -104,7 +103,6 @@ contract DeployKpkShares is Script {
         console.log("==========================================");
 
         vm.startBroadcast();
-
 
         address deployerAddress = vm.addr(vm.envUint("PRIVATE_KEY"));
 
@@ -143,7 +141,7 @@ contract DeployKpkShares is Script {
         // Log deployment information
         console.log("==========================================");
         console.log("kpkShares Deployment Complete");
-        console.log("=========================================="); 
+        console.log("==========================================");
         console.log("Vault Name:", vaultName);
         console.log("Proxy Address:", proxy);
         console.log("Admin:", admin);
