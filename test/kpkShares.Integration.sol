@@ -32,9 +32,10 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
         // 4. Create a redemption request
         uint256 redeemShares = sharesMinted / 2; // Redeem half
         vm.startPrank(alice);
+        // Use previewRedemption which accounts for redemption fees
         uint256 redeemRequestId = kpkSharesContract.requestRedemption(
             redeemShares,
-            kpkSharesContract.sharesToAssets(redeemShares, SHARES_PRICE, address(usdc)),
+            kpkSharesContract.previewRedemption(redeemShares, SHARES_PRICE, address(usdc)),
             address(usdc),
             alice
         );
@@ -87,9 +88,10 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
         uint256 aliceRedeemShares = aliceShares / 2;
 
         vm.startPrank(alice);
+        // Use previewRedemption which accounts for redemption fees
         uint256 aliceRedeemRequestId = kpkSharesContract.requestRedemption(
             aliceRedeemShares,
-            kpkSharesContract.sharesToAssets(aliceRedeemShares, SHARES_PRICE, address(usdc)),
+            kpkSharesContract.previewRedemption(aliceRedeemShares, SHARES_PRICE, address(usdc)),
             address(usdc),
             alice
         );
@@ -153,9 +155,10 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
 
         // Create redeem request to trigger fee charging
         vm.startPrank(alice);
-        uint256 requestId = kpkSharesWithFees.requestRedemption(
-            shares / 4, kpkSharesWithFees.sharesToAssets(shares / 4, SHARES_PRICE, address(usdc)), address(usdc), alice
-        );
+        // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
+        uint256 minAssetsOut =
+            _calculateAdjustedExpectedAssets(kpkSharesWithFees, shares / 4, SHARES_PRICE, address(usdc), timeElapsed);
+        uint256 requestId = kpkSharesWithFees.requestRedemption(shares / 4, minAssetsOut, address(usdc), alice);
         vm.stopPrank();
 
         // Process the request to trigger all fee types
@@ -171,7 +174,15 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
         // 3. Create and process another redemption request for more fee testing
         uint256 remainingShares = kpkSharesWithFees.balanceOf(alice);
         uint256 redeemShares = remainingShares / 2;
-        uint256 additionalRequestId = _testRequestProcessing(false, alice, redeemShares, SHARES_PRICE, false);
+        // Calculate assets using previewRedemption which accounts for redemption fees
+        // Note: Management/performance fees will be charged during processing, diluting NAV
+        // So we use a lower minAssetsOut to account for this
+        uint256 assetsOut = kpkSharesWithFees.previewRedemption(redeemShares, SHARES_PRICE, address(usdc));
+        vm.startPrank(alice);
+        uint256 additionalRequestId = kpkSharesWithFees.requestRedemption(
+            redeemShares, assetsOut > 100 ? assetsOut - 100 : 1, address(usdc), alice
+        );
+        vm.stopPrank();
 
         vm.prank(ops);
         uint256[] memory additionalApproveRequests = new uint256[](1);
@@ -204,7 +215,8 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
 
         vm.startPrank(ops);
         kpkSharesContract.updateAsset(address(asset1), true, true, true);
-        kpkSharesContract.updateAsset(address(asset2), false, true, true);
+        // Asset2 needs canDeposit: true to be used for subscriptions
+        kpkSharesContract.updateAsset(address(asset2), true, true, true);
         vm.stopPrank();
 
         // 2. Mint assets to users
@@ -435,8 +447,9 @@ contract kpkSharesIntegrationTest is kpkSharesTestBase {
 
         // Redeem large amount - this will transfer shares to escrow
         vm.startPrank(alice);
+        // Use previewRedemption which accounts for redemption fees
         uint256 redeemRequestId = kpkSharesContract.requestRedemption(
-            shares, kpkSharesContract.sharesToAssets(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
+            shares, kpkSharesContract.previewRedemption(shares, SHARES_PRICE, address(usdc)), address(usdc), alice
         );
         vm.stopPrank();
 

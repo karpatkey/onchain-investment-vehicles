@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
+import {console} from "forge-std/console.sol";
 
 /// @notice Gas cost measurement tests for kpkShares contract
 contract kpkSharesGasTest is kpkSharesTestBase {
@@ -36,7 +37,8 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         uint256 requestIdSubscription = _createSharesForTesting(alice, shares);
         assertEq(requestIdSubscription, 1);
 
-        uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+        // Use previewRedemption which accounts for redemption fees
+        uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
         uint256 gasStart = gasleft();
         vm.prank(alice);
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
@@ -74,7 +76,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
 
         // Create shares and redemption request
         _createSharesForTesting(alice, shares);
-        uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+        uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
         vm.prank(alice);
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
 
@@ -141,7 +143,8 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         // Create shares and redemption request
         uint256 requestIdSubscription = _createSharesForTesting(alice, shares);
         assertEq(requestIdSubscription, 1);
-        uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+        // Use previewRedemption which accounts for redemption fees
+        uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
         vm.prank(alice);
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
 
@@ -165,7 +168,8 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         // Create shares and redemption request
         uint256 requestIdSubscription = _createSharesForTesting(alice, shares);
         assertEq(requestIdSubscription, 1);
-        uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+        // Use previewRedemption which accounts for redemption fees
+        uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
         vm.prank(alice);
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
 
@@ -250,7 +254,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         uint256 gasStart = gasleft();
         vm.prank(admin);
         kpkSharesContract.setRedemptionRequestTtl(2 days);
-        uint256 gasUsed = gasleft();
+        uint256 gasUsed = gasStart - gasleft();
 
         console.log("Gas used for setRedemptionRequestTtl:", gasUsed);
         assertTrue(gasUsed > 0);
@@ -298,7 +302,8 @@ contract kpkSharesGasTest is kpkSharesTestBase {
 
         uint256[] memory approveRequests = new uint256[](5);
         for (uint256 i = 0; i < 5; i++) {
-            uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+            // Use previewRedemption which accounts for redemption fees
+            uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
             vm.prank(alice);
             uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
             approveRequests[i] = requestId;
@@ -337,7 +342,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         assertTrue(gasUsed > 0);
     }
 
-    function testGas_AssetsToShares() public {
+    function testGas_AssetsToShares() public view {
         uint256 assets = _usdcAmount(1000);
         uint256 price = SHARES_PRICE;
 
@@ -350,7 +355,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         assertTrue(shares > 0);
     }
 
-    function testGas_SharesToAssets() public {
+    function testGas_SharesToAssets() public view {
         uint256 shares = _sharesAmount(1000);
         uint256 price = SHARES_PRICE;
 
@@ -363,7 +368,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         assertTrue(assets > 0);
     }
 
-    function testGas_GetApprovedAssets() public {
+    function testGas_GetApprovedAssets() public view {
         uint256 gasStart = gasleft();
         address[] memory assets = kpkSharesContract.getApprovedAssets();
         uint256 gasUsed = gasStart - gasleft();
@@ -373,7 +378,7 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         assertTrue(assets.length > 0);
     }
 
-    function testGas_GetApprovedAsset() public {
+    function testGas_GetApprovedAsset() public view {
         uint256 gasStart = gasleft();
         IkpkShares.ApprovedAsset memory asset = kpkSharesContract.getApprovedAsset(address(usdc));
         uint256 gasUsed = gasStart - gasleft();
@@ -419,7 +424,8 @@ contract kpkSharesGasTest is kpkSharesTestBase {
         // Create shares and redemption request
         uint256 requestIdSubscription = _createSharesForTesting(alice, shares);
         assertEq(requestIdSubscription, 1);
-        uint256 assetsOut = kpkSharesContract.sharesToAssets(shares, price, address(usdc));
+        // Use previewRedemption which accounts for redemption fees
+        uint256 assetsOut = kpkSharesContract.previewRedemption(shares, price, address(usdc));
         vm.prank(alice);
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
 

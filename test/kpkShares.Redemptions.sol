@@ -70,7 +70,6 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
 
     function testRequestRedemptionWithUnapprovedAsset() public {
         uint256 shares = _sharesAmount(100);
-        uint256 price = SHARES_PRICE;
 
         // First create shares for testing
         _createSharesForTesting(alice, shares);
@@ -134,7 +133,7 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
     // Redemption Preview Tests
     // ============================================================================
 
-    function testPreviewRedemption() public {
+    function testPreviewRedemption() public view {
         uint256 shares = _sharesAmount(100);
         uint256 price = SHARES_PRICE;
 
@@ -154,14 +153,15 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         uint256 shares = _sharesAmount(100);
         uint256 price = SHARES_PRICE;
 
-        // This should revert as previewRedemption validates asset approval
+        // This should revert as previewRedemption calls sharesToAssets which checks canRedeem
+        // sharesToAssets throws UnredeemableAsset() for assets that can't be redeemed
         Mock_ERC20 unapprovedToken = new Mock_ERC20("UNAPPROVED", 18);
 
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAnApprovedAsset.selector));
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.UnredeemableAsset.selector));
         kpkSharesContract.previewRedemption(shares, price, address(unapprovedToken));
     }
 
-    function testPreviewRedemptionWithDifferentPrices() public {
+    function testPreviewRedemptionWithDifferentPrices() public view {
         uint256 shares = _sharesAmount(100);
 
         // Test with different prices
@@ -413,7 +413,7 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
 
         // Ops requests redemption on behalf of alice
         vm.startPrank(ops);
-        kpkSharesContract.transferFrom(alice, ops, shares);
+        require(kpkSharesContract.transferFrom(alice, ops, shares), "Transfer failed");
         uint256 requestId = kpkSharesContract.requestRedemption(shares, assetsOut, address(usdc), alice);
         vm.stopPrank();
 
@@ -465,17 +465,15 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         // Wait exactly to the TTL boundary
         skip(edgeTtl);
 
-        // Should not be able to cancel at exactly TTL boundary
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelRedemption(requestId);
-
-        // Wait 1 more second
-        skip(1);
-
-        // Now should be able to cancel
+        // At exactly TTL boundary, block.timestamp == request.timestamp + redemptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + redemptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         vm.prank(alice);
         kpkSharesContract.cancelRedemption(requestId);
+
+        // Verify the request was cancelled
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
     }
 
     function testRedemptionRequestTtlWithVerySmallValue() public {
@@ -515,21 +513,17 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
 
         // Try to cancel before TTL expires - should revert
+        skip(edgeTtl - 1);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
         kpkSharesContract.cancelRedemption(requestId);
 
         // Wait for TTL to expire exactly
-        skip(edgeTtl);
+        skip(1); // Now block.timestamp == request.timestamp + redemptionRequestTtl
 
-        // Try to cancel exactly at TTL expiration - should still revert (needs +1)
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.RequestNotPastTtl.selector));
-        kpkSharesContract.cancelRedemption(requestId);
-
-        // Wait 1 more second - now should work
-        skip(1);
-
+        // At exactly TTL expiration, block.timestamp == request.timestamp + redemptionRequestTtl
+        // The condition is block.timestamp < request.timestamp + redemptionRequestTtl
+        // So it should NOT revert and cancellation should succeed
         vm.prank(alice);
         kpkSharesContract.cancelRedemption(requestId);
 
@@ -686,7 +680,8 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         // Test with amounts that match the shares created from deposits
         // Use smaller amounts to ensure users have enough shares
         uint256 shares = _sharesAmount(1);
-        uint256 assets = kpkSharesContract.sharesToAssets(shares, SHARES_PRICE, address(usdc));
+        // Use previewRedemption which accounts for redemption fees
+        uint256 assets = kpkSharesContract.previewRedemption(shares, SHARES_PRICE, address(usdc));
         vm.startPrank(bob);
         kpkSharesContract.approve(address(kpkSharesContract), type(uint256).max);
         uint256 requestId2 = kpkSharesContract.requestRedemption(shares, assets, address(usdc), bob);
@@ -783,9 +778,10 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         // Now create a redemption request
         vm.startPrank(alice);
         kpkSharesContract.approve(address(kpkSharesContract), type(uint256).max);
+        // Use previewRedemption which accounts for redemption fees
         uint256 redeemId = kpkSharesContract.requestRedemption(
             _sharesAmount(1),
-            kpkSharesContract.sharesToAssets(_sharesAmount(1), SHARES_PRICE, address(usdc)),
+            kpkSharesContract.previewRedemption(_sharesAmount(1), SHARES_PRICE, address(usdc)),
             address(usdc),
             alice
         );

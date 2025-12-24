@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "./kpkShares.TestBase.sol";
-import "src/IkpkShares.sol";
 
 /// @notice Tests for kpkShares asset management functionality
 contract kpkSharesAssetsTest is kpkSharesTestBase {
@@ -98,24 +97,24 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         vm.prank(ops);
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
         kpkSharesContract.updateAsset(address(usdc), false, false, false);
-        
+
         // Add another asset
         Mock_ERC20 newAsset = new Mock_ERC20("NEW_ASSET", 18);
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(newAsset), true, true, true);
-        
+
         // Now we can remove USDC completely
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(usdc), false, false, false);
-        
+
         // Verify USDC is removed
         IkpkShares.ApprovedAsset memory usdcAsset = kpkSharesContract.getApprovedAsset(address(usdc));
         assertEq(usdcAsset.asset, address(0));
-        
+
         // Verify newAsset is still there
         IkpkShares.ApprovedAsset memory newAssetConfig = kpkSharesContract.getApprovedAsset(address(newAsset));
         assertEq(newAssetConfig.asset, address(newAsset));
-        
+
         // Now try to remove newAsset (which is now the last asset) - should revert
         vm.prank(ops);
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));

@@ -1,0 +1,33 @@
+{
+  "kETH": {
+    "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
+    "operator": "0x0Efb42C55F73ce180D3Ce00fef87f453a2BD7683",
+    "name": "kpk ETH Alpha Fund ",
+    "symbol": "kETH",
+    "safe": "0xD39664C1F888db6495868963335385819B258556",
+    "subscriptionRequestTtl": 86400,
+    "redemptionRequestTtl": 86400,
+    "feeReceiver": "0x0Efb42C55F73ce180D3Ce00fef87f453a2BD7683",
+    "managementFeeRate": 0,
+    "redemptionFeeRate": 0,
+    "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+    "performanceFeeRate": 0
+  },
+  "kUSD": {
+    "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
+    "operator": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
+    "name": "kpk USD Alpha Fund ",
+    "symbol": "kUSD",
+    "safe": "0x0000000000000000000000000000000000000000",
+    "subscriptionRequestTtl": 172800,
+    "redemptionRequestTtl": 172800,
+    "feeReceiver": "0x0000000000000000000000000000000000000000",
+    "managementFeeRate": 300,
+    "redemptionFeeRate": 150,
+    "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+    "performanceFeeRate": 2000
+  }
+}
+

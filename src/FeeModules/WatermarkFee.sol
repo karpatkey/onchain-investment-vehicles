@@ -30,12 +30,10 @@ contract WatermarkFee is IPerfFeeModule {
     /// @param feePct The performance fee percentage in basis points
     /// @param netSupply The net supply of shares (totalSupply - feeReceiverBalance), used as the base for fee calculations
     /// @return fee The performance fee amount in shares
-    function calculatePerformanceFee(
-        uint256 sharesPrice,
-        uint256 timeElapsed,
-        uint256 feePct,
-        uint256 netSupply
-    ) external returns (uint256 fee) {
+    function calculatePerformanceFee(uint256 sharesPrice, uint256 timeElapsed, uint256 feePct, uint256 netSupply)
+        external
+        returns (uint256 fee)
+    {
         // Store the previous watermark before potentially updating it
         uint256 previousWatermark = highWatermark;
 
