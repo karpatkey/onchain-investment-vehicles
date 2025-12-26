@@ -320,6 +320,24 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         assertEq(zeroShares, 0);
     }
 
+    /// @notice Test assetsToShares with zero sharesPrice (branch coverage)
+    /// @dev Tests the sharesPrice == 0 branch separately from assetAmount == 0
+    function testAssetsToSharesWithZeroPrice() public view {
+        // Test the sharesPrice == 0 branch (should return 0)
+        uint256 assets = _usdcAmount(100);
+        uint256 shares = kpkSharesContract.assetsToShares(assets, 0, address(usdc));
+        assertEq(shares, 0, "Should return 0 when sharesPrice is 0");
+    }
+
+    /// @notice Test sharesToAssets with zero sharesPrice (branch coverage)
+    /// @dev Tests the sharesPrice == 0 branch separately from shares == 0
+    function testSharesToAssetsWithZeroPrice() public view {
+        // Test the sharesPrice == 0 branch (should return 0)
+        uint256 shares = _sharesAmount(100);
+        uint256 assets = kpkSharesContract.sharesToAssets(shares, 0, address(usdc));
+        assertEq(assets, 0, "Should return 0 when sharesPrice is 0");
+    }
+
     function testPrecisionConsistencyAcrossOperations() public view {
         // Test that precision is maintained across multiple operations
         uint256 initialShares = _sharesAmount(1000);

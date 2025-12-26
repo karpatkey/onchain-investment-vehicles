@@ -80,10 +80,7 @@ contract DeployKpkShares is Script {
         // Performance fee module is optional (can be address(0))
         address performanceFeeModule = address(0);
         if (json.keyExists(string.concat(vaultPath, ".performanceFeeModule"))) {
-            address perfModule = json.readAddress(string.concat(vaultPath, ".performanceFeeModule"));
-            if (perfModule != address(0)) {
-                performanceFeeModule = perfModule;
-            }
+            performanceFeeModule = json.readAddress(string.concat(vaultPath, ".performanceFeeModule"));
         }
 
         uint256 performanceFeeRate = json.readUint(string.concat(vaultPath, ".performanceFeeRate"));

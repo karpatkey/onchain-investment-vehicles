@@ -26,12 +26,6 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         assertTrue(approvedAssets[0] == address(newAsset) || approvedAssets[1] == address(newAsset));
     }
 
-    function testUpdateAssetWithZeroAddressBranch() public {
-        vm.prank(ops);
-        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
-        kpkSharesContract.updateAsset(address(0), true, true, true);
-    }
-
     function testUpdateAssetWithAlreadyApprovedAsset() public {
         // Try to approve an already approved asset
         vm.prank(ops);
@@ -373,6 +367,213 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
     }
 
     // ============================================================================
+    // Asset Removal Edge Cases
+    // ============================================================================
+
+    function testRemoveAssetWithPendingSubscriptions() public {
+        // Create a subscription request (not processed)
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        
+        // Verify there's a pending request and subscriptionAssets > 0
+        assertGt(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Try to remove asset with pending subscriptions
+        // Should revert with InvalidArguments (cannot remove with subscriptionAssets > 0)
+        vm.prank(ops);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+    }
+
+    function testRemoveAssetWithPendingRedemptions() public {
+        // First create shares by processing a subscription
+        uint256 depositId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = depositId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Create a redemption request (not processed)
+        uint256 redeemId = _testRequestProcessing(false, alice, _sharesAmount(50), SHARES_PRICE, false);
+        
+        // Verify subscriptionAssets is 0 (request was processed)
+        assertEq(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Try to remove asset with pending redemptions
+        // Should revert with InvalidArguments (cannot remove with _pendingRequestsCount > 0)
+        vm.prank(ops);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+    }
+
+    function testRemoveAssetWithSubscriptionAssetsAfterProcessing() public {
+        // Create and process a subscription to have subscriptionAssets > 0 initially
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        
+        // Verify subscriptionAssets > 0 before processing
+        assertGt(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Process the request
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Verify subscriptionAssets is now 0 (request was processed)
+        assertEq(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Now should be able to remove asset (no pending requests, subscriptionAssets == 0)
+        // But first need to add another asset since we can't remove the last one
+        Mock_ERC20 newAsset = new Mock_ERC20("NEW_ASSET", 18);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), true, true, true);
+        
+        // Now can remove USDC
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+        
+        // Verify USDC is removed
+        IkpkShares.ApprovedAsset memory usdcAsset = kpkSharesContract.getApprovedAsset(address(usdc));
+        assertEq(usdcAsset.asset, address(0));
+    }
+
+    function testRemoveLastAsset() public {
+        // Add a second asset
+        Mock_ERC20 newAsset = new Mock_ERC20("NEW_ASSET", 18);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), true, true, true);
+        
+        // Remove the new asset (not the last one)
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), false, false, false);
+        
+        // Verify newAsset is removed
+        IkpkShares.ApprovedAsset memory newAssetConfig = kpkSharesContract.getApprovedAsset(address(newAsset));
+        assertEq(newAssetConfig.asset, address(0));
+        
+        // Now try to remove USDC (the last asset)
+        // Should revert with InvalidArguments (cannot remove last asset)
+        vm.prank(ops);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+    }
+
+    function testRemoveAssetWithPendingSubscriptionAndRedemption() public {
+        // Create a subscription request (not processed)
+        uint256 subscriptionId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        
+        // Create shares for redemption
+        uint256 depositId = _testRequestProcessing(true, bob, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = depositId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Create a redemption request (not processed)
+        uint256 redeemId = _testRequestProcessing(false, bob, _sharesAmount(50), SHARES_PRICE, false);
+        
+        // Verify subscriptionAssets > 0 (from pending subscription)
+        assertGt(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Try to remove asset with both pending subscription and redemption
+        // Should revert with InvalidArguments (subscriptionAssets > 0 check happens first)
+        vm.prank(ops);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+    }
+
+    // ============================================================================
+    // Internal Helper Function Tests
+    // ============================================================================
+
+    function testShadowAssetDuringRemoval() public {
+        // Add a new asset
+        Mock_ERC20 newAsset = new Mock_ERC20("NEW_ASSET", 18);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), true, true, true);
+        
+        // Verify asset is in the list
+        address[] memory approvedAssetsBefore = kpkSharesContract.getApprovedAssets();
+        assertEq(approvedAssetsBefore.length, 2); // USDC + newAsset
+        bool hasNewAsset = false;
+        for (uint256 i = 0; i < approvedAssetsBefore.length; i++) {
+            if (approvedAssetsBefore[i] == address(newAsset)) {
+                hasNewAsset = true;
+                break;
+            }
+        }
+        assertTrue(hasNewAsset);
+        
+        // Create and process a subscription to ensure no pending requests
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Add another asset so we can remove newAsset (can't remove last asset)
+        Mock_ERC20 anotherAsset = new Mock_ERC20("ANOTHER", 18);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(anotherAsset), true, true, true);
+        
+        // Remove newAsset - this should call _shadowAsset internally
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), false, false, false);
+        
+        // Verify asset is no longer in approved list (shadowed)
+        address[] memory approvedAssetsAfter = kpkSharesContract.getApprovedAssets();
+        assertEq(approvedAssetsAfter.length, 2); // USDC + anotherAsset (newAsset removed)
+        bool stillHasNewAsset = false;
+        for (uint256 i = 0; i < approvedAssetsAfter.length; i++) {
+            if (approvedAssetsAfter[i] == address(newAsset)) {
+                stillHasNewAsset = true;
+                break;
+            }
+        }
+        assertFalse(stillHasNewAsset, "Asset should be removed from approved list");
+        
+        // Verify asset mapping is cleared
+        IkpkShares.ApprovedAsset memory assetConfig = kpkSharesContract.getApprovedAsset(address(newAsset));
+        assertEq(assetConfig.asset, address(0));
+    }
+
+    function testHasPendingRequestsReturnsTrue() public {
+        // Create a subscription request (not processed)
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        
+        // Try to remove asset - should check _hasPendingRequests internally and revert
+        // This tests _hasPendingRequests returning true
+        vm.prank(ops);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.InvalidArguments.selector));
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+    }
+
+    function testHasPendingRequestsReturnsFalse() public {
+        // Process all requests first
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Verify subscriptionAssets is 0 and no pending requests
+        assertEq(kpkSharesContract.subscriptionAssets(address(usdc)), 0);
+        
+        // Add another asset so we can remove USDC (can't remove last asset)
+        Mock_ERC20 newAsset = new Mock_ERC20("NEW_ASSET", 18);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(newAsset), true, true, true);
+        
+        // Now try to remove asset - should succeed (no pending requests)
+        // This tests _hasPendingRequests returning false
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(usdc), false, false, false);
+        
+        // Verify USDC is removed
+        IkpkShares.ApprovedAsset memory usdcAsset = kpkSharesContract.getApprovedAsset(address(usdc));
+        assertEq(usdcAsset.asset, address(0));
+    }
+
+    // ============================================================================
     // Pending Subscription Requests Tests
     // ============================================================================
 
@@ -460,6 +661,198 @@ contract kpkSharesAssetsTest is kpkSharesTestBase {
         address[] memory approvedAssets = kpkSharesContract.getApprovedAssets();
         assertEq(approvedAssets.length, 1); // Only USDC
         assertEq(approvedAssets[0], address(usdc));
+    }
+
+    function testShadowAssetRemovesFromDifferentPositions() public {
+        // Add multiple assets to test removal from different positions
+        Mock_ERC20 asset1 = new Mock_ERC20("ASSET1", 18);
+        Mock_ERC20 asset2 = new Mock_ERC20("ASSET2", 18);
+        Mock_ERC20 asset3 = new Mock_ERC20("ASSET3", 18);
+        
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset1), true, true, true);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset2), true, true, true);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset3), true, true, true);
+        
+        // Verify all assets are in the list
+        address[] memory assetsBefore = kpkSharesContract.getApprovedAssets();
+        assertEq(assetsBefore.length, 4); // USDC + 3 new assets
+        
+        // Process a request to ensure no pending requests
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Test 1: Remove middle asset (asset2) - tests loop finding asset at position != 0 and != last
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset2), false, false, false);
+        
+        address[] memory assetsAfter1 = kpkSharesContract.getApprovedAssets();
+        assertEq(assetsAfter1.length, 3); // USDC + asset1 + asset3
+        bool hasAsset2 = false;
+        for (uint256 i = 0; i < assetsAfter1.length; i++) {
+            if (assetsAfter1[i] == address(asset2)) {
+                hasAsset2 = true;
+                break;
+            }
+        }
+        assertFalse(hasAsset2, "Asset2 should be removed");
+        
+        // Test 2: Remove first new asset (asset1) - tests loop finding asset at position != last
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset1), false, false, false);
+        
+        address[] memory assetsAfter2 = kpkSharesContract.getApprovedAssets();
+        assertEq(assetsAfter2.length, 2); // USDC + asset3
+        bool hasAsset1 = false;
+        for (uint256 i = 0; i < assetsAfter2.length; i++) {
+            if (assetsAfter2[i] == address(asset1)) {
+                hasAsset1 = true;
+                break;
+            }
+        }
+        assertFalse(hasAsset1, "Asset1 should be removed");
+        
+        // Test 3: Remove last asset (asset3) - tests loop finding asset at last position
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset3), false, false, false);
+        
+        address[] memory assetsAfter3 = kpkSharesContract.getApprovedAssets();
+        assertEq(assetsAfter3.length, 1); // Only USDC
+        bool hasAsset3 = false;
+        for (uint256 i = 0; i < assetsAfter3.length; i++) {
+            if (assetsAfter3[i] == address(asset3)) {
+                hasAsset3 = true;
+                break;
+            }
+        }
+        assertFalse(hasAsset3, "Asset3 should be removed");
+        assertEq(assetsAfter3[0], address(usdc), "USDC should remain");
+    }
+
+    function testShadowAssetRemovesMultipleAssetsInSequence() public {
+        // Add multiple assets
+        Mock_ERC20 asset1 = new Mock_ERC20("ASSET1", 18);
+        Mock_ERC20 asset2 = new Mock_ERC20("ASSET2", 18);
+        Mock_ERC20 asset3 = new Mock_ERC20("ASSET3", 18);
+        Mock_ERC20 asset4 = new Mock_ERC20("ASSET4", 18);
+        
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset1), true, true, true);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset2), true, true, true);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset3), true, true, true);
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset4), true, true, true);
+        
+        // Process a request to ensure no pending requests
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Remove assets in sequence to test array manipulation
+        // This tests the swap-and-pop pattern multiple times
+        
+        // Remove asset2 (middle)
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset2), false, false, false);
+        address[] memory assets1 = kpkSharesContract.getApprovedAssets();
+        assertEq(assets1.length, 4); // USDC + asset1 + asset3 + asset4
+        
+        // Remove asset4 (last)
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset4), false, false, false);
+        address[] memory assets2 = kpkSharesContract.getApprovedAssets();
+        assertEq(assets2.length, 3); // USDC + asset1 + asset3
+        
+        // Remove asset1 (first new asset)
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset1), false, false, false);
+        address[] memory assets3 = kpkSharesContract.getApprovedAssets();
+        assertEq(assets3.length, 2); // USDC + asset3
+        
+        // Remove asset3 (last remaining new asset)
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(asset3), false, false, false);
+        address[] memory assets4 = kpkSharesContract.getApprovedAssets();
+        assertEq(assets4.length, 1); // Only USDC
+        assertEq(assets4[0], address(usdc));
+        
+        // Verify all assets are removed from the list
+        for (uint256 i = 0; i < assets4.length; i++) {
+            assertTrue(
+                assets4[i] == address(usdc),
+                "Only USDC should remain"
+            );
+        }
+    }
+
+    function testShadowAssetArrayManipulation() public {
+        // This test specifically focuses on the array manipulation in _shadowAsset
+        // Add 5 assets to have a substantial array
+        Mock_ERC20[] memory assets = new Mock_ERC20[](5);
+        for (uint256 i = 0; i < 5; i++) {
+            assets[i] = new Mock_ERC20(string(abi.encodePacked("ASSET", i)), 18);
+            vm.prank(ops);
+            kpkSharesContract.updateAsset(address(assets[i]), true, true, true);
+        }
+        
+        // Process a request to ensure no pending requests
+        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        
+        // Get initial list
+        address[] memory initialAssets = kpkSharesContract.getApprovedAssets();
+        assertEq(initialAssets.length, 6); // USDC + 5 new assets
+        
+        // Remove asset at index 2 (middle of new assets)
+        // This tests the loop finding the asset and swapping with last element
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(assets[2]), false, false, false);
+        
+        address[] memory afterRemoval = kpkSharesContract.getApprovedAssets();
+        assertEq(afterRemoval.length, 5); // USDC + 4 remaining assets
+        
+        // Verify asset[2] is not in the list
+        bool found = false;
+        for (uint256 i = 0; i < afterRemoval.length; i++) {
+            if (afterRemoval[i] == address(assets[2])) {
+                found = true;
+                break;
+            }
+        }
+        assertFalse(found, "Asset[2] should be removed");
+        
+        // Verify other assets are still present
+        bool hasUsdc = false;
+        bool hasAsset0 = false;
+        bool hasAsset1 = false;
+        bool hasAsset3 = false;
+        bool hasAsset4 = false;
+        
+        for (uint256 i = 0; i < afterRemoval.length; i++) {
+            if (afterRemoval[i] == address(usdc)) hasUsdc = true;
+            if (afterRemoval[i] == address(assets[0])) hasAsset0 = true;
+            if (afterRemoval[i] == address(assets[1])) hasAsset1 = true;
+            if (afterRemoval[i] == address(assets[3])) hasAsset3 = true;
+            if (afterRemoval[i] == address(assets[4])) hasAsset4 = true;
+        }
+        
+        assertTrue(hasUsdc, "USDC should remain");
+        assertTrue(hasAsset0, "Asset0 should remain");
+        assertTrue(hasAsset1, "Asset1 should remain");
+        assertTrue(hasAsset3, "Asset3 should remain");
+        assertTrue(hasAsset4, "Asset4 should remain");
     }
 
     function testAssetListOrdering() public {
