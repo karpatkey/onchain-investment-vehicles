@@ -336,8 +336,7 @@ contract KpkShares is
         _requireValidRequestParams(sharesIn, minAssetsOut, receiver);
 
         // Check if the asset is approved for redemptions
-        ApprovedAsset memory assetConfig = _approvedAssetsMap[redemptionAsset];
-        if (!assetConfig.canRedeem) revert NotAnApprovedAsset();
+        if (!_approvedAssetsMap[redemptionAsset].canRedeem) revert NotAnApprovedAsset();
 
         // Transfer shares to contract as escrow
         _transfer(msg.sender, address(this), sharesIn);
