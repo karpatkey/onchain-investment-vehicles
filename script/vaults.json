@@ -3,9 +3,9 @@
     "chain": {
       "name": "Ethereum Mainnet",
       "id": 1,
-      "type": "production",
       "vaults": [
         {
+          "environment": "production",
           "vaultName": "kETH",
           "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
           "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
@@ -21,7 +21,7 @@
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
           "performanceFeeRate": 0
         },
-        {
+        {          "environment": "production",
           "vaultName": "kUSD",
           "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
@@ -36,6 +36,23 @@
           "redemptionFeeRate": 150,
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
           "performanceFeeRate": 2000
+        },
+        {
+          "environment": "staging",
+          "vaultName": "skUSD",
+          "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
+          "operator": "0xD2930ecC40E5B651B2191E59C73586c299Ed92A8",
+          "name": "kpk USD Alpha Fund (Staging)",
+          "symbol": "skUSD",
+          "safe": "0xd6c4A08e83e23E6d88Dbc512fDBB2A75cB9a44FA",
+          "subscriptionRequestTtl": 86400,
+          "redemptionRequestTtl": 86400,
+          "feeReceiver": "0xD2930ecC40E5B651B2191E59C73586c299Ed92A8",
+          "managementFeeRate": 300,
+          "redemptionFeeRate": 150,
+          "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+          "performanceFeeRate": 2000
         }
       ]
     }
@@ -44,9 +61,9 @@
     "chain": {
       "name": "Sepolia",
       "id": 11155111,
-      "type": "staging",
       "vaults": [
         {
+          "environment": "staging",
           "vaultName": "kETH",
           "asset": "0xf531B8F309Be94191af87605CfBf600D71C2cFe0",
           "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
@@ -63,6 +80,7 @@
           "performanceFeeRate": 0
         },
         {
+          "environment": "staging",
           "vaultName": "kUSD",
           "asset": "",
           "admin": "0x354C92aF243d53A24feb3dFF20372Af7b7c47478",
