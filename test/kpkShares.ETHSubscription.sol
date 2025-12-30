@@ -109,7 +109,7 @@ contract kpkSharesETHSubscriptionTest is kpkSharesTestBase {
         uint256[] memory redeemRejectRequests = new uint256[](0);
         kpkSharesContract.processRequests(redeemApproveRequests, redeemRejectRequests, address(usdc), SHARES_PRICE);
 
-        // 7. Check final balances
+        // 7. Check final balances and verify redemption
         uint256 finalShares = kpkSharesContract.balanceOf(alice);
         uint256 finalUsdc = usdc.balanceOf(alice);
         uint256 finalEth = mockEth.balanceOf(alice);
@@ -118,26 +118,19 @@ contract kpkSharesETHSubscriptionTest is kpkSharesTestBase {
         assertEq(finalShares, 0, "Alice should have no shares after full redemption");
 
         // Alice should have received USDC (minus fees)
-        assertGt(finalUsdc - initialAliceUsdc, 0, "Alice should receive USDC after redemption");
+        uint256 usdcReceived = finalUsdc - initialAliceUsdc;
+        assertGt(usdcReceived, 0, "Alice should receive USDC after redemption");
 
         // Alice should have no ETH (she subscribed it all)
         assertEq(finalEth, 0, "Alice should have no ETH after subscription");
 
         // 8. Verify the redemption amount matches the actual shares minted
-        // Calculate expected USDC based on the actual shares minted (accounting for rounding)
-        // The actual shares minted may differ slightly from the initial calculation due to
-        // decimal precision in the conversion formula
-        uint256 actualSharesMinted = sharesMinted;
-        uint256 expectedUsdcFromShares =
-            kpkSharesContract.sharesToAssets(actualSharesMinted, SHARES_PRICE, address(usdc));
-
         // Account for redemption fees (0% in this test, but previewRedemption handles it)
-        uint256 redemptionFee = (actualSharesMinted * kpkSharesContract.redemptionFeeRate()) / 10000;
-        uint256 netShares = actualSharesMinted - redemptionFee;
+        uint256 netShares = sharesMinted - ((sharesMinted * kpkSharesContract.redemptionFeeRate()) / 10000);
         uint256 expectedUsdc = kpkSharesContract.sharesToAssets(netShares, SHARES_PRICE, address(usdc));
 
         assertApproxEqAbs(
-            finalUsdc - initialAliceUsdc,
+            usdcReceived,
             expectedUsdc,
             1, // Allow for minimal rounding differences (1 wei in USDC)
             "Alice should receive USDC after redemption matching actual shares minted"

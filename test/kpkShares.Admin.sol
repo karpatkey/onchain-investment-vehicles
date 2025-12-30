@@ -763,25 +763,25 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
         // For proxy contracts with complex inheritance, direct storage manipulation is difficult
         // Instead, we'll test the behavior by manipulating the request status to a non-PENDING state
         // which also triggers the _checkValidRequest false branch, demonstrating the defensive code works
-        
+
         // First, let's process the request normally to change its status
         vm.prank(ops);
         uint256[] memory approveRequests = new uint256[](1);
         approveRequests[0] = requestId;
         uint256[] memory rejectRequests = new uint256[](0);
         kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
-        
+
         // Now the request status is PROCESSED, not PENDING
         // Try to process it again - _checkValidRequest should return false because status != PENDING
         // This tests the same defensive logic path (the OR condition in _checkValidRequest)
         vm.prank(ops);
         kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
-        
+
         // The request should be skipped (no revert, just silently skipped)
         // This demonstrates that _checkValidRequest properly handles invalid states
         // While we can't easily test investor == address(0) directly due to storage layout,
         // we verify the defensive code path works for invalid request states
-        
+
         // Note: The investor == address(0) branch is defensive code that's difficult to test
         // directly with proxy contracts, but the same defensive pattern is verified through
         // testing invalid request status, which uses the same _checkValidRequest function
@@ -809,19 +809,19 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
         Mock_ERC20 testAsset = new Mock_ERC20("TEST_ASSET", 18);
         vm.prank(ops);
         kpkSharesContract.updateAsset(address(testAsset), true, true, true);
-        
+
         // Verify the asset is in the approved assets list
         assertTrue(kpkSharesContract.isApprovedAsset(address(testAsset)));
 
         // Get the storage slot for _approvedAssets array
         // _approvedAssets is at slot 0 (first state variable)
         bytes32 approvedAssetsSlot = bytes32(uint256(0));
-        
+
         // Get the length of the array
         bytes32 lengthSlot = approvedAssetsSlot;
         bytes32 lengthBytes = vm.load(address(kpkSharesContract), lengthSlot);
         uint256 arrayLength = uint256(lengthBytes);
-        
+
         // Find the asset in the array
         uint256 assetIndex = type(uint256).max; // Use max as "not found" marker
         for (uint256 i = 0; i < arrayLength; i++) {
@@ -832,7 +832,7 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
                 break;
             }
         }
-        
+
         // Remove the asset from the array by manipulating storage
         // This creates an inconsistent state where the asset is in the map but not in the array
         if (assetIndex != type(uint256).max && arrayLength > 1) {
@@ -841,7 +841,7 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
             bytes32 lastElementValue = vm.load(address(kpkSharesContract), lastElementSlot);
             bytes32 assetElementSlot = bytes32(uint256(keccak256(abi.encode(approvedAssetsSlot))) + assetIndex);
             vm.store(address(kpkSharesContract), assetElementSlot, lastElementValue);
-            
+
             // Pop the last element by decrementing length
             vm.store(address(kpkSharesContract), lengthSlot, bytes32(arrayLength - 1));
         } else if (assetIndex != type(uint256).max && arrayLength == 1) {
@@ -857,7 +857,7 @@ contract kpkSharesAdminTest is kpkSharesTestBase {
         // Ensure there are no pending requests and it's not the last asset
         // We need at least one other asset (usdc) for this to work
         kpkSharesContract.updateAsset(address(testAsset), false, false, false);
-        
+
         // The _shadowAsset function should have been called, and the loop should have
         // completed without finding the asset (since we removed it from the array)
         // This tests the defensive code path where the loop completes without break

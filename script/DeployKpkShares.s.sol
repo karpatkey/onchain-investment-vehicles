@@ -49,6 +49,10 @@ contract DeployKpkShares is Script {
         // Read JSON configuration
         string memory json = vm.readFile(VAULTS_JSON_PATH);
 
+        // Verify chain ID matches
+        uint256 chainId = json.readUint(".mainnet.chain.id");
+        require(chainId == MAINNET_CHAIN_ID, "Chain ID in JSON does not match mainnet");
+
         // Deploy the specified vault
         _deployVault(json, vaultName);
     }
@@ -59,65 +63,116 @@ contract DeployKpkShares is Script {
      * @param vaultName The name of the vault to deploy
      */
     function _deployVault(string memory json, string memory vaultName) internal {
-        string memory vaultPath = string.concat(".", vaultName);
+        // Find vault in the mainnet.chain.vaults array
+        uint256 vaultIndex = _findVaultIndex(json, vaultName);
+        string memory vaultPath = string.concat(".mainnet.chain.vaults[", vm.toString(vaultIndex), "]");
 
-        // Check if vault exists in JSON
-        require(json.keyExists(vaultPath), "Vault not found in JSON configuration");
-
-        // Parse vault parameters from JSON
-        address asset = json.readAddress(string.concat(vaultPath, ".asset"));
-        address admin = json.readAddress(string.concat(vaultPath, ".admin"));
-        address operator = json.readAddress(string.concat(vaultPath, ".operator"));
-        string memory name = json.readString(string.concat(vaultPath, ".name"));
-        string memory symbol = json.readString(string.concat(vaultPath, ".symbol"));
-        address safe = json.readAddress(string.concat(vaultPath, ".safe"));
-        uint64 subscriptionTtl = uint64(json.readUint(string.concat(vaultPath, ".subscriptionRequestTtl")));
-        uint64 redemptionTtl = uint64(json.readUint(string.concat(vaultPath, ".redemptionRequestTtl")));
-        address feeReceiver = json.readAddress(string.concat(vaultPath, ".feeReceiver"));
-        uint256 managementFeeRate = json.readUint(string.concat(vaultPath, ".managementFeeRate"));
-        uint256 redemptionFeeRate = json.readUint(string.concat(vaultPath, ".redemptionFeeRate"));
-
-        // Performance fee module is optional (can be address(0))
-        address performanceFeeModule = address(0);
-        if (json.keyExists(string.concat(vaultPath, ".performanceFeeModule"))) {
-            performanceFeeModule = json.readAddress(string.concat(vaultPath, ".performanceFeeModule"));
-        }
-
-        uint256 performanceFeeRate = json.readUint(string.concat(vaultPath, ".performanceFeeRate"));
-
-        // Validate required parameters
-        require(asset != address(0), "Asset address cannot be zero");
-        require(safe != address(0), "Safe address cannot be zero");
-        require(feeReceiver != address(0), "Fee receiver address cannot be zero");
-        require(subscriptionTtl > 0, "Subscription TTL must be greater than 0");
-        require(redemptionTtl > 0, "Redemption TTL must be greater than 0");
-        require(managementFeeRate <= 2000, "Management fee rate cannot exceed 2000 bps (20%)");
-        require(redemptionFeeRate <= 2000, "Redemption fee rate cannot exceed 2000 bps (20%)");
-        require(performanceFeeRate <= 2000, "Performance fee rate cannot exceed 2000 bps (20%)");
+        // Parse and validate parameters
+        KpkShares.ConstructorParams memory params = _parseVaultParams(json, vaultPath);
+        _validateParams(params);
 
         console.log("==========================================");
         console.log("Deploying kpkShares Vault:", vaultName);
         console.log("==========================================");
 
-        vm.startBroadcast();
+        // Deploy the contract
+        address proxy = _deployContract(params);
 
-        address deployerAddress = vm.addr(vm.envUint("PRIVATE_KEY"));
+        // Setup roles
+        address operator = json.readAddress(string.concat(vaultPath, ".operator"));
+        address admin = json.readAddress(string.concat(vaultPath, ".admin"));
+        _setupRoles(KpkShares(proxy), operator, admin);
 
-        // Prepare initialization parameters
-        KpkShares.ConstructorParams memory params = KpkShares.ConstructorParams({
-            asset: asset,
-            admin: deployerAddress,
-            name: name,
-            symbol: symbol,
-            safe: safe,
-            subscriptionRequestTtl: subscriptionTtl,
-            redemptionRequestTtl: redemptionTtl,
-            feeReceiver: feeReceiver,
-            managementFeeRate: managementFeeRate,
-            redemptionFeeRate: redemptionFeeRate,
-            performanceFeeModule: performanceFeeModule,
-            performanceFeeRate: performanceFeeRate
-        });
+        vm.stopBroadcast();
+
+        // Log deployment information
+        _logDeployment(vaultName, proxy, params, admin, operator);
+    }
+
+    /**
+     * @notice Find the index of a vault in the vaults array
+     * @param json The JSON string
+     * @param vaultName The name of the vault to find
+     * @return index The index of the vault in the array
+     */
+    function _findVaultIndex(string memory json, string memory vaultName) internal view returns (uint256 index) {
+        // Read the vaults array length
+        string memory vaultsPath = ".mainnet.chain.vaults";
+        require(json.keyExists(vaultsPath), "Vaults array not found in JSON");
+
+        // Iterate through vaults to find matching vaultName
+        // Note: stdJson doesn't have a direct way to get array length, so we'll try indices until we find it
+        for (uint256 i = 0; i < 100; i++) {
+            string memory currentVaultPath = string.concat(vaultsPath, "[", vm.toString(i), "]");
+            if (!json.keyExists(currentVaultPath)) {
+                break; // End of array
+            }
+
+            string memory currentVaultName = json.readString(string.concat(currentVaultPath, ".vaultName"));
+            if (keccak256(bytes(currentVaultName)) == keccak256(bytes(vaultName))) {
+                return i;
+            }
+        }
+
+        revert("Vault not found in JSON configuration");
+    }
+
+    /**
+     * @notice Parse vault parameters from JSON
+     * @param json The JSON string
+     * @param vaultPath The path to the vault in JSON
+     * @return params The parsed constructor parameters
+     */
+    function _parseVaultParams(string memory json, string memory vaultPath)
+        internal
+        view
+        returns (KpkShares.ConstructorParams memory params)
+    {
+        params.asset = json.readAddress(string.concat(vaultPath, ".asset"));
+        params.name = json.readString(string.concat(vaultPath, ".name"));
+        params.symbol = json.readString(string.concat(vaultPath, ".symbol"));
+        params.safe = json.readAddress(string.concat(vaultPath, ".safe"));
+        params.subscriptionRequestTtl = uint64(json.readUint(string.concat(vaultPath, ".subscriptionRequestTtl")));
+        params.redemptionRequestTtl = uint64(json.readUint(string.concat(vaultPath, ".redemptionRequestTtl")));
+        params.feeReceiver = json.readAddress(string.concat(vaultPath, ".feeReceiver"));
+        params.managementFeeRate = json.readUint(string.concat(vaultPath, ".managementFeeRate"));
+        params.redemptionFeeRate = json.readUint(string.concat(vaultPath, ".redemptionFeeRate"));
+        params.performanceFeeRate = json.readUint(string.concat(vaultPath, ".performanceFeeRate"));
+
+        // Performance fee module is optional
+        params.performanceFeeModule = address(0);
+        string memory perfModulePath = string.concat(vaultPath, ".performanceFeeModule");
+        if (json.keyExists(perfModulePath)) {
+            params.performanceFeeModule = json.readAddress(perfModulePath);
+        }
+
+        params.admin = vm.addr(vm.envUint("PRIVATE_KEY"));
+    }
+
+    /**
+     * @notice Validate vault parameters
+     * @param params The constructor parameters to validate
+     */
+    function _validateParams(KpkShares.ConstructorParams memory params) internal pure {
+        require(params.asset != address(0), "Asset address cannot be zero");
+        require(params.safe != address(0), "Safe address cannot be zero");
+        require(params.feeReceiver != address(0), "Fee receiver address cannot be zero");
+        require(params.subscriptionRequestTtl > 0, "Subscription TTL must be greater than 0");
+        require(params.redemptionRequestTtl > 0, "Redemption TTL must be greater than 0");
+        require(params.managementFeeRate <= 2000, "Management fee rate cannot exceed 2000 bps (20%)");
+        require(params.redemptionFeeRate <= 2000, "Redemption fee rate cannot exceed 2000 bps (20%)");
+        require(params.performanceFeeRate <= 2000, "Performance fee rate cannot exceed 2000 bps (20%)");
+    }
+
+    /**
+     * @notice Deploy the kpkShares contract
+     * @param params The constructor parameters
+     * @return proxy The address of the deployed proxy
+     */
+    function _deployContract(KpkShares.ConstructorParams memory params) internal returns (address proxy) {
+        // Use the private key from environment to ensure consistent deployer address
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        vm.startBroadcast(deployerPrivateKey);
 
         // Deploy implementation contract
         address implementation = address(new KpkShares());
@@ -125,34 +180,62 @@ contract DeployKpkShares is Script {
         // Encode the initializer call
         bytes memory initializerData = abi.encodeCall(KpkShares.initialize, (params));
 
-        // Deploy UUPS proxy using OpenZeppelin Foundry Upgrades (UnsafeUpgrades skips validation)
-        address proxy = UnsafeUpgrades.deployUUPSProxy(implementation, initializerData);
+        // Deploy UUPS proxy
+        proxy = UnsafeUpgrades.deployUUPSProxy(implementation, initializerData);
+    }
 
-        KpkShares proxyContract = KpkShares(proxy);
+    /**
+     * @notice Setup roles on the deployed contract
+     * @param proxyContract The deployed proxy contract
+     * @param operator The operator address
+     * @param admin The admin address
+     */
+    function _setupRoles(KpkShares proxyContract, address operator, address admin) internal {
+        // Get deployer address from the private key (must match the broadcaster)
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.addr(deployerPrivateKey);
+        
+        // The deployer was set as admin during initialization, so they can grant roles
+        // vm.startBroadcast() is already active from _deployContract, so these calls
+        // will be made as the deployer (who has DEFAULT_ADMIN_ROLE)
         proxyContract.grantRole(OPERATOR, operator);
         proxyContract.grantRole(DEFAULT_ADMIN_ROLE, admin);
         proxyContract.revokeRole(DEFAULT_ADMIN_ROLE, deployerAddress);
+    }
 
-        vm.stopBroadcast();
-
-        // Log deployment information
+    /**
+     * @notice Log deployment information
+     * @param vaultName The vault name
+     * @param proxy The proxy address
+     * @param params The constructor parameters
+     * @param admin The admin address
+     * @param operator The operator address
+     */
+    function _logDeployment(
+        string memory vaultName,
+        address proxy,
+        KpkShares.ConstructorParams memory params,
+        address admin,
+        address operator
+    ) internal view {
         console.log("==========================================");
         console.log("kpkShares Deployment Complete");
         console.log("==========================================");
         console.log("Vault Name:", vaultName);
         console.log("Proxy Address:", proxy);
         console.log("Admin:", admin);
-        console.log("Asset:", asset);
-        console.log("Name:", name);
-        console.log("Symbol:", symbol);
-        console.log("Safe:", safe);
-        console.log("Subscription TTL:", subscriptionTtl);
-        console.log("Redemption TTL:", redemptionTtl);
-        console.log("Fee Receiver:", feeReceiver);
-        console.log("Management Fee Rate (bps):", managementFeeRate);
-        console.log("Redemption Fee Rate (bps):", redemptionFeeRate);
-        console.log("Performance Fee Module:", performanceFeeModule);
-        console.log("Performance Fee Rate (bps):", performanceFeeRate);
+        console.log("Operator:", operator);
+        console.log("Asset:", params.asset);
+        console.log("Name:", params.name);
+        console.log("Symbol:", params.symbol);
+        console.log("Safe:", params.safe);
+        console.log("Subscription TTL:", params.subscriptionRequestTtl);
+        console.log("Redemption TTL:", params.redemptionRequestTtl);
+        console.log("Fee Receiver:", params.feeReceiver);
+        console.log("Management Fee Rate (bps):", params.managementFeeRate);
+        console.log("Redemption Fee Rate (bps):", params.redemptionFeeRate);
+        console.log("Performance Fee Module:", params.performanceFeeModule);
+        console.log("Performance Fee Rate (bps):", params.performanceFeeRate);
         console.log("Chain ID:", block.chainid);
         console.log("==========================================");
     }

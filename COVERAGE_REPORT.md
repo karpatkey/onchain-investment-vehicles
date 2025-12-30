@@ -4,24 +4,24 @@
 
 | Metric | Coverage | Uncovered |
 |--------|----------|-----------|
-| **Lines** | 95.68% (354/370) | 16 lines |
-| **Statements** | 94.40% (388/411) | 23 statements |
-| **Branches** | 84.15% (69/82) | **13 branches** |
+| **Lines** | 98.65% (365/370) | 5 lines |
+| **Statements** | 97.08% (399/411) | 12 statements |
+| **Branches** | 86.59% (71/82) | **11 branches** |
 | **Functions** | 100.00% (58/58) | 0 functions |
 
 ## Key Findings
 
 ### ✅ Strengths
 - **100% function coverage** - All public/external functions are tested
-- **95.68% line coverage** - Excellent overall code coverage
-- **94.40% statement coverage** - Most statements are executed
+- **98.65% line coverage** - Excellent overall code coverage
+- **97.08% statement coverage** - Most statements are executed
 
 ### ⚠️ Areas for Improvement
-- **84.15% branch coverage** - 13 conditional branches are not fully tested
+- **86.59% branch coverage** - 11 conditional branches are not fully tested
 
 ## Why Branches Are Not Covered
 
-The main gap is in **branch coverage (84.15%)**, meaning 13 conditional branches have not been tested in both directions (true/false paths). Here are the likely uncovered branches:
+The main gap is in **branch coverage (86.59%)**, meaning 11 conditional branches have not been tested in both directions (true/false paths). Here are the likely uncovered branches:
 
 ### 1. **Fee Calculation Edge Cases** (Lines 965, 979, 997)
 ```solidity
@@ -128,5 +128,15 @@ Some nested conditions in fee calculation and validation functions might have un
 
 ## Conclusion
 
-The codebase has **excellent overall coverage** (95.68% lines, 94.40% statements, 100% functions). The remaining gap is primarily in **branch coverage (84.15%)**, which represents edge cases and conditional logic paths that are harder to trigger but should still be tested for completeness and robustness.
+The codebase has **excellent overall coverage** (98.65% lines, 97.08% statements, 100% functions). The remaining gap is primarily in **branch coverage (86.59%)**, which represents edge cases and conditional logic paths that are harder to trigger but should still be tested for completeness and robustness.
+
+## Recent Improvements
+
+Coverage has improved significantly since the initial report:
+- **Lines**: Increased from 95.68% to 98.65% (+2.97%)
+- **Statements**: Increased from 94.40% to 97.08% (+2.68%)
+- **Branches**: Increased from 84.15% to 86.59% (+2.44%)
+- **Uncovered branches**: Reduced from 13 to 11 branches
+
+The parameterized test framework has been implemented to help test edge cases, boundary conditions, and zero-value scenarios more systematically.
 
