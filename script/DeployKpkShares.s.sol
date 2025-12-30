@@ -194,7 +194,7 @@ contract DeployKpkShares is Script {
         // Get deployer address from the private key (must match the broadcaster)
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
-        
+
         // The deployer was set as admin during initialization, so they can grant roles
         // vm.startBroadcast() is already active from _deployContract, so these calls
         // will be made as the deployer (who has DEFAULT_ADMIN_ROLE)
