@@ -84,6 +84,12 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 - **Multi-Asset Support**: Configure multiple assets for subscriptions and redemptions
 - **Asset Configuration**: Granular control over which assets can be used for subscriptions/redemptions
 - **Dynamic Updates**: Add/remove assets and modify configurations
+- **Asset Removal Restrictions**: 
+  - Cannot remove asset with pending subscriptions (`subscriptionAssets[asset] > 0`)
+  - Cannot remove asset with pending requests (subscriptions or redemptions)
+  - Cannot remove the last remaining approved asset
+  - Cannot add asset with both `canDeposit = false` and `canRedeem = false`
+  - Maximum 36 decimals per asset (prevents overflow risks)
 
 ### 2. Subscription System
 - **Request-Based**: Users submit subscription requests that require operator approval
@@ -102,6 +108,11 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 - **Fee Distribution**: All fees are distributed as shares to the configured fee receiver
 - **Watermark System**: Performance fees only charged on profits above the highest previous share price
 - **Modular Design**: Performance fee calculation can be upgraded by changing the fee module
+- **Fee Timestamp Management**:
+  - Management fees use shared `_managementFeeLastUpdate` timestamp across all assets
+  - Performance fees use separate `_performanceFeeLastUpdate` timestamp (prevents gaming)
+  - Performance fees only calculated for assets with `isFeeModuleAsset = true`
+  - When updating fee rates, any accrued fees are charged before the rate change
 
 ### 5. Performance Fee System
 - **Watermark Mechanism**: Tracks the highest share price achieved
@@ -112,12 +123,23 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 
 ### 6. Request Lifecycle
 ```
-Request Creation → Pending → Processing → Approved/Rejected
+Request Creation → Pending → Processing → Approved/Rejected/Expired
        ↓              ↓          ↓           ↓
    User Action   TTL Window  Operator    Final State
    (Subscription/ (Cancellation  Review    (Shares Minted/
     Redeem)      Available)    Required   Assets Transferred)
+                                    ↓
+                              Expiry Check
+                              (7 days max)
+                                    ↓
+                            Auto-Reject if Expired
 ```
+
+**Request Lifetime vs Cancellation TTL:**
+- **Request Lifetime**: All requests expire after 7 days (`expiryAt = timestamp + MAX_TTL`)
+- **Cancellation TTL**: Configurable time window (max 7 days) before user can cancel
+- **Expiry Handling**: Expired requests in `approveRequests` are automatically rejected during processing
+- **Expiry Events**: `SubscriptionRequestExpired` or `RedemptionRequestExpired` emitted when requests expire
 
 ## Asset and Shares Flow Analysis
 
@@ -166,6 +188,7 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 | **PENDING** | Operator approval | PROCESSED | Assets/shares transferred according to request type |
 | **PENDING** | Operator rejection | REJECTED | Assets/shares returned to investor |
 | **PENDING** | User cancellation (after TTL) | CANCELLED | Assets/shares returned to investor |
+| **PENDING** | Request expiry (after 7 days) | REJECTED | Assets/shares returned to investor, expiry event emitted |
 | **PROCESSED** | None | PROCESSED | Final state - no further changes |
 | **REJECTED** | None | REJECTED | Final state - no further changes |
 | **CANCELLED** | None | CANCELLED | Final state - no further changes |
@@ -210,6 +233,13 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 - **Storage Gaps**: Proper storage layout management for upgrades
 - **Initialization Protection**: Reinitializer pattern prevents double initialization
 
+### 7. Price Deviation Protection
+- **Automatic Validation**: Price changes validated during `processRequests()`
+- **Deviation Limit**: Maximum 30% deviation from last settled price
+- **First-Time Exception**: No validation on first price submission (no previous price exists)
+- **Error Handling**: Reverts with `PriceDeviationTooLarge` if exceeded
+- **Purpose**: Prevents operator errors or manipulation through extreme price changes
+
 ## Configuration Parameters
 
 ### TTL Settings
@@ -223,16 +253,22 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 
 ### System Constants
 - **Precision**: 18 decimal places (WAD)
-- **Minimum Time Elapsed**: 1 day for fee calculations
+- **Normalized Precision (USD)**: 8 decimal places
+- **Basis Points Precision**: 10,000 (1 BPS = 0.01%)
+- **Minimum Time Elapsed**: 6 hours for fee calculations
 - **Seconds Per Year**: 365 days for annualized calculations
+- **Maximum Price Deviation**: 30% (3,000 basis points)
+- **Maximum Request Lifetime**: 7 days (MAX_TTL)
+- **Maximum Asset Decimals**: 36 (overflow protection)
 
 ## Events & Monitoring
 
 ### Key Events
-- **Request Events**: Creation, approval, rejection, cancellation, updates
+- **Request Events**: Creation, approval, rejection, cancellation, expiry, updates
 - **Fee Events**: Fee collection (only when fees > 0), rate updates (only when values change), receiver changes
 - **Asset Events**: Asset addition, removal, configuration updates
 - **System Events**: TTL updates (only when values change), parameter changes
+- **Expiry Events**: `SubscriptionRequestExpired` and `RedemptionRequestExpired` emitted when requests expire during processing
 
 ### Event Indexing
 - Critical events are indexed for efficient filtering
@@ -245,6 +281,27 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 - **Rate Updates**: Rate update events only emitted when values actually change
 - **TTL Updates**: TTL update events only emitted when values actually change
 - **Gas Efficiency**: Reduces unnecessary gas costs and event log noise
+
+## Price Management
+
+### Last Settled Price
+- **Per-Asset Tracking**: Each asset maintains its own last settled price
+- **Price Updates**: Updated during `processRequests()` after successful processing
+- **Price Format**: Stored in normalized USD units (8 decimals)
+- **First-Time Processing**: No price validation on first submission (no previous price exists)
+
+### Price Deviation Validation
+- **Automatic Check**: Validated during `processRequests()` before processing requests
+- **Deviation Limit**: Maximum 30% deviation from last settled price
+- **Calculation**: `deviationBps = (abs(newPrice - lastPrice) * 10000) / lastPrice`
+- **Error**: Reverts with `PriceDeviationTooLarge` if limit exceeded
+- **Purpose**: Prevents operator errors and price manipulation
+
+### Preview Functions with Last Settled Price
+- **Fallback Mechanism**: Both `previewSubscription()` and `previewRedemption()` accept `sharesPrice = 0`
+- **Behavior**: When `sharesPrice = 0`, automatically uses last settled price for the asset
+- **Error Handling**: Reverts with `NoStoredPrice()` if no price has been settled yet
+- **Use Case**: Allows users to preview transactions without knowing current price
 
 ## Integration Points
 
@@ -301,10 +358,14 @@ struct ConstructorParams {
 - Fee calculation accuracy
 - Asset escrow integrity
 
+## Security Audits
+
+Security audit reports will be published in the `audit-reports/` folder. This folder is reserved for future security audit documentation from third-party auditors.
+
 ## Gas Optimization
 
 ### Efficient Operations
-- **Batch Processing**: Processing 5 requests costs ~22,400 gas per subscription and ~24,168 gas per redemption (vs ~70,891 and ~51,319 for single requests)
+- **Batch Processing**: Processing 5 requests costs ~29,851 gas per subscription and ~21,561 gas per redemption (vs ~101,655 and ~47,346 for single requests)
 - **Optimized Storage Layout**: Efficient struct packing and storage access patterns
 - **Minimal External Calls**: Reduced oracle calls and token transfers
 - **Efficient Loop Implementations**: Optimized batch processing algorithms
@@ -314,47 +375,57 @@ struct ConstructorParams {
 *Based on actual gas measurements from test suite*
 
 #### Core Operations
-- **Subscription request**: 205,010 gas
-- **Redemption request**: 143,991 gas
-- **Subscription processing (approve)**: 72,297 gas
-- **Subscription processing (reject)**: 17,413 gas
-- **Redemption processing (approve)**: 51,231 gas
-- **Redemption processing (reject)**: 30,284 gas
+- **Subscription request**: 250,117 gas
+- **Redemption request**: 186,385 gas
+- **Subscription processing (approve)**: 101,655 gas
+- **Subscription processing (reject)**: 46,811 gas
+- **Redemption processing (approve)**: 47,346 gas
+- **Redemption processing (reject)**: 12,157 gas
 
 #### Batch Operations
-- **Process 5 subscription requests**: 117,976 gas (23,595 gas per request)
-- **Process 5 redemption requests**: 116,258 gas (23,251 gas per request)
+- **Process 5 subscription requests**: 149,259 gas (29,851 gas per request)
+- **Process 5 redemption requests**: 107,805 gas (21,561 gas per request)
 
 #### Request Cancellation
-- **Cancel subscription**: 8,253 gas
-- **Cancel redemption**: 27,181 gas
+- **Cancel subscription**: 9,203 gas
+- **Cancel redemption**: 8,649 gas
 
 #### Asset Management
-- **Update asset configuration**: 118,601 gas
+- **Update asset configuration**: 118,600 gas
 
 #### Fee Management
-- **Set management fee rate**: 24,498 gas
-- **Set redemption fee rate**: 23,750 gas
-- **Set performance fee rate**: 19,648 gas
+- **Set management fee rate**: 33,706 gas
+- **Set redemption fee rate**: 23,728 gas
+- **Set performance fee rate**: 22,237 gas
 - **Set fee receiver**: 22,407 gas
-- **Set subscription request TTL**: 24,168 gas
+- **Set subscription request TTL**: 24,149 gas
+- **Set redemption request TTL**: 24,198 gas
 
 #### View Functions
-- **Get request details**: 4,218 gas
-- **Convert assets to shares**: 20,543 gas
-- **Convert shares to assets**: 20,312 gas
-- **Get approved assets list**: 16,042 gas
-- **Get approved asset details**: 21,469 gas
+- **Get request details**: 4,395 gas
+- **Convert assets to shares**: 21,204 gas
+- **Convert shares to assets**: 20,296 gas
+- **Get approved assets list**: 15,998 gas
+- **Get approved asset details**: 21,445 gas
+
+#### Preview Functions
+- **Preview subscription**: Calculates shares that would be received for given assets
+  - If `sharesPrice = 0`, uses last settled price for the asset
+  - Reverts with `NoStoredPrice()` if no price has been settled yet
+  - Returns shares before fees (fees are not included in preview)
+- **Preview redemption**: Calculates assets that would be received for given shares
+  - If `sharesPrice = 0`, uses last settled price for the asset
+  - Reverts with `NoStoredPrice()` if no price has been settled yet
+  - Returns assets after redemption fees (fees are deducted in preview)
 
 #### Fee Collection
-- **Process requests (with management fee)**: 121,159 gas
-- **Process requests (with redemption fee)**: 51,231 gas
+- **Process requests (with management fee)**: 143,699 gas
+- **Process requests (with redemption fee)**: 47,346 gas
 
 ### Running Gas Tests
 To get current gas measurements, run the gas test suite:
 
 ```bash
-cd contracts
 forge test --match-contract kpkSharesGasTest -vv
 ```
 
@@ -363,31 +434,9 @@ The tests will output detailed gas usage for each operation, allowing you to ver
 ## Future Considerations
 
 ### Potential Enhancements
-- **Cross-Chain Support**: Bridge integration for multi-chain operations
-- **Governance Integration**: DAO-based parameter management
 - **Additional Fee Modules**: More performance fee calculation strategies beyond watermark-based
-- **Request Batching Improvements**: Further optimization of batch processing gas costs
-- **Advanced Asset Management**: Dynamic asset weight management and rebalancing
 
 ### Upgrade Path
 - **UUPS Pattern**: Allows for future contract upgrades
 - **Storage Layout**: Maintains compatibility across upgrades
 - **Interface Evolution**: Backward-compatible interface updates
-
-## Support & Maintenance
-
-### Monitoring
-- Regular event monitoring for system health
-- Fee collection verification
-- Asset balance reconciliation
-- Request processing metrics
-
-### Maintenance
-- Regular parameter reviews
-- Fee rate adjustments
-- Asset configuration updates
-- Security audits and updates
-
----
-
-*This documentation covers the core functionality and safety considerations of the kpkShares contract. For specific implementation details, refer to the contract source code and test files.*
