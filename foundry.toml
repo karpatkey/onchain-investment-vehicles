@@ -15,9 +15,13 @@ extra_output = ["storageLayout"]
 # Default behaviour changed on commit https://github.com/foundry-rs/foundry/commit/39f13df8971b02f5961d4fd2cb278f44e19a717a
 optimizer = true
 optimizer_runs = 2000
-
 via_ir = true
+
 no_match_test = "upgrade"
+
+[profile.coverage]
+# Exclude script folder from coverage reports (regex pattern)
+no_match_coverage = "^script/"
 
 [etherscan]
 sepolia = { key = "${ETHERSCAN_API_KEY}" }

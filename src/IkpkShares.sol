@@ -8,21 +8,6 @@ interface IkpkShares is IERC165 {
     // Errors
     //
 
-    /// @notice Error when a transfer of shares is not allowed
-    error TransferNotAllowed();
-
-    /// @notice Error when the sender does not have sufficient assets to fulfill a request
-    error InsufficientAssets();
-
-    /// @notice Error when the sender does not have sufficient shares to fulfill a redemption
-    error InsufficientShares();
-
-    /// @notice Error when the given requestID is not found
-    error NoPendingSubscriptionRequest();
-
-    /// @notice Error when the given redeemID is not found
-    error NoPendingRedeemRequest();
-
     /// @notice Error when attempting to cancel a request that hasn't passed his TTL yet
     error RequestNotPastTtl();
 
@@ -38,23 +23,8 @@ interface IkpkShares is IERC165 {
     /// @notice Error when the caller is not authorized to perform the action
     error NotAuthorized();
 
-    /// @notice Error when the request is unknown
-    error UnknownRequest();
-
     /// @notice Error when the asset is not approved for deposits
     error NotAnApprovedAsset();
-
-    /// @notice Error when the asset price is invalid
-    error InvalidPrice();
-
-    /// @notice Error when the asset price is null
-    error NullOraclePrice();
-
-    /// @notice Error when the asset price is stale
-    error StalePrice();
-
-    /// @notice Error when the oracle price is incomplete
-    error IncompleteRound();
 
     /// @notice Error when the fee rate is too high
     error FeeRateLimitExceeded();

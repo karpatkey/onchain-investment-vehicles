@@ -181,6 +181,64 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         }
     }
 
+    function testPreviewRedemptionWithZeroPrice() public {
+        // First, process a request to set last settled price
+        uint256 depositId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = depositId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Now call previewRedemption with sharesPrice = 0
+        // Should use last settled price
+        uint256 shares = _sharesAmount(100);
+        uint256 assets = kpkSharesContract.previewRedemption(shares, 0, address(usdc));
+
+        // Should calculate using last settled price (SHARES_PRICE)
+        uint256 redemptionFee = (shares * kpkSharesContract.redemptionFeeRate()) / 10000;
+        uint256 netShares = shares - redemptionFee;
+        uint256 expectedAssets = kpkSharesContract.sharesToAssets(netShares, SHARES_PRICE, address(usdc));
+        assertEq(assets, expectedAssets);
+    }
+
+    function testPreviewRedemptionNoStoredPrice() public {
+        // Call previewRedemption with sharesPrice = 0
+        // Before any processing (no stored price exists)
+        uint256 shares = _sharesAmount(100);
+
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NoStoredPrice.selector));
+        kpkSharesContract.previewRedemption(shares, 0, address(usdc));
+    }
+
+    /// @notice Test previewRedemption with both zero and non-zero price in same test
+    /// @dev This explicitly tests both branches of the sharesPrice == 0 condition (line 309)
+    function testPreviewRedemptionBothBranches() public {
+        uint256 shares = _sharesAmount(100);
+
+        // First, test with non-zero price (sharesPrice != 0 branch)
+        uint256 nonZeroPrice = SHARES_PRICE;
+        uint256 assets1 = kpkSharesContract.previewRedemption(shares, nonZeroPrice, address(usdc));
+        uint256 redemptionFee = (shares * kpkSharesContract.redemptionFeeRate()) / 10000;
+        uint256 netShares = shares - redemptionFee;
+        uint256 expectedAssets1 = kpkSharesContract.sharesToAssets(netShares, nonZeroPrice, address(usdc));
+        assertEq(assets1, expectedAssets1, "Non-zero price branch should work correctly");
+
+        // Process a request to set last settled price
+        uint256 depositId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = depositId;
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Now test with zero price (sharesPrice == 0 branch, uses last settled price)
+        uint256 assets2 = kpkSharesContract.previewRedemption(shares, 0, address(usdc));
+        uint256 expectedAssets2 = kpkSharesContract.sharesToAssets(netShares, SHARES_PRICE, address(usdc));
+        assertEq(assets2, expectedAssets2, "Zero price branch should use last settled price");
+
+        // Both should give same result since we used same price
+        assertEq(assets1, assets2, "Both branches should give same result with same underlying price");
+    }
+
     // ============================================================================
     // Redemption Processing Tests
     // ============================================================================
@@ -269,6 +327,451 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
     }
 
     // ============================================================================
+    // Request Processing Edge Cases
+    // ============================================================================
+
+    function testProcessRedemptionRequestWithMismatchedAsset() public {
+        // Create redemption request for USDC
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Create a different asset
+        Mock_ERC20 otherAsset = new Mock_ERC20("OTHER", 18);
+        otherAsset.mint(address(safe), _sharesAmount(100_000));
+
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(otherAsset), true, true, true);
+
+        // Grant allowance for the new asset
+        vm.prank(safe);
+        otherAsset.approve(address(kpkSharesContract), type(uint256).max);
+
+        // Try to process USDC request with different asset parameter
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        // Should skip the request (continue in loop) without processing
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(otherAsset), SHARES_PRICE);
+
+        // Verify request is still pending (was skipped)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.PENDING));
+    }
+
+    function testProcessAlreadyProcessedRedemptionRequest() public {
+        // Create and process a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, true);
+
+        // Try to process it again
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        // Should skip (continue in loop) without reverting
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Verify request is still processed (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.PROCESSED));
+    }
+
+    function testProcessAlreadyRejectedRedemptionRequest() public {
+        // Create a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Reject the request
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](0);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Verify request was rejected
+        IkpkShares.UserRequest memory rejectedRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(rejectedRequest.requestStatus), uint8(IkpkShares.RequestStatus.REJECTED));
+
+        // Try to process it again (in approveRequests)
+        vm.prank(ops);
+        uint256[] memory approveRequests2 = new uint256[](1);
+        approveRequests2[0] = requestId;
+        // Should skip (continue in loop) without reverting
+        kpkSharesContract.processRequests(approveRequests2, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Verify request is still rejected (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.REJECTED));
+    }
+
+    function testProcessAlreadyCancelledRedemptionRequest() public {
+        // Create a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Cancel the request
+        skip(REDEMPTION_REQUEST_TTL + 1);
+        vm.prank(alice);
+        kpkSharesContract.cancelRedemption(requestId);
+
+        // Verify request was cancelled
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(cancelledRequest.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+
+        // Try to process it (in approveRequests)
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        // Should skip (continue in loop) without reverting
+        // This tests the _checkValidRequest false path for non-pending status
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Verify request is still cancelled (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+    }
+
+    function testProcessRejectedRedemptionSkipsMismatchedAsset() public {
+        // Create redemption request for USDC
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Create a different asset
+        Mock_ERC20 otherAsset = new Mock_ERC20("OTHER", 18);
+        otherAsset.mint(address(safe), _sharesAmount(100_000));
+
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(otherAsset), true, true, true);
+
+        // Grant allowance for the new asset
+        vm.prank(safe);
+        otherAsset.approve(address(kpkSharesContract), type(uint256).max);
+
+        // Try to reject USDC request with different asset parameter
+        // Should skip the request (continue in loop) without processing
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](0);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(otherAsset), SHARES_PRICE);
+
+        // Verify request is still pending (was skipped)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.PENDING));
+    }
+
+    function testProcessRejectedRedemptionSkipsAlreadyProcessed() public {
+        // Create and process a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, true);
+
+        // Try to reject it (in rejectRequests) - should skip (continue in loop) without error
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](0);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Verify request is still processed (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.PROCESSED));
+    }
+
+    function testProcessRejectedRedemptionSkipsAlreadyRejected() public {
+        // Create a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Reject the request
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](0);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = requestId;
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Verify request was rejected
+        IkpkShares.UserRequest memory rejectedRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(rejectedRequest.requestStatus), uint8(IkpkShares.RequestStatus.REJECTED));
+
+        // Try to reject it again (in rejectRequests) - should skip (continue in loop) without reverting
+        vm.prank(ops);
+        uint256[] memory rejectRequests2 = new uint256[](1);
+        rejectRequests2[0] = requestId;
+        kpkSharesContract.processRequests(new uint256[](0), rejectRequests2, address(usdc), SHARES_PRICE);
+
+        // Verify request is still rejected (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.REJECTED));
+    }
+
+    function testProcessRejectedRedemptionSkipsAlreadyCancelled() public {
+        // Create a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Cancel the request
+        skip(REDEMPTION_REQUEST_TTL + 1);
+        vm.prank(alice);
+        kpkSharesContract.cancelRedemption(requestId);
+
+        // Verify request was cancelled
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(cancelledRequest.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+
+        // Try to reject it (in rejectRequests) - should skip (continue in loop) without reverting
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](0);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = requestId;
+        // This tests the _checkValidRequest false path for non-pending status in _processRejected
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Verify request is still cancelled (status unchanged)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+    }
+
+    function testCheckValidRequestWithNonPendingStatusRedemption() public {
+        // Create and process a redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, true);
+
+        // Verify request is processed (not pending)
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.PROCESSED));
+
+        // Try to process it again - should be skipped due to non-pending status
+        // This explicitly tests the _checkValidRequest false path for non-pending status
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        // Should skip (continue in loop) without error
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Verify request is still processed (status unchanged)
+        IkpkShares.UserRequest memory requestAfter = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(requestAfter.requestStatus), uint8(IkpkShares.RequestStatus.PROCESSED));
+    }
+
+    // ============================================================================
+    // Batch Processing with Skip Conditions (Branch Coverage)
+    // ============================================================================
+
+    /// @notice Test that _processApproved skips invalid requests and processes valid ones in batch
+    /// @dev This explicitly tests the continue statements in _processApproved loop
+    function testProcessApprovedRedemptionBatchWithSkips() public {
+        // Create multiple requests with different states
+        uint256 validRequestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+        uint256 processedRequestId = _testRequestProcessing(false, bob, _sharesAmount(100), SHARES_PRICE, true);
+        uint256 rejectedRequestId = _testRequestProcessing(false, carol, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Reject one request
+        vm.prank(ops);
+        uint256[] memory rejectRequests = new uint256[](1);
+        rejectRequests[0] = rejectedRequestId;
+        kpkSharesContract.processRequests(new uint256[](0), rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Cancel one request (need to wait for TTL)
+        uint256 cancelledRequestId = _testRequestProcessing(false, alice, _sharesAmount(50), SHARES_PRICE, false);
+        skip(REDEMPTION_REQUEST_TTL + 1);
+        vm.prank(alice);
+        kpkSharesContract.cancelRedemption(cancelledRequestId);
+
+        // Create a request with mismatched asset (request for otherAsset, but we'll process with USDC)
+        Mock_ERC20 otherAsset = new Mock_ERC20("OTHER", 18);
+        otherAsset.mint(address(safe), _sharesAmount(100_000));
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(otherAsset), true, true, true);
+        vm.prank(safe);
+        otherAsset.approve(address(kpkSharesContract), type(uint256).max);
+
+        // Create shares for bob first
+        uint256 sharesForBob = _sharesAmount(100);
+        _createSharesForTesting(bob, sharesForBob);
+
+        // Create a redemption request for otherAsset
+        uint256 minAssetsOut = kpkSharesContract.previewRedemption(sharesForBob, SHARES_PRICE, address(otherAsset));
+        vm.prank(bob);
+        kpkSharesContract.approve(address(kpkSharesContract), sharesForBob);
+        vm.prank(bob);
+        uint256 mismatchedAssetRequestId =
+            kpkSharesContract.requestRedemption(sharesForBob, minAssetsOut, address(otherAsset), bob);
+
+        // Process batch with mixed valid/invalid requests
+        // Should skip: processedRequestId (already processed), rejectedRequestId (already rejected),
+        //              cancelledRequestId (cancelled), mismatchedAssetRequestId (wrong asset - otherAsset vs USDC)
+        // Should process: validRequestId
+        uint256[] memory approveRequests = new uint256[](5);
+        approveRequests[0] = validRequestId;
+        approveRequests[1] = processedRequestId; // Should skip (already processed)
+        approveRequests[2] = rejectedRequestId; // Should skip (already rejected)
+        approveRequests[3] = cancelledRequestId; // Should skip (cancelled)
+        approveRequests[4] = mismatchedAssetRequestId; // Should skip (mismatched asset - request is for otherAsset, processing with USDC)
+
+        uint256 aliceBalanceBefore = usdc.balanceOf(alice);
+        // Process with USDC - mismatchedAssetRequestId should be skipped (it's for otherAsset)
+        vm.prank(ops);
+        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+
+        // Verify only validRequestId was processed
+        assertGt(usdc.balanceOf(alice), aliceBalanceBefore, "Valid request should be processed");
+
+        IkpkShares.UserRequest memory validRequest = kpkSharesContract.getRequest(validRequestId);
+        assertEq(
+            uint8(validRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.PROCESSED),
+            "Valid request should be processed"
+        );
+
+        IkpkShares.UserRequest memory processedRequest = kpkSharesContract.getRequest(processedRequestId);
+        assertEq(
+            uint8(processedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.PROCESSED),
+            "Already processed request should remain processed"
+        );
+
+        IkpkShares.UserRequest memory rejectedRequest = kpkSharesContract.getRequest(rejectedRequestId);
+        assertEq(
+            uint8(rejectedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.REJECTED),
+            "Rejected request should remain rejected"
+        );
+
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(cancelledRequestId);
+        assertEq(
+            uint8(cancelledRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.CANCELLED),
+            "Cancelled request should remain cancelled"
+        );
+
+        IkpkShares.UserRequest memory mismatchedRequest = kpkSharesContract.getRequest(mismatchedAssetRequestId);
+        assertEq(
+            uint8(mismatchedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.PENDING),
+            "Mismatched asset request should remain pending"
+        );
+    }
+
+    /// @notice Test that _processRejected skips invalid requests in batch
+    /// @dev This explicitly tests the continue statements in _processRejected loop
+    function testProcessRejectedRedemptionBatchWithSkips() public {
+        // Create multiple requests with different states
+        uint256 validRequestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+        uint256 processedRequestId = _testRequestProcessing(false, bob, _sharesAmount(100), SHARES_PRICE, true);
+        uint256 rejectedRequestId = _testRequestProcessing(false, carol, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Reject one request first
+        vm.prank(ops);
+        uint256[] memory rejectRequests1 = new uint256[](1);
+        rejectRequests1[0] = rejectedRequestId;
+        kpkSharesContract.processRequests(new uint256[](0), rejectRequests1, address(usdc), SHARES_PRICE);
+
+        // Cancel one request
+        uint256 cancelledRequestId = _testRequestProcessing(false, alice, _sharesAmount(50), SHARES_PRICE, false);
+        skip(REDEMPTION_REQUEST_TTL + 1);
+        vm.prank(alice);
+        kpkSharesContract.cancelRedemption(cancelledRequestId);
+
+        // Create a request with mismatched asset (request for otherAsset, but we'll process with USDC)
+        Mock_ERC20 otherAsset = new Mock_ERC20("OTHER", 18);
+        otherAsset.mint(address(safe), _sharesAmount(100_000));
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(otherAsset), true, true, true);
+        vm.prank(safe);
+        otherAsset.approve(address(kpkSharesContract), type(uint256).max);
+
+        // Create shares for bob first
+        uint256 sharesForBob = _sharesAmount(100);
+        _createSharesForTesting(bob, sharesForBob);
+
+        // Create a redemption request for otherAsset
+        uint256 minAssetsOut = kpkSharesContract.previewRedemption(sharesForBob, SHARES_PRICE, address(otherAsset));
+        vm.prank(bob);
+        kpkSharesContract.approve(address(kpkSharesContract), sharesForBob);
+        vm.prank(bob);
+        uint256 mismatchedAssetRequestId =
+            kpkSharesContract.requestRedemption(sharesForBob, minAssetsOut, address(otherAsset), bob);
+
+        // Process batch with mixed valid/invalid requests for rejection
+        // Should skip: processedRequestId (already processed), rejectedRequestId (already rejected),
+        //              cancelledRequestId (cancelled), mismatchedAssetRequestId (wrong asset - otherAsset vs USDC)
+        // Should reject: validRequestId
+        vm.prank(ops);
+        uint256[] memory rejectRequests2 = new uint256[](5);
+        rejectRequests2[0] = validRequestId;
+        rejectRequests2[1] = processedRequestId; // Should skip (already processed)
+        rejectRequests2[2] = rejectedRequestId; // Should skip (already rejected)
+        rejectRequests2[3] = cancelledRequestId; // Should skip (cancelled)
+        rejectRequests2[4] = mismatchedAssetRequestId; // Should skip (mismatched asset - request is for otherAsset, processing with USDC)
+
+        kpkSharesContract.processRequests(new uint256[](0), rejectRequests2, address(usdc), SHARES_PRICE);
+
+        // Verify only validRequestId was rejected
+        IkpkShares.UserRequest memory validRequest = kpkSharesContract.getRequest(validRequestId);
+        assertEq(
+            uint8(validRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.REJECTED),
+            "Valid request should be rejected"
+        );
+
+        IkpkShares.UserRequest memory processedRequest = kpkSharesContract.getRequest(processedRequestId);
+        assertEq(
+            uint8(processedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.PROCESSED),
+            "Already processed request should remain processed"
+        );
+
+        IkpkShares.UserRequest memory rejectedRequest = kpkSharesContract.getRequest(rejectedRequestId);
+        assertEq(
+            uint8(rejectedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.REJECTED),
+            "Rejected request should remain rejected"
+        );
+
+        IkpkShares.UserRequest memory cancelledRequest = kpkSharesContract.getRequest(cancelledRequestId);
+        assertEq(
+            uint8(cancelledRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.CANCELLED),
+            "Cancelled request should remain cancelled"
+        );
+
+        IkpkShares.UserRequest memory mismatchedRequest = kpkSharesContract.getRequest(mismatchedAssetRequestId);
+        assertEq(
+            uint8(mismatchedRequest.requestStatus),
+            uint8(IkpkShares.RequestStatus.PENDING),
+            "Mismatched asset request should remain pending"
+        );
+    }
+
+    // ============================================================================
+    // Request Expiry Tests
+    // ============================================================================
+
+    function testExpiredRedemptionRequestAutoRejection() public {
+        // Create redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Get the request to check expiryAt and shares amount
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        uint64 expiryAt = request.expiryAt;
+        uint256 sharesAmount = request.sharesAmount;
+
+        // Fast forward past MAX_TTL (7 days)
+        skip(7 days + 1);
+
+        // Store initial balance to verify refund (shares are in escrow at this point)
+        uint256 initialShares = kpkSharesContract.balanceOf(alice);
+
+        // Process request - should be automatically rejected
+        vm.prank(ops);
+        uint256[] memory approveRequests = new uint256[](1);
+        approveRequests[0] = requestId;
+        uint256[] memory rejectRequests = new uint256[](0);
+
+        vm.expectEmit(true, true, true, true);
+        emit IkpkShares.RedemptionRequestExpired(requestId, expiryAt);
+        kpkSharesContract.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+
+        // Verify request was rejected
+        IkpkShares.UserRequest memory rejectedRequest = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(rejectedRequest.requestStatus), uint8(IkpkShares.RequestStatus.REJECTED));
+
+        // Verify shares were returned from escrow
+        uint256 finalShares = kpkSharesContract.balanceOf(alice);
+        assertEq(finalShares, initialShares + sharesAmount);
+    }
+
+    // ============================================================================
     // Redemption Update Tests
     // ============================================================================
 
@@ -307,6 +810,53 @@ contract kpkSharesRedemptionsTest is kpkSharesTestBase {
         vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
         kpkSharesContract.cancelRedemption(requestId);
         vm.stopPrank();
+    }
+
+    function testCancelRedemptionByReceiver() public {
+        // Create shares first
+        _createSharesForTesting(alice, _sharesAmount(100));
+
+        // Create redemption with receiver != investor
+        vm.startPrank(alice);
+        kpkSharesContract.approve(address(kpkSharesContract), _sharesAmount(100));
+        uint256 requestId = kpkSharesContract.requestRedemption(
+            _sharesAmount(100),
+            kpkSharesContract.sharesToAssets(_sharesAmount(100), SHARES_PRICE, address(usdc)),
+            address(usdc),
+            bob // receiver is different from investor (alice)
+        );
+        vm.stopPrank();
+
+        // Wait for TTL to expire
+        skip(REDEMPTION_REQUEST_TTL + 1);
+
+        // Store initial balance
+        uint256 initialShares = kpkSharesContract.balanceOf(alice);
+
+        // Cancel as receiver (bob) - should succeed
+        vm.prank(bob);
+        kpkSharesContract.cancelRedemption(requestId);
+
+        // Verify request was cancelled
+        IkpkShares.UserRequest memory request = kpkSharesContract.getRequest(requestId);
+        assertEq(uint8(request.requestStatus), uint8(IkpkShares.RequestStatus.CANCELLED));
+
+        // Verify shares were returned to investor (alice), not receiver
+        uint256 finalShares = kpkSharesContract.balanceOf(alice);
+        assertEq(finalShares, initialShares + _sharesAmount(100));
+    }
+
+    function testCancelRedemptionByUnauthorizedUser() public {
+        // Create redemption request
+        uint256 requestId = _testRequestProcessing(false, alice, _sharesAmount(100), SHARES_PRICE, false);
+
+        // Wait for TTL to expire
+        skip(REDEMPTION_REQUEST_TTL + 1);
+
+        // Try to cancel as unauthorized user (carol, not investor or receiver)
+        vm.prank(carol);
+        vm.expectRevert(abi.encodeWithSelector(IkpkShares.NotAuthorized.selector));
+        kpkSharesContract.cancelRedemption(requestId);
     }
 
     function testCancelRedemptionRequestAfterProcessing() public {
