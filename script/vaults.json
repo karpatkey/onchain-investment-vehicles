@@ -54,6 +54,23 @@
           "redemptionFeeRate": 150,
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
           "performanceFeeRate": 2000
+        },
+        {
+          "environment": "staging",
+          "vaultName": "skETH",
+          "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+          "admin": "0x9D73C053afcbF6CD5c8986C3f049fD2Ce005730C",
+          "operator": "0x60E10AD81EcBD353391E110EFBdA23471272a780",
+          "name": "kpk ETH Alpha Fund (Staging)",
+          "symbol": "skETH",
+          "safe": "0x408ea1bC71ec2562ABCB27520cf7077718403496",
+          "subscriptionRequestTtl": 86400,
+          "redemptionRequestTtl": 86400,
+          "feeReceiver": "0x60E10AD81EcBD353391E110EFBdA23471272a780",
+          "managementFeeRate": 300,
+          "redemptionFeeRate": 150,
+          "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+          "performanceFeeRate": 2000
         }
       ]
     }
