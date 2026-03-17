@@ -132,6 +132,9 @@ contract kpkSharesTestBase is Test {
         );
         kpkSharesContract = KpkShares(kpkSharesProxy);
 
+        // Authorize KpkShares as the only caller of the performance fee module
+        WatermarkFee(address(perfFeeModule)).setAuthorizedCaller(address(kpkSharesContract));
+
         // Grant allowance for the main contract to spend USDC from the safe for redemptions
         vm.prank(safe);
         usdc.approve(address(kpkSharesContract), type(uint256).max);
@@ -175,6 +178,8 @@ contract kpkSharesTestBase is Test {
         internal
         returns (KpkShares)
     {
+        WatermarkFee freshFeeModule = new WatermarkFee();
+
         address kpkSharesImpl = address(new KpkShares());
         address kpkSharesProxy = UnsafeUpgrades.deployUUPSProxy(
             kpkSharesImpl,
@@ -191,12 +196,14 @@ contract kpkSharesTestBase is Test {
                         feeReceiver: feeRecipient,
                         managementFeeRate: managementFeeRate,
                         redemptionFeeRate: redemptionFeeRate,
-                        performanceFeeModule: address(perfFeeModule),
+                        performanceFeeModule: address(freshFeeModule),
                         performanceFeeRate: performanceFeeRate
                     }))
             )
         );
         KpkShares kpkSharesWithFees = KpkShares(kpkSharesProxy);
+
+        freshFeeModule.setAuthorizedCaller(address(kpkSharesWithFees));
 
         // Grant operator role
         vm.prank(admin);
@@ -864,6 +871,10 @@ contract kpkSharesTestBase is Test {
     /// @param config The test configuration to use
     /// @return contractInstance The deployed contract instance
     function deployContractWithConfig(TestConfig memory config) internal returns (KpkShares contractInstance) {
+        // Deploy a fresh WatermarkFee for each contract instance
+        WatermarkFee freshFeeModule = new WatermarkFee();
+        config.performanceFeeModule = address(freshFeeModule);
+
         address kpkSharesImpl = address(new KpkShares());
         address kpkSharesProxy = UnsafeUpgrades.deployUUPSProxy(
             kpkSharesImpl,
@@ -886,6 +897,9 @@ contract kpkSharesTestBase is Test {
             )
         );
         contractInstance = KpkShares(kpkSharesProxy);
+
+        // Authorize this KpkShares as the caller
+        freshFeeModule.setAuthorizedCaller(address(contractInstance));
 
         // Grant operator role
         vm.prank(admin);
