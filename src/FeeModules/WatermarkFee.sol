@@ -7,11 +7,24 @@ import {IPerfFeeModule} from "./IPerfFeeModule.sol";
 /// @notice Calculates a performance fee based on the increase in price above a previous watermark.
 /// The fee is only charged on profits above the last watermark.
 contract WatermarkFee is IPerfFeeModule {
+    /// @notice The authorized caller (KpkShares contract)
+    address public authorizedCaller;
+
     /// @notice The current high watermark (highest share price seen)
     uint256 public highWatermark;
 
     /// @notice The total supply of shares when fees were last calculated
     uint256 public lastTotalSupply;
+
+    error NotAuthorized();
+    error AlreadyInitialized();
+
+    /// @notice Sets the authorized caller. Can only be called once.
+    /// @param _authorizedCaller The address permitted to call calculatePerformanceFee
+    function setAuthorizedCaller(address _authorizedCaller) external {
+        if (authorizedCaller != address(0)) revert AlreadyInitialized();
+        authorizedCaller = _authorizedCaller;
+    }
 
     /// @notice Events
     /// @param oldWatermark The previous watermark value
@@ -34,6 +47,7 @@ contract WatermarkFee is IPerfFeeModule {
         external
         returns (uint256 fee)
     {
+        if (msg.sender != authorizedCaller) revert NotAuthorized();
         // Store the previous watermark before potentially updating it
         uint256 previousWatermark = highWatermark;
 
