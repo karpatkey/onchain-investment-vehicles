@@ -109,8 +109,20 @@ contract DeployKpkSharesSepolia is Script {
         console.log("Deploying kpkShares Vault:", vaultName);
         console.log("==========================================");
 
+        // Parse additional assets (optional)
+        address[] memory additionalAssets;
+        string memory additionalAssetsPath = string.concat(vaultPath, ".additionalAssets");
+        if (json.keyExists(additionalAssetsPath)) {
+            additionalAssets = json.readAddressArray(additionalAssetsPath);
+        }
+
         // Deploy the contract
         address proxy = _deployContract(params);
+
+        // Whitelist additional assets before revoking deployer admin
+        for (uint256 i = 0; i < additionalAssets.length; i++) {
+            KpkShares(proxy).updateAsset(additionalAssets[i], false, true, true);
+        }
 
         // Setup roles
         address operator = json.readAddress(string.concat(vaultPath, ".operator"));
