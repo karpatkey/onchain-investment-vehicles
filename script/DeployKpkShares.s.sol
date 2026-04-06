@@ -76,7 +76,7 @@ contract DeployKpkShares is Script {
         console.log("==========================================");
 
         // Parse additional assets (optional)
-        address[] memory additionalAssets;
+        address[] memory additionalAssets = new address[](0);
         string memory additionalAssetsPath = string.concat(vaultPath, ".additionalAssets");
         if (json.keyExists(additionalAssetsPath)) {
             additionalAssets = json.readAddressArray(additionalAssetsPath);
