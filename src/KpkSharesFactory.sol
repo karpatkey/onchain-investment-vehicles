@@ -90,6 +90,10 @@ contract KpkSharesFactory is Ownable {
 
     struct FundConfig {
         StackConfig stack;
+        /// @notice Pre-deployed KpkShares implementation address. Each fund must receive its own
+        ///         fresh implementation so upgrades are isolated per fund. Deploy a new KpkShares
+        ///         implementation before calling deployFund() and pass its address here.
+        address kpkSharesImpl;
         /// @notice kpkShares initialization params. sharesParams.safe is overridden with the
         ///         deployed avatarSafe address. sharesParams.admin is overridden with address(this)
         ///         during initialization so the factory can set up roles, then the real admin is
@@ -244,8 +248,9 @@ contract KpkSharesFactory is Ownable {
         // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
         StackInstance memory stack = _deployAndWireStack(config.stack, true);
 
-        (address sharesImpl, address sharesProxy) =
-            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets);
+        address sharesProxy = _deploySharesProxy(
+            config.kpkSharesImpl, config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets
+        );
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
@@ -262,7 +267,7 @@ contract KpkSharesFactory is Ownable {
             execRolesModifier: stack.execRolesModifier,
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
-            kpkSharesImpl: sharesImpl,
+            kpkSharesImpl: config.kpkSharesImpl,
             kpkSharesProxy: sharesProxy
         });
 
@@ -414,17 +419,17 @@ contract KpkSharesFactory is Ownable {
         IRoles(mod).transferOwnership(managerSafe);
     }
 
-    /// @dev Deploys a fresh KpkShares implementation and a UUPS proxy.
-    ///      Each fund gets its own implementation so upgrades are isolated per fund.
+    /// @dev Deploys a UUPS proxy pointing at the provided KpkShares implementation.
+    ///      Each fund must receive its own fresh implementation (pass a newly deployed KpkShares
+    ///      address) so upgrades are isolated per fund.
     ///      Temporarily holds OPERATOR to register additional assets, then revokes it.
     function _deploySharesProxy(
+        address impl,
         KpkShares.ConstructorParams memory params,
         address operator,
         address avatarSafe,
         AssetConfig[] calldata additionalAssets
-    ) internal returns (address impl, address proxy) {
-        impl = address(new KpkShares());
-
+    ) internal returns (address proxy) {
         address finalAdmin = params.admin;
         params.safe = avatarSafe;
         params.admin = address(this);
@@ -484,6 +489,7 @@ contract KpkSharesFactory is Ownable {
 
     function _validateFundConfig(FundConfig calldata config) internal pure {
         _validateStackConfig(config.stack);
+        if (config.kpkSharesImpl == address(0)) revert ZeroAddress();
         if (config.sharesOperator == address(0)) revert ZeroAddress();
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();

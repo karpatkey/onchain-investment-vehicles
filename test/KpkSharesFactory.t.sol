@@ -36,6 +36,7 @@ contract KpkSharesFactoryTest is Test {
     // ── Contracts under test ────────────────────────────────────────────────────
 
     KpkSharesFactory factory;
+    address kpkSharesImpl;
 
     KpkSharesFactory.FundConfig fundConfig;
 
@@ -54,6 +55,7 @@ contract KpkSharesFactoryTest is Test {
             ROLES_MODIFIER_MASTERCOPY
         );
 
+        kpkSharesImpl = address(new KpkShares());
         fundConfig = _buildFundConfig();
     }
 
@@ -211,9 +213,10 @@ contract KpkSharesFactoryTest is Test {
         factory.deployFund(fundConfig);
         assertEq(factory.instanceCount(), 1);
 
-        // Deploy a second fund with a different salt to avoid CREATE2 collisions.
+        // Deploy a second fund with a different salt and fresh implementation.
         KpkSharesFactory.FundConfig memory cfg2 = _buildFundConfig();
         cfg2.stack.salt = 999;
+        cfg2.kpkSharesImpl = address(new KpkShares());
 
         vm.prank(factoryOwner);
         factory.deployFund(cfg2);
@@ -341,6 +344,7 @@ contract KpkSharesFactoryTest is Test {
 
     function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
         cfg.stack = _buildStackConfig();
+        cfg.kpkSharesImpl = kpkSharesImpl;
         cfg.sharesOperator = sharesOperator;
         cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({
