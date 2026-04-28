@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkSharesFactory} from "src/KpkSharesFactory.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
@@ -13,12 +14,21 @@ contract KpkSharesFactoryTest is Test {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
+    // Safe v1.4.1
+    address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
+    address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
+    address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
+    address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
+
+    // Zodiac
+    address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
+    address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+
     // ── Test accounts ───────────────────────────────────────────────────────────
 
     address factoryOwner = makeAddr("factoryOwner");
     address securityCouncil = makeAddr("securityCouncil");
     address managerSigner = makeAddr("managerSigner");
-    address avatarSigner = makeAddr("avatarSigner");
     address sharesAdmin = makeAddr("sharesAdmin");
     address sharesOperator = makeAddr("sharesOperator");
     address feeReceiver = makeAddr("feeReceiver");
@@ -34,7 +44,15 @@ contract KpkSharesFactoryTest is Test {
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
 
-        factory = new KpkSharesFactory(factoryOwner);
+        factory = new KpkSharesFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY
+        );
 
         fundConfig = _buildFundConfig();
     }
@@ -60,6 +78,24 @@ contract KpkSharesFactoryTest is Test {
         assertTrue(
             ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier),
             "execRolesModifier not a module of avatarSafe"
+        );
+    }
+
+    function test_avatarSafe_ownerIsEmptyContract() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        address[] memory owners = ISafe(inst.avatarSafe).getOwners();
+        assertEq(owners.length, 1, "avatarSafe should have exactly one owner");
+        assertEq(owners[0], factory.EMPTY_CONTRACT(), "avatarSafe owner is not EMPTY_CONTRACT");
+    }
+
+    function test_factory_isNotModuleOfAvatarSafeAfterDeploy() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertFalse(
+            ISafe(inst.avatarSafe).isModuleEnabled(address(factory)), "factory should not remain a module of avatarSafe"
         );
     }
 
@@ -149,6 +185,17 @@ contract KpkSharesFactoryTest is Test {
         assertFalse(shares.hasRole(0x00, address(factory)), "factory still has DEFAULT_ADMIN_ROLE");
     }
 
+    function test_sharesProxy_baseAssetHasInfiniteAllowance() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertEq(
+            IERC20(USDC).allowance(inst.avatarSafe, inst.kpkSharesProxy),
+            type(uint256).max,
+            "base asset allowance is not infinite"
+        );
+    }
+
     function test_sharesProxy_cannotReinitialize() public {
         vm.prank(factoryOwner);
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
@@ -187,15 +234,15 @@ contract KpkSharesFactoryTest is Test {
         factory.deployFund(fundConfig);
     }
 
-    function test_deployFund_revertsOnEmptyAvatarOwners() public {
-        fundConfig.stack.avatarSafe.owners = new address[](0);
+    function test_deployFund_revertsOnEmptyManagerOwners() public {
+        fundConfig.stack.managerSafe.owners = new address[](0);
         vm.prank(factoryOwner);
         vm.expectRevert(KpkSharesFactory.EmptyOwners.selector);
         factory.deployFund(fundConfig);
     }
 
     function test_deployFund_revertsOnInvalidThreshold() public {
-        fundConfig.stack.avatarSafe.threshold = 5; // more than 1 owner
+        fundConfig.stack.managerSafe.threshold = 5; // more than 1 owner
         vm.prank(factoryOwner);
         vm.expectRevert(KpkSharesFactory.InvalidThreshold.selector);
         factory.deployFund(fundConfig);
@@ -212,6 +259,15 @@ contract KpkSharesFactoryTest is Test {
         assertTrue(inst.execRolesModifier != address(0), "execRolesModifier not deployed");
         assertTrue(inst.subRolesModifier != address(0), "subRolesModifier not deployed");
         assertTrue(inst.managerRolesModifier != address(0), "managerRolesModifier not deployed");
+    }
+
+    function test_deployStack_avatarSafe_ownerIsEmptyContract() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+
+        address[] memory owners = ISafe(inst.avatarSafe).getOwners();
+        assertEq(owners.length, 1, "avatarSafe should have exactly one owner");
+        assertEq(owners[0], factory.EMPTY_CONTRACT(), "avatarSafe owner is not EMPTY_CONTRACT");
     }
 
     function test_deployStack_wiringMatchesDeployFund() public {
@@ -273,13 +329,9 @@ contract KpkSharesFactoryTest is Test {
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
     function _buildStackConfig() internal view returns (KpkSharesFactory.StackConfig memory cfg) {
-        address[] memory avatarOwners = new address[](1);
-        avatarOwners[0] = avatarSigner;
-
         address[] memory managerOwners = new address[](1);
         managerOwners[0] = managerSigner;
 
-        cfg.avatarSafe = KpkSharesFactory.SafeConfig({owners: avatarOwners, threshold: 1});
         cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1});
         cfg.execRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: securityCouncil});
         cfg.subRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: address(0)});
@@ -290,6 +342,7 @@ contract KpkSharesFactoryTest is Test {
     function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
         cfg.stack = _buildStackConfig();
         cfg.sharesOperator = sharesOperator;
+        cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({
             asset: USDC,
             admin: sharesAdmin,

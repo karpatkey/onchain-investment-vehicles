@@ -18,4 +18,10 @@ interface ISafe {
     function getOwners() external view returns (address[] memory);
 
     function getThreshold() external view returns (uint256);
+
+    function execTransactionFromModule(address to, uint256 value, bytes memory data, uint8 operation)
+        external
+        returns (bool success);
+
+    function disableModule(address prevModule, address module) external;
 }

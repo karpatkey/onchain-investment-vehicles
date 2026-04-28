@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkShares} from "./kpkShares.sol";
 import {ISafe} from "./interfaces/ISafe.sol";
 import {ISafeProxyFactory} from "./interfaces/ISafeProxyFactory.sol";
@@ -13,21 +14,19 @@ import {IRoles} from "./interfaces/IRoles.sol";
 /// @notice On-chain factory that deploys a full kpk fund stack in a single transaction:
 ///         Avatar Safe → Manager Safe → 3 Roles Modifiers → kpkShares UUPS proxy.
 ///
-///         Avoids the SafeProxyOwner workaround by deploying Roles Modifiers first (factory
-///         as temporary owner/avatar/target), then deploying Safes with the modifier addresses
-///         embedded in their setup() delegatecall data (SafeModuleSetup.enableModules).
-///         After Safes are deployed the factory fixes avatars/targets and transfers ownership.
+///         The Avatar Safe is always deployed with a single signer: the Empty contract at
+///         EMPTY_CONTRACT, which is deployed at the same address on every chain. This means
+///         no EOA or multisig can execute transactions directly on the Avatar Safe — all
+///         execution must flow through the Roles Modifiers.
 ///
 ///         deployStack() deploys only the operational stack (Safes + Roles Modifiers) and is
 ///         intended for multichain deployments where the same addresses are needed on every chain.
-///         deployFund() additionally deploys the kpkShares proxy and is mainnet-only.
+///         deployFund() additionally deploys the kpkShares proxy, grants infinite asset approvals
+///         from the Avatar Safe to the shares proxy, and is mainnet-only.
 ///
 ///         A single salt in StackConfig drives all five CREATE2 deployments, guaranteeing
 ///         identical addresses across chains when the factory is deployed at the same address
-///         and the infrastructure addresses are identical.
-///
-///         Infrastructure addresses are initialised to the canonical Safe v1.4.1 + Zodiac
-///         values and can be updated by the owner to support new versions or other chains.
+///         and its constructor arguments are identical.
 contract KpkSharesFactory is Ownable {
     // ── Roles ─────────────────────────────────────────────────────────────────
 
@@ -36,16 +35,14 @@ contract KpkSharesFactory is Ownable {
     // forge-lint: disable-next-line(unsafe-typecast)
     bytes32 private constant MANAGER_ROLE = bytes32("MANAGER");
 
-    // ── Default infrastructure addresses (Safe v1.4.1 + Zodiac, most EVM chains) ──
+    /// @notice Empty contract deployed at the same address on all chains via CREATE2.
+    ///         Used as the sole signer of every Avatar Safe.
+    address public constant EMPTY_CONTRACT = 0xA4703438f8cc4fc2C2503a7e43935Da16BA74652;
 
-    address private constant _DEFAULT_SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
-    address private constant _DEFAULT_SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address private constant _DEFAULT_SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
-    address private constant _DEFAULT_SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
-    address private constant _DEFAULT_MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    address private constant _DEFAULT_ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+    /// @notice Gnosis Safe linked-list sentinel for the modules mapping.
+    address private constant SENTINEL_MODULES = address(0x1);
 
-    // ── Infrastructure addresses (owner-updatable) ─────────────────────────────
+    // ── Infrastructure addresses (constructor arguments, owner-updatable) ──────
 
     address public safeProxyFactory;
     address public safeSingleton;
@@ -69,10 +66,9 @@ contract KpkSharesFactory is Ownable {
     }
 
     /// @notice Configuration for the operational stack (Safes + Roles Modifiers).
-    ///         A single salt drives all five CREATE2 deployments; the same salt on the same
-    ///         factory produces identical addresses on every chain.
+    ///         The Avatar Safe is always deployed with EMPTY_CONTRACT as sole signer; no SafeConfig
+    ///         is needed for it. A single salt drives all five CREATE2 deployments.
     struct StackConfig {
-        SafeConfig avatarSafe;
         SafeConfig managerSafe;
         /// @notice Primary modifier — enabled as module on Avatar Safe.
         RolesModifierConfig execRolesMod;
@@ -85,6 +81,13 @@ contract KpkSharesFactory is Ownable {
         uint256 salt;
     }
 
+    /// @notice Configuration for an additional asset beyond the base asset.
+    struct AssetConfig {
+        address asset;
+        bool canDeposit;
+        bool canRedeem;
+    }
+
     struct FundConfig {
         StackConfig stack;
         /// @notice kpkShares initialization params. sharesParams.safe is overridden with the
@@ -94,6 +97,9 @@ contract KpkSharesFactory is Ownable {
         KpkShares.ConstructorParams sharesParams;
         /// @notice Address that receives the OPERATOR role on the kpkShares proxy.
         address sharesOperator;
+        /// @notice Additional assets to enable on the shares proxy beyond the base asset.
+        ///         The factory temporarily holds OPERATOR to register these, then revokes it.
+        AssetConfig[] additionalAssets;
     }
 
     struct StackInstance {
@@ -142,13 +148,27 @@ contract KpkSharesFactory is Ownable {
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
-    constructor(address _owner) Ownable(_owner) {
-        safeProxyFactory = _DEFAULT_SAFE_PROXY_FACTORY;
-        safeSingleton = _DEFAULT_SAFE_SINGLETON;
-        safeModuleSetup = _DEFAULT_SAFE_MODULE_SETUP;
-        safeFallbackHandler = _DEFAULT_SAFE_FALLBACK_HANDLER;
-        moduleProxyFactory = _DEFAULT_MODULE_PROXY_FACTORY;
-        rolesModifierMastercopy = _DEFAULT_ROLES_MODIFIER_MASTERCOPY;
+    constructor(
+        address _owner,
+        address _safeProxyFactory,
+        address _safeSingleton,
+        address _safeModuleSetup,
+        address _safeFallbackHandler,
+        address _moduleProxyFactory,
+        address _rolesModifierMastercopy
+    ) Ownable(_owner) {
+        if (
+            _safeProxyFactory == address(0) || _safeSingleton == address(0) || _safeModuleSetup == address(0)
+                || _safeFallbackHandler == address(0) || _moduleProxyFactory == address(0)
+                || _rolesModifierMastercopy == address(0)
+        ) revert ZeroAddress();
+
+        safeProxyFactory = _safeProxyFactory;
+        safeSingleton = _safeSingleton;
+        safeModuleSetup = _safeModuleSetup;
+        safeFallbackHandler = _safeFallbackHandler;
+        moduleProxyFactory = _moduleProxyFactory;
+        rolesModifierMastercopy = _rolesModifierMastercopy;
     }
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
@@ -192,12 +212,13 @@ contract KpkSharesFactory is Ownable {
     // ── Main entry points ───────────────────────────────────────────────────────
 
     /// @notice Deploy only the operational stack: Avatar Safe, Manager Safe, and three Roles Modifiers.
+    ///         The Avatar Safe is deployed with EMPTY_CONTRACT as its sole signer.
     ///         Intended for multichain deployments — the same salt on the same factory produces
     ///         identical addresses on every chain.
     function deployStack(StackConfig calldata config) external onlyOwner returns (StackInstance memory instance) {
         _validateStackConfig(config);
 
-        instance = _deployAndWireStack(config);
+        instance = _deployAndWireStack(config, false);
 
         uint256 id = stackCount++;
         stacks[id] = instance;
@@ -205,22 +226,35 @@ contract KpkSharesFactory is Ownable {
     }
 
     /// @notice Deploy a full fund stack: operational stack + kpkShares UUPS proxy.
-    ///         Typically called on mainnet only; use deployStack() on sidechains.
+    ///         Also grants infinite allowance from the Avatar Safe to the shares proxy for every
+    ///         configured asset. Typically called on mainnet only; use deployStack() on sidechains.
     /// @dev Deployment order:
     ///      1. Deploy 3 roles modifiers (factory as temp owner/avatar/target).
-    ///      2. Deploy Avatar Safe with execRolesMod already enabled via setup delegatecall.
-    ///      3. Deploy Manager Safe with managerRolesMod already enabled via setup delegatecall.
+    ///      2. Deploy Avatar Safe (EMPTY_CONTRACT signer; execRolesMod + factory pre-enabled as modules).
+    ///      3. Deploy Manager Safe with managerRolesMod pre-enabled as module.
     ///      4. Wire execRolesMod: fix avatar/target, assign roles, enable subRolesMod, transfer ownership.
     ///      5. Wire subRolesMod: fix avatar/target, transfer ownership to managerSafe.
     ///      6. Wire managerRolesMod: fix avatar/target, transfer ownership to managerSafe.
-    ///      7. Deploy kpkShares implementation + proxy, grant roles, factory renounces.
+    ///      7. Deploy kpkShares implementation + proxy, enable additional assets, grant roles, factory renounces.
+    ///      8. Grant infinite approval from Avatar Safe to shares proxy for all assets.
+    ///      9. Remove factory as module from Avatar Safe.
     function deployFund(FundConfig calldata config) external onlyOwner returns (FundInstance memory instance) {
         _validateFundConfig(config);
 
-        StackInstance memory stack = _deployAndWireStack(config.stack);
+        // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
+        StackInstance memory stack = _deployAndWireStack(config.stack, true);
 
         (address sharesImpl, address sharesProxy) =
-            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe);
+            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets);
+
+        // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
+        _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
+
+        // Remove factory as module from Avatar Safe — it is at the front of the list (SENTINEL → factory → execMod).
+        ISafe(stack.avatarSafe)
+            .execTransactionFromModule(
+                stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
+            );
 
         instance = FundInstance({
             avatarSafe: stack.avatarSafe,
@@ -240,9 +274,13 @@ contract KpkSharesFactory is Ownable {
     // ── Internal: stack deployment ──────────────────────────────────────────────
 
     /// @dev Deploys and fully wires the five-contract operational stack.
-    ///      Per-component salts/nonces are derived by hashing the base salt with a fixed index,
-    ///      so a single value in StackConfig.salt determines all addresses.
-    function _deployAndWireStack(StackConfig calldata config) internal returns (StackInstance memory inst) {
+    ///      When includeFactoryAsAvatarModule is true, the factory is enabled as an additional
+    ///      module on the Avatar Safe so it can perform post-deployment actions (approvals)
+    ///      before removing itself.
+    function _deployAndWireStack(StackConfig calldata config, bool includeFactoryAsAvatarModule)
+        internal
+        returns (StackInstance memory inst)
+    {
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(config.salt);
 
@@ -251,20 +289,35 @@ contract KpkSharesFactory is Ownable {
         address subMod = _deployRolesModifier(subSalt);
         address managerMod = _deployRolesModifier(mgrSalt);
 
-        // Step 2 – Deploy Avatar Safe; enableModules([execMod]) is called via delegatecall during
-        //          setup() so execMod is already a module when the Safe is initialized.
-        address avatarSafe = _deploySafe(config.avatarSafe, execMod, avatarNonce);
+        // Step 2 – Deploy Avatar Safe with EMPTY_CONTRACT as sole signer.
+        //          Modules enabled during setup(): always execMod, optionally the factory.
+        //          If factory is enabled, it is inserted at the front: SENTINEL → factory → execMod.
+        address avatarSafe;
+        {
+            address[] memory avatarOwners = new address[](1);
+            avatarOwners[0] = EMPTY_CONTRACT;
 
-        // Step 3 – Deploy Manager Safe with managerMod enabled the same way.
-        address managerSafe = _deploySafe(config.managerSafe, managerMod, mgrNonce);
+            address[] memory avatarModules;
+            if (includeFactoryAsAvatarModule) {
+                avatarModules = new address[](2);
+                avatarModules[0] = execMod;
+                avatarModules[1] = address(this);
+            } else {
+                avatarModules = new address[](1);
+                avatarModules[0] = execMod;
+            }
+            avatarSafe = _deploySafe(avatarOwners, 1, avatarModules, avatarNonce);
+        }
 
-        // Step 4 – Wire exec modifier.
+        // Step 3 – Deploy Manager Safe with managerMod enabled.
+        address[] memory managerOwners = config.managerSafe.owners;
+        address[] memory managerModules = new address[](1);
+        managerModules[0] = managerMod;
+        address managerSafe = _deploySafe(managerOwners, config.managerSafe.threshold, managerModules, mgrNonce);
+
+        // Steps 4-6 – Wire all three modifiers.
         _wireExecModifier(execMod, avatarSafe, managerSafe, subMod, config.execRolesMod.finalOwner);
-
-        // Step 5 – Wire sub modifier.
         _wireSubModifier(subMod, avatarSafe, execMod, managerSafe);
-
-        // Step 6 – Wire manager modifier.
         _wireManagerModifier(managerMod, managerSafe);
 
         inst = StackInstance({
@@ -301,29 +354,18 @@ contract KpkSharesFactory is Ownable {
         mod = IModuleProxyFactory(moduleProxyFactory).deployModule(rolesModifierMastercopy, initializer, salt);
     }
 
-    /// @dev Deploys a Gnosis Safe proxy with `moduleToEnable` pre-enabled via SafeModuleSetup
+    /// @dev Deploys a Gnosis Safe proxy with the given modules pre-enabled via SafeModuleSetup
     ///      delegatecall during setup(), avoiding any post-deployment enablement step.
-    function _deploySafe(SafeConfig calldata cfg, address moduleToEnable, uint256 nonce)
+    ///      Modules are enabled in order; each new module is inserted at the front of the list.
+    function _deploySafe(address[] memory owners, uint256 threshold, address[] memory modulesToEnable, uint256 nonce)
         internal
         returns (address safe)
     {
-        address[] memory modules = new address[](1);
-        modules[0] = moduleToEnable;
-
-        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modules));
+        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
 
         bytes memory initializer = abi.encodeCall(
             ISafe.setup,
-            (
-                cfg.owners,
-                cfg.threshold,
-                safeModuleSetup,
-                setupData,
-                safeFallbackHandler,
-                address(0),
-                0,
-                payable(address(0))
-            )
+            (owners, threshold, safeModuleSetup, setupData, safeFallbackHandler, address(0), 0, payable(address(0)))
         );
 
         safe = ISafeProxyFactory(safeProxyFactory).createProxyWithNonce(safeSingleton, initializer, nonce);
@@ -345,24 +387,17 @@ contract KpkSharesFactory is Ownable {
         bool[] memory memberOf = new bool[](1);
         memberOf[0] = true;
 
-        // Assign MANAGER role to managerSafe.
         IRoles(mod).assignRoles(managerSafe, roleKeys, memberOf);
-
-        // Enable subRolesMod — requires factory == avatar (still true here).
         IRoles(mod).enableModule(subMod);
-
-        // subRolesMod gets MANAGER by default and explicitly.
         IRoles(mod).setDefaultRole(subMod, MANAGER_ROLE);
         IRoles(mod).assignRoles(subMod, roleKeys, memberOf);
-
-        // Fix avatar and target to real Safe, then transfer ownership.
         IRoles(mod).setAvatar(avatarSafe);
         IRoles(mod).setTarget(avatarSafe);
         IRoles(mod).transferOwnership(finalOwner);
     }
 
     /// @dev Configures the sub roles modifier:
-    ///      - Fixes avatar to Avatar Safe, target to execRolesMod (it controls the exec layer).
+    ///      - Fixes avatar to Avatar Safe, target to execRolesMod.
     ///      - Transfers ownership to managerSafe.
     function _wireSubModifier(address mod, address avatarSafe, address execMod, address managerSafe) internal {
         IRoles(mod).setAvatar(avatarSafe);
@@ -371,7 +406,7 @@ contract KpkSharesFactory is Ownable {
     }
 
     /// @dev Configures the manager roles modifier:
-    ///      - Fixes avatar and target to managerSafe (it guards manager-level actions).
+    ///      - Fixes avatar and target to managerSafe.
     ///      - Transfers ownership to managerSafe.
     function _wireManagerModifier(address mod, address managerSafe) internal {
         IRoles(mod).setAvatar(managerSafe);
@@ -379,37 +414,68 @@ contract KpkSharesFactory is Ownable {
         IRoles(mod).transferOwnership(managerSafe);
     }
 
-    /// @dev Deploys a fresh KpkShares implementation and a UUPS proxy pointing to it.
+    /// @dev Deploys a fresh KpkShares implementation and a UUPS proxy.
     ///      Each fund gets its own implementation so upgrades are isolated per fund.
-    ///      Overrides params.safe with avatarSafe and params.admin with address(this) so the
-    ///      factory can grant roles. After role setup the factory renounces DEFAULT_ADMIN_ROLE.
-    function _deploySharesProxy(KpkShares.ConstructorParams memory params, address operator, address avatarSafe)
-        internal
-        returns (address impl, address proxy)
-    {
+    ///      Temporarily holds OPERATOR to register additional assets, then revokes it.
+    function _deploySharesProxy(
+        KpkShares.ConstructorParams memory params,
+        address operator,
+        address avatarSafe,
+        AssetConfig[] calldata additionalAssets
+    ) internal returns (address impl, address proxy) {
         impl = address(new KpkShares());
 
         address finalAdmin = params.admin;
-
         params.safe = avatarSafe;
         params.admin = address(this);
 
         proxy = address(new ERC1967Proxy(impl, abi.encodeCall(KpkShares.initialize, (params))));
 
         KpkShares shares = KpkShares(proxy);
+
+        if (additionalAssets.length > 0) {
+            shares.grantRole(OPERATOR, address(this));
+            for (uint256 i = 0; i < additionalAssets.length; i++) {
+                shares.updateAsset(
+                    additionalAssets[i].asset, false, additionalAssets[i].canDeposit, additionalAssets[i].canRedeem
+                );
+            }
+            shares.revokeRole(OPERATOR, address(this));
+        }
+
         shares.grantRole(OPERATOR, operator);
         shares.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
         shares.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
     }
 
+    /// @dev Grants infinite allowance from the Avatar Safe to the shares proxy for every asset
+    ///      that has canRedeem enabled (the shares proxy pulls tokens from the Safe on redemptions).
+    ///      The base asset always has canRedeem = true.
+    function _grantApprovals(
+        address avatarSafe,
+        address sharesProxy,
+        address baseAsset,
+        AssetConfig[] calldata additionalAssets
+    ) internal {
+        _execApprove(avatarSafe, baseAsset, sharesProxy);
+        for (uint256 i = 0; i < additionalAssets.length; i++) {
+            if (additionalAssets[i].canRedeem) {
+                _execApprove(avatarSafe, additionalAssets[i].asset, sharesProxy);
+            }
+        }
+    }
+
+    /// @dev Instructs the Avatar Safe (via execTransactionFromModule) to approve `spender`
+    ///      for the maximum possible amount of `asset`.
+    function _execApprove(address avatarSafe, address asset, address spender) internal {
+        ISafe(avatarSafe)
+            .execTransactionFromModule(asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0);
+    }
+
     // ── Internal: validation ────────────────────────────────────────────────────
 
     function _validateStackConfig(StackConfig calldata config) internal pure {
-        if (config.avatarSafe.owners.length == 0) revert EmptyOwners();
         if (config.managerSafe.owners.length == 0) revert EmptyOwners();
-        if (config.avatarSafe.threshold == 0 || config.avatarSafe.threshold > config.avatarSafe.owners.length) {
-            revert InvalidThreshold();
-        }
         if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
             revert InvalidThreshold();
         }
@@ -421,5 +487,8 @@ contract KpkSharesFactory is Ownable {
         if (config.sharesOperator == address(0)) revert ZeroAddress();
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
+        for (uint256 i = 0; i < config.additionalAssets.length; i++) {
+            if (config.additionalAssets[i].asset == address(0)) revert ZeroAddress();
+        }
     }
 }
