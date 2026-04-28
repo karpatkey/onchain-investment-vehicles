@@ -23,8 +23,11 @@ import {IRoles} from "./interfaces/IRoles.sol";
 ///         deployFund() additionally deploys the kpkShares proxy and is mainnet-only.
 ///
 ///         A single salt in StackConfig drives all five CREATE2 deployments, guaranteeing
-///         identical addresses across chains when the factory and its constructor arguments
-///         are the same.
+///         identical addresses across chains when the factory is deployed at the same address
+///         and the infrastructure addresses are identical.
+///
+///         Infrastructure addresses are initialised to the canonical Safe v1.4.1 + Zodiac
+///         values and can be updated by the owner to support new versions or other chains.
 contract KpkSharesFactory is Ownable {
     // ── Roles ─────────────────────────────────────────────────────────────────
 
@@ -33,27 +36,24 @@ contract KpkSharesFactory is Ownable {
     // forge-lint: disable-next-line(unsafe-typecast)
     bytes32 private constant MANAGER_ROLE = bytes32("MANAGER");
 
-    // ── Immutables ─────────────────────────────────────────────────────────────
+    // ── Default infrastructure addresses (Safe v1.4.1 + Zodiac, most EVM chains) ──
 
-    /// @notice Shared KpkShares implementation — every proxy deployed by this factory points here.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable kpkSharesImpl;
+    address private constant _DEFAULT_SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
+    address private constant _DEFAULT_SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
+    address private constant _DEFAULT_SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
+    address private constant _DEFAULT_SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
+    address private constant _DEFAULT_MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
+    address private constant _DEFAULT_ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
 
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable safeProxyFactory;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable safeSingleton;
+    // ── Infrastructure addresses (owner-updatable) ─────────────────────────────
 
+    address public safeProxyFactory;
+    address public safeSingleton;
     /// @notice Safe utility contract delegatecalled during Safe setup() to enable modules.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable safeModuleSetup;
-
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable safeFallbackHandler;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable moduleProxyFactory;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable rolesModifierMastercopy;
+    address public safeModuleSetup;
+    address public safeFallbackHandler;
+    address public moduleProxyFactory;
+    address public rolesModifierMastercopy;
 
     // ── Structs ────────────────────────────────────────────────────────────────
 
@@ -110,6 +110,7 @@ contract KpkSharesFactory is Ownable {
         address execRolesModifier;
         address subRolesModifier;
         address managerRolesModifier;
+        address kpkSharesImpl;
         address kpkSharesProxy;
     }
 
@@ -126,6 +127,13 @@ contract KpkSharesFactory is Ownable {
     event StackDeployed(uint256 indexed stackId, StackInstance instance);
     event FundDeployed(uint256 indexed instanceId, FundInstance instance);
 
+    event SafeProxyFactoryUpdated(address indexed newAddress);
+    event SafeSingletonUpdated(address indexed newAddress);
+    event SafeModuleSetupUpdated(address indexed newAddress);
+    event SafeFallbackHandlerUpdated(address indexed newAddress);
+    event ModuleProxyFactoryUpdated(address indexed newAddress);
+    event RolesModifierMastercopyUpdated(address indexed newAddress);
+
     // ── Errors ─────────────────────────────────────────────────────────────────
 
     error ZeroAddress();
@@ -134,29 +142,51 @@ contract KpkSharesFactory is Ownable {
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
-    constructor(
-        address _owner,
-        address _kpkSharesImpl,
-        address _safeProxyFactory,
-        address _safeSingleton,
-        address _safeModuleSetup,
-        address _safeFallbackHandler,
-        address _moduleProxyFactory,
-        address _rolesModifierMastercopy
-    ) Ownable(_owner) {
-        if (
-            _kpkSharesImpl == address(0) || _safeProxyFactory == address(0) || _safeSingleton == address(0)
-                || _safeModuleSetup == address(0) || _safeFallbackHandler == address(0)
-                || _moduleProxyFactory == address(0) || _rolesModifierMastercopy == address(0)
-        ) revert ZeroAddress();
+    constructor(address _owner) Ownable(_owner) {
+        safeProxyFactory = _DEFAULT_SAFE_PROXY_FACTORY;
+        safeSingleton = _DEFAULT_SAFE_SINGLETON;
+        safeModuleSetup = _DEFAULT_SAFE_MODULE_SETUP;
+        safeFallbackHandler = _DEFAULT_SAFE_FALLBACK_HANDLER;
+        moduleProxyFactory = _DEFAULT_MODULE_PROXY_FACTORY;
+        rolesModifierMastercopy = _DEFAULT_ROLES_MODIFIER_MASTERCOPY;
+    }
 
-        kpkSharesImpl = _kpkSharesImpl;
+    // ── Infrastructure setters ─────────────────────────────────────────────────
+
+    function setSafeProxyFactory(address _safeProxyFactory) external onlyOwner {
+        if (_safeProxyFactory == address(0)) revert ZeroAddress();
         safeProxyFactory = _safeProxyFactory;
+        emit SafeProxyFactoryUpdated(_safeProxyFactory);
+    }
+
+    function setSafeSingleton(address _safeSingleton) external onlyOwner {
+        if (_safeSingleton == address(0)) revert ZeroAddress();
         safeSingleton = _safeSingleton;
+        emit SafeSingletonUpdated(_safeSingleton);
+    }
+
+    function setSafeModuleSetup(address _safeModuleSetup) external onlyOwner {
+        if (_safeModuleSetup == address(0)) revert ZeroAddress();
         safeModuleSetup = _safeModuleSetup;
+        emit SafeModuleSetupUpdated(_safeModuleSetup);
+    }
+
+    function setSafeFallbackHandler(address _safeFallbackHandler) external onlyOwner {
+        if (_safeFallbackHandler == address(0)) revert ZeroAddress();
         safeFallbackHandler = _safeFallbackHandler;
+        emit SafeFallbackHandlerUpdated(_safeFallbackHandler);
+    }
+
+    function setModuleProxyFactory(address _moduleProxyFactory) external onlyOwner {
+        if (_moduleProxyFactory == address(0)) revert ZeroAddress();
         moduleProxyFactory = _moduleProxyFactory;
+        emit ModuleProxyFactoryUpdated(_moduleProxyFactory);
+    }
+
+    function setRolesModifierMastercopy(address _rolesModifierMastercopy) external onlyOwner {
+        if (_rolesModifierMastercopy == address(0)) revert ZeroAddress();
         rolesModifierMastercopy = _rolesModifierMastercopy;
+        emit RolesModifierMastercopyUpdated(_rolesModifierMastercopy);
     }
 
     // ── Main entry points ───────────────────────────────────────────────────────
@@ -183,13 +213,14 @@ contract KpkSharesFactory is Ownable {
     ///      4. Wire execRolesMod: fix avatar/target, assign roles, enable subRolesMod, transfer ownership.
     ///      5. Wire subRolesMod: fix avatar/target, transfer ownership to managerSafe.
     ///      6. Wire managerRolesMod: fix avatar/target, transfer ownership to managerSafe.
-    ///      7. Deploy kpkShares proxy, grant roles, factory renounces.
+    ///      7. Deploy kpkShares implementation + proxy, grant roles, factory renounces.
     function deployFund(FundConfig calldata config) external onlyOwner returns (FundInstance memory instance) {
         _validateFundConfig(config);
 
         StackInstance memory stack = _deployAndWireStack(config.stack);
 
-        address sharesProxy = _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe);
+        (address sharesImpl, address sharesProxy) =
+            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe);
 
         instance = FundInstance({
             avatarSafe: stack.avatarSafe,
@@ -197,6 +228,7 @@ contract KpkSharesFactory is Ownable {
             execRolesModifier: stack.execRolesModifier,
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
+            kpkSharesImpl: sharesImpl,
             kpkSharesProxy: sharesProxy
         });
 
@@ -347,19 +379,22 @@ contract KpkSharesFactory is Ownable {
         IRoles(mod).transferOwnership(managerSafe);
     }
 
-    /// @dev Deploys a kpkShares UUPS proxy.
+    /// @dev Deploys a fresh KpkShares implementation and a UUPS proxy pointing to it.
+    ///      Each fund gets its own implementation so upgrades are isolated per fund.
     ///      Overrides params.safe with avatarSafe and params.admin with address(this) so the
     ///      factory can grant roles. After role setup the factory renounces DEFAULT_ADMIN_ROLE.
     function _deploySharesProxy(KpkShares.ConstructorParams memory params, address operator, address avatarSafe)
         internal
-        returns (address proxy)
+        returns (address impl, address proxy)
     {
+        impl = address(new KpkShares());
+
         address finalAdmin = params.admin;
 
         params.safe = avatarSafe;
         params.admin = address(this);
 
-        proxy = address(new ERC1967Proxy(kpkSharesImpl, abi.encodeCall(KpkShares.initialize, (params))));
+        proxy = address(new ERC1967Proxy(impl, abi.encodeCall(KpkShares.initialize, (params))));
 
         KpkShares shares = KpkShares(proxy);
         shares.grantRole(OPERATOR, operator);
