@@ -42,12 +42,7 @@ contract KpkSharesFactoryTest is Test {
     // ── Setup ───────────────────────────────────────────────────────────────────
 
     function setUp() public {
-        string memory rpcUrl = vm.envOr("MAINNET_URL", string(""));
-        if (bytes(rpcUrl).length == 0) {
-            vm.skip(true);
-            return;
-        }
-        vm.createSelectFork(rpcUrl);
+        vm.createSelectFork(vm.envString("MAINNET_URL"));
 
         // Deploy KpkShares implementation once.
         kpkSharesImpl = address(new KpkShares());
