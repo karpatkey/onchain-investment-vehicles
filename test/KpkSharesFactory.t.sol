@@ -78,7 +78,8 @@ contract KpkSharesFactoryTest is Test {
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
 
         assertTrue(
-            ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier), "execRolesModifier not a module of avatarSafe"
+            ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier),
+            "execRolesModifier not a module of avatarSafe"
         );
     }
 

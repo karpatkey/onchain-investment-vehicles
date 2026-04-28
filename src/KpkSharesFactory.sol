@@ -228,13 +228,9 @@ contract KpkSharesFactory is Ownable {
     ///      - Enables subRolesMod as a nested module (factory is still avatar at this point).
     ///      - Sets subRolesMod default role to MANAGER and assigns it MANAGER.
     ///      - Transfers ownership to finalOwner (typically Security Council).
-    function _wireExecModifier(
-        address mod,
-        address avatarSafe,
-        address managerSafe,
-        address subMod,
-        address finalOwner
-    ) internal {
+    function _wireExecModifier(address mod, address avatarSafe, address managerSafe, address subMod, address finalOwner)
+        internal
+    {
         bytes32[] memory roleKeys = new bytes32[](1);
         roleKeys[0] = MANAGER_ROLE;
         bool[] memory memberOf = new bool[](1);
@@ -277,11 +273,10 @@ contract KpkSharesFactory is Ownable {
     /// @dev Deploys a kpkShares UUPS proxy.
     ///      Overrides params.safe with avatarSafe and params.admin with address(this) so the
     ///      factory can grant roles. After role setup the factory renounces DEFAULT_ADMIN_ROLE.
-    function _deploySharesProxy(
-        KpkShares.ConstructorParams memory params,
-        address operator,
-        address avatarSafe
-    ) internal returns (address proxy) {
+    function _deploySharesProxy(KpkShares.ConstructorParams memory params, address operator, address avatarSafe)
+        internal
+        returns (address proxy)
+    {
         address finalAdmin = params.admin;
 
         params.safe = avatarSafe;
@@ -303,10 +298,9 @@ contract KpkSharesFactory is Ownable {
         if (config.avatarSafe.threshold == 0 || config.avatarSafe.threshold > config.avatarSafe.owners.length) {
             revert InvalidThreshold();
         }
-        if (
-            config.managerSafe.threshold == 0
-                || config.managerSafe.threshold > config.managerSafe.owners.length
-        ) revert InvalidThreshold();
+        if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
+            revert InvalidThreshold();
+        }
         if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
         if (config.sharesOperator == address(0)) revert ZeroAddress();
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
