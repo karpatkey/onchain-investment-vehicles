@@ -11,6 +11,10 @@ import {ISafeModuleSetup} from "./interfaces/ISafeModuleSetup.sol";
 import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
 
+interface IKpkSharesDeployer {
+    function deploy() external returns (address);
+}
+
 /// @notice On-chain factory that deploys a full kpk fund stack in a single transaction:
 ///         Avatar Safe → Manager Safe → 3 Roles Modifiers → kpkShares UUPS proxy.
 ///
@@ -51,6 +55,10 @@ contract KpkSharesFactory is Ownable {
     address public safeFallbackHandler;
     address public moduleProxyFactory;
     address public rolesModifierMastercopy;
+    /// @notice Deploys a fresh KpkShares implementation per fund.
+    ///         Lives in a separate contract so its creation bytecode is not embedded in this
+    ///         factory's runtime (which would exceed EIP-170's 24 576-byte limit).
+    address public kpkSharesDeployer;
 
     // ── Structs ────────────────────────────────────────────────────────────────
 
@@ -90,10 +98,6 @@ contract KpkSharesFactory is Ownable {
 
     struct FundConfig {
         StackConfig stack;
-        /// @notice Pre-deployed KpkShares implementation address. Each fund must receive its own
-        ///         fresh implementation so upgrades are isolated per fund. Deploy a new KpkShares
-        ///         implementation before calling deployFund() and pass its address here.
-        address kpkSharesImpl;
         /// @notice kpkShares initialization params. sharesParams.safe is overridden with the
         ///         deployed avatarSafe address. sharesParams.admin is overridden with address(this)
         ///         during initialization so the factory can set up roles, then the real admin is
@@ -143,6 +147,7 @@ contract KpkSharesFactory is Ownable {
     event SafeFallbackHandlerUpdated(address indexed newAddress);
     event ModuleProxyFactoryUpdated(address indexed newAddress);
     event RolesModifierMastercopyUpdated(address indexed newAddress);
+    event KpkSharesDeployerUpdated(address indexed newAddress);
 
     // ── Errors ─────────────────────────────────────────────────────────────────
 
@@ -159,12 +164,13 @@ contract KpkSharesFactory is Ownable {
         address _safeModuleSetup,
         address _safeFallbackHandler,
         address _moduleProxyFactory,
-        address _rolesModifierMastercopy
+        address _rolesModifierMastercopy,
+        address _kpkSharesDeployer
     ) Ownable(_owner) {
         if (
             _safeProxyFactory == address(0) || _safeSingleton == address(0) || _safeModuleSetup == address(0)
                 || _safeFallbackHandler == address(0) || _moduleProxyFactory == address(0)
-                || _rolesModifierMastercopy == address(0)
+                || _rolesModifierMastercopy == address(0) || _kpkSharesDeployer == address(0)
         ) revert ZeroAddress();
 
         safeProxyFactory = _safeProxyFactory;
@@ -173,6 +179,7 @@ contract KpkSharesFactory is Ownable {
         safeFallbackHandler = _safeFallbackHandler;
         moduleProxyFactory = _moduleProxyFactory;
         rolesModifierMastercopy = _rolesModifierMastercopy;
+        kpkSharesDeployer = _kpkSharesDeployer;
     }
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
@@ -213,6 +220,12 @@ contract KpkSharesFactory is Ownable {
         emit RolesModifierMastercopyUpdated(_rolesModifierMastercopy);
     }
 
+    function setKpkSharesDeployer(address _kpkSharesDeployer) external onlyOwner {
+        if (_kpkSharesDeployer == address(0)) revert ZeroAddress();
+        kpkSharesDeployer = _kpkSharesDeployer;
+        emit KpkSharesDeployerUpdated(_kpkSharesDeployer);
+    }
+
     // ── Main entry points ───────────────────────────────────────────────────────
 
     /// @notice Deploy only the operational stack: Avatar Safe, Manager Safe, and three Roles Modifiers.
@@ -248,9 +261,8 @@ contract KpkSharesFactory is Ownable {
         // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
         StackInstance memory stack = _deployAndWireStack(config.stack, true);
 
-        address sharesProxy = _deploySharesProxy(
-            config.kpkSharesImpl, config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets
-        );
+        (address sharesImpl, address sharesProxy) =
+            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets);
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
@@ -267,7 +279,7 @@ contract KpkSharesFactory is Ownable {
             execRolesModifier: stack.execRolesModifier,
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
-            kpkSharesImpl: config.kpkSharesImpl,
+            kpkSharesImpl: sharesImpl,
             kpkSharesProxy: sharesProxy
         });
 
@@ -419,17 +431,16 @@ contract KpkSharesFactory is Ownable {
         IRoles(mod).transferOwnership(managerSafe);
     }
 
-    /// @dev Deploys a UUPS proxy pointing at the provided KpkShares implementation.
-    ///      Each fund must receive its own fresh implementation (pass a newly deployed KpkShares
-    ///      address) so upgrades are isolated per fund.
+    /// @dev Deploys a fresh KpkShares implementation via kpkSharesDeployer (isolated per fund)
+    ///      and a UUPS proxy pointing to it.
     ///      Temporarily holds OPERATOR to register additional assets, then revokes it.
     function _deploySharesProxy(
-        address impl,
         KpkShares.ConstructorParams memory params,
         address operator,
         address avatarSafe,
         AssetConfig[] calldata additionalAssets
-    ) internal returns (address proxy) {
+    ) internal returns (address impl, address proxy) {
+        impl = IKpkSharesDeployer(kpkSharesDeployer).deploy();
         address finalAdmin = params.admin;
         params.safe = avatarSafe;
         params.admin = address(this);
@@ -489,7 +500,6 @@ contract KpkSharesFactory is Ownable {
 
     function _validateFundConfig(FundConfig calldata config) internal pure {
         _validateStackConfig(config.stack);
-        if (config.kpkSharesImpl == address(0)) revert ZeroAddress();
         if (config.sharesOperator == address(0)) revert ZeroAddress();
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();

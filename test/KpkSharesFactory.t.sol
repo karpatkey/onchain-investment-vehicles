@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkSharesFactory} from "src/KpkSharesFactory.sol";
+import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
@@ -36,7 +37,6 @@ contract KpkSharesFactoryTest is Test {
     // ── Contracts under test ────────────────────────────────────────────────────
 
     KpkSharesFactory factory;
-    address kpkSharesImpl;
 
     KpkSharesFactory.FundConfig fundConfig;
 
@@ -45,6 +45,8 @@ contract KpkSharesFactoryTest is Test {
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
 
+        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
+
         factory = new KpkSharesFactory(
             factoryOwner,
             SAFE_PROXY_FACTORY,
@@ -52,10 +54,10 @@ contract KpkSharesFactoryTest is Test {
             SAFE_MODULE_SETUP,
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
-            ROLES_MODIFIER_MASTERCOPY
+            ROLES_MODIFIER_MASTERCOPY,
+            address(sharesDeployer)
         );
 
-        kpkSharesImpl = address(new KpkShares());
         fundConfig = _buildFundConfig();
     }
 
@@ -213,10 +215,9 @@ contract KpkSharesFactoryTest is Test {
         factory.deployFund(fundConfig);
         assertEq(factory.instanceCount(), 1);
 
-        // Deploy a second fund with a different salt and fresh implementation.
+        // Deploy a second fund with a different salt to avoid CREATE2 collisions.
         KpkSharesFactory.FundConfig memory cfg2 = _buildFundConfig();
         cfg2.stack.salt = 999;
-        cfg2.kpkSharesImpl = address(new KpkShares());
 
         vm.prank(factoryOwner);
         factory.deployFund(cfg2);
@@ -344,7 +345,6 @@ contract KpkSharesFactoryTest is Test {
 
     function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
         cfg.stack = _buildStackConfig();
-        cfg.kpkSharesImpl = kpkSharesImpl;
         cfg.sharesOperator = sharesOperator;
         cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({

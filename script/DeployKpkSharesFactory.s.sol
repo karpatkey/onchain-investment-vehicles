@@ -3,10 +3,12 @@ pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
 import {KpkSharesFactory} from "../src/KpkSharesFactory.sol";
+import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 
-/// @notice Deploys KpkSharesFactory with hardcoded Safe v1.4.1 and Zodiac infrastructure addresses.
+/// @notice Deploys KpkSharesDeployer and KpkSharesFactory with hardcoded Safe v1.4.1
+///         and Zodiac infrastructure addresses.
 ///         Infrastructure addresses can be updated by the owner post-deployment via the setter functions.
-///         The KpkShares implementation is deployed automatically for each fund via deployFund().
+///         Each fund deployed via deployFund() gets a fresh KpkShares implementation from KpkSharesDeployer.
 ///
 /// Usage:
 ///   forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
@@ -30,6 +32,8 @@ contract DeployKpkSharesFactory is Script {
 
         vm.startBroadcast();
 
+        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
+
         KpkSharesFactory factory = new KpkSharesFactory(
             owner,
             SAFE_PROXY_FACTORY,
@@ -37,13 +41,15 @@ contract DeployKpkSharesFactory is Script {
             SAFE_MODULE_SETUP,
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
-            ROLES_MODIFIER_MASTERCOPY
+            ROLES_MODIFIER_MASTERCOPY,
+            address(sharesDeployer)
         );
 
         vm.stopBroadcast();
 
         console.log("==========================================");
-        console.log("KpkSharesFactory deployed at:", address(factory));
+        console.log("KpkSharesDeployer deployed at:", address(sharesDeployer));
+        console.log("KpkSharesFactory deployed at: ", address(factory));
         console.log("Owner:             ", owner);
         console.log("SafeProxyFactory:  ", factory.safeProxyFactory());
         console.log("SafeSingleton:     ", factory.safeSingleton());
@@ -51,6 +57,7 @@ contract DeployKpkSharesFactory is Script {
         console.log("FallbackHandler:   ", factory.safeFallbackHandler());
         console.log("ModuleProxyFactory:", factory.moduleProxyFactory());
         console.log("RolesMastercopy:   ", factory.rolesModifierMastercopy());
+        console.log("KpkSharesDeployer: ", factory.kpkSharesDeployer());
         console.log("==========================================");
     }
 }
