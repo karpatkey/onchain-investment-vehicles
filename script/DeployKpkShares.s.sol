@@ -75,13 +75,20 @@ contract DeployKpkShares is Script {
         console.log("Deploying kpkShares Vault:", vaultName);
         console.log("==========================================");
 
+        // Parse additional assets (optional)
+        address[] memory additionalAssets = new address[](0);
+        string memory additionalAssetsPath = string.concat(vaultPath, ".additionalAssets");
+        if (json.keyExists(additionalAssetsPath)) {
+            additionalAssets = json.readAddressArray(additionalAssetsPath);
+        }
+
         // Deploy the contract
         address proxy = _deployContract(params);
 
         // Setup roles
         address operator = json.readAddress(string.concat(vaultPath, ".operator"));
         address admin = json.readAddress(string.concat(vaultPath, ".admin"));
-        _setupRoles(KpkShares(proxy), operator, admin);
+        _setupRoles(KpkShares(proxy), operator, admin, additionalAssets);
 
         vm.stopBroadcast();
 
@@ -190,7 +197,9 @@ contract DeployKpkShares is Script {
      * @param operator The operator address
      * @param admin The admin address
      */
-    function _setupRoles(KpkShares proxyContract, address operator, address admin) internal {
+    function _setupRoles(KpkShares proxyContract, address operator, address admin, address[] memory additionalAssets)
+        internal
+    {
         // Get deployer address from the private key (must match the broadcaster)
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
@@ -198,6 +207,16 @@ contract DeployKpkShares is Script {
         // The deployer was set as admin during initialization, so they can grant roles
         // vm.startBroadcast() is already active from _deployContract, so these calls
         // will be made as the deployer (who has DEFAULT_ADMIN_ROLE)
+
+        // Whitelist additional assets — updateAsset() requires OPERATOR, so grant it temporarily
+        if (additionalAssets.length > 0) {
+            proxyContract.grantRole(OPERATOR, deployerAddress);
+            for (uint256 i = 0; i < additionalAssets.length; i++) {
+                proxyContract.updateAsset(additionalAssets[i], false, true, true);
+            }
+            proxyContract.revokeRole(OPERATOR, deployerAddress);
+        }
+
         proxyContract.grantRole(OPERATOR, operator);
         proxyContract.grantRole(DEFAULT_ADMIN_ROLE, admin);
         proxyContract.revokeRole(DEFAULT_ADMIN_ROLE, deployerAddress);
