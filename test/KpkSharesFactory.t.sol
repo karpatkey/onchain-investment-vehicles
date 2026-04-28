@@ -61,7 +61,7 @@ contract KpkSharesFactoryTest is Test {
         fundConfig = _buildFundConfig();
     }
 
-    // ── Deployment tests ────────────────────────────────────────────────────────
+    // ── deployFund tests ────────────────────────────────────────────────────────
 
     function test_deployFund_deploysAllSixContracts() public {
         vm.prank(factoryOwner);
@@ -186,13 +186,9 @@ contract KpkSharesFactoryTest is Test {
         factory.deployFund(fundConfig);
         assertEq(factory.instanceCount(), 1);
 
-        // Deploy a second fund with different salts to avoid CREATE2 collisions.
+        // Deploy a second fund with a different salt to avoid CREATE2 collisions.
         KpkSharesFactory.FundConfig memory cfg2 = _buildFundConfig();
-        cfg2.execRolesMod.salt = 999;
-        cfg2.subRolesMod.salt = 998;
-        cfg2.managerRolesMod.salt = 997;
-        cfg2.avatarSafe.nonce = 100;
-        cfg2.managerSafe.nonce = 101;
+        cfg2.stack.salt = 999;
 
         vm.prank(factoryOwner);
         factory.deployFund(cfg2);
@@ -207,47 +203,115 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_deployFund_revertsOnZeroExecModOwner() public {
-        fundConfig.execRolesMod.finalOwner = address(0);
+        fundConfig.stack.execRolesMod.finalOwner = address(0);
         vm.prank(factoryOwner);
         vm.expectRevert(KpkSharesFactory.ZeroAddress.selector);
         factory.deployFund(fundConfig);
     }
 
     function test_deployFund_revertsOnEmptyAvatarOwners() public {
-        fundConfig.avatarSafe.owners = new address[](0);
+        fundConfig.stack.avatarSafe.owners = new address[](0);
         vm.prank(factoryOwner);
         vm.expectRevert(KpkSharesFactory.EmptyOwners.selector);
         factory.deployFund(fundConfig);
     }
 
     function test_deployFund_revertsOnInvalidThreshold() public {
-        fundConfig.avatarSafe.threshold = 5; // more than 1 owner
+        fundConfig.stack.avatarSafe.threshold = 5; // more than 1 owner
         vm.prank(factoryOwner);
         vm.expectRevert(KpkSharesFactory.InvalidThreshold.selector);
         factory.deployFund(fundConfig);
     }
 
+    // ── deployStack tests ───────────────────────────────────────────────────────
+
+    function test_deployStack_deploysFiveContracts() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+
+        assertTrue(inst.avatarSafe != address(0), "avatarSafe not deployed");
+        assertTrue(inst.managerSafe != address(0), "managerSafe not deployed");
+        assertTrue(inst.execRolesModifier != address(0), "execRolesModifier not deployed");
+        assertTrue(inst.subRolesModifier != address(0), "subRolesModifier not deployed");
+        assertTrue(inst.managerRolesModifier != address(0), "managerRolesModifier not deployed");
+    }
+
+    function test_deployStack_wiringMatchesDeployFund() public {
+        KpkSharesFactory.StackConfig memory stackCfg = _buildStackConfig();
+
+        vm.prank(factoryOwner);
+        KpkSharesFactory.StackInstance memory inst = factory.deployStack(stackCfg);
+
+        assertTrue(ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier), "execMod not module of avatarSafe");
+        assertTrue(
+            ISafe(inst.managerSafe).isModuleEnabled(inst.managerRolesModifier), "managerMod not module of managerSafe"
+        );
+        assertEq(IRoles(inst.execRolesModifier).owner(), securityCouncil, "execMod owner mismatch");
+        assertEq(IRoles(inst.subRolesModifier).owner(), inst.managerSafe, "subMod owner mismatch");
+        assertEq(IRoles(inst.managerRolesModifier).owner(), inst.managerSafe, "managerMod owner mismatch");
+    }
+
+    function test_deployStack_sameSaltProducesSameAddresses() public {
+        KpkSharesFactory.StackConfig memory cfg = _buildStackConfig();
+
+        vm.prank(factoryOwner);
+        KpkSharesFactory.StackInstance memory inst1 = factory.deployStack(cfg);
+
+        // Deploying again with the same salt must revert (CREATE2 collision).
+        vm.prank(factoryOwner);
+        vm.expectRevert();
+        factory.deployStack(cfg);
+
+        // A different salt produces different addresses.
+        cfg.salt = 999;
+        vm.prank(factoryOwner);
+        KpkSharesFactory.StackInstance memory inst2 = factory.deployStack(cfg);
+
+        assertTrue(inst1.avatarSafe != inst2.avatarSafe, "same avatarSafe address with different salt");
+        assertTrue(inst1.execRolesModifier != inst2.execRolesModifier, "same execMod address with different salt");
+    }
+
+    function test_stackCount_incrementsOnEachDeploy() public {
+        assertEq(factory.stackCount(), 0);
+
+        vm.prank(factoryOwner);
+        factory.deployStack(_buildStackConfig());
+        assertEq(factory.stackCount(), 1);
+
+        KpkSharesFactory.StackConfig memory cfg2 = _buildStackConfig();
+        cfg2.salt = 999;
+        vm.prank(factoryOwner);
+        factory.deployStack(cfg2);
+        assertEq(factory.stackCount(), 2);
+    }
+
+    function test_deployStack_revertsIfNotOwner() public {
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        factory.deployStack(_buildStackConfig());
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
-    function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
+    function _buildStackConfig() internal view returns (KpkSharesFactory.StackConfig memory cfg) {
         address[] memory avatarOwners = new address[](1);
         avatarOwners[0] = avatarSigner;
 
         address[] memory managerOwners = new address[](1);
         managerOwners[0] = managerSigner;
 
-        cfg.avatarSafe = KpkSharesFactory.SafeConfig({owners: avatarOwners, threshold: 1, nonce: 42});
+        cfg.avatarSafe = KpkSharesFactory.SafeConfig({owners: avatarOwners, threshold: 1});
+        cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1});
+        cfg.execRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: securityCouncil});
+        cfg.subRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: address(0)});
+        cfg.managerRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: address(0)});
+        cfg.salt = 42;
+    }
 
-        cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1, nonce: 43});
-
-        cfg.execRolesMod = KpkSharesFactory.RolesModifierConfig({salt: 1, finalOwner: securityCouncil});
-
-        cfg.subRolesMod = KpkSharesFactory.RolesModifierConfig({salt: 2, finalOwner: address(0)});
-
-        cfg.managerRolesMod = KpkSharesFactory.RolesModifierConfig({salt: 3, finalOwner: address(0)});
-
+    function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
+        cfg.stack = _buildStackConfig();
         cfg.sharesOperator = sharesOperator;
-
         cfg.sharesParams = KpkShares.ConstructorParams({
             asset: USDC,
             admin: sharesAdmin,
