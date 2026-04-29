@@ -43,7 +43,20 @@ interface IKpkSharesDeployer {
 ///
 ///         A single `salt` in `StackConfig` drives all five CREATE2 deployments, guaranteeing
 ///         identical contract addresses across chains when the factory is deployed at the same
-///         address with the same constructor arguments.
+///         address with the same constructor arguments AND called by the same `msg.sender`.
+///         The caller's address is mixed into the salt derivation to prevent salt-squat
+///         front-running of deterministic deployment addresses.
+///
+///         Trust assumptions:
+///         - The factory `owner` controls all infrastructure setters with immediate effect (no
+///           timelock). The owner SHOULD be a TimelockController or governance multisig — never
+///           an EOA — because a compromised owner can swap `kpkSharesDeployer`,
+///           `rolesModifierMastercopy`, or `safeSingleton` to backdoor every future deployment.
+///         - For `deployOiv`, the caller controls `config.managerSafe.owners`. The deployed
+///           Manager Safe receives ownership of both the sub and manager Roles Modifiers, so
+///           `managerSafe.owners` MUST be trusted at the same operational level as
+///           `config.admin`. The exec Roles Modifier (owned by `admin`) remains the
+///           authoritative gatekeeper of Avatar Safe execution.
 contract KpkOivFactory is Ownable, ReentrancyGuard {
     // ── Role keys ─────────────────────────────────────────────────────────────
 
@@ -154,6 +167,16 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Full configuration for a fund deployment (stack + KpkShares proxy).
     struct OivConfig {
         /// @notice Signer configuration for the Manager Safe.
+        ///         SECURITY: `managerSafe.owners` MUST be trusted at the same operational level
+        ///         as `admin`. The deployed Manager Safe receives ownership of both the sub
+        ///         Roles Modifier and the manager Roles Modifier (see `_wireSubModifier` /
+        ///         `_wireManagerModifier`), so a hostile Manager Safe can re-wire those two
+        ///         modifiers' avatar/target/enabled-modules — disrupting fund operations and
+        ///         potentially diverting sub-modifier-routed traffic away from the exec
+        ///         modifier. The exec modifier (owned by `admin`) remains the authoritative
+        ///         gatekeeper of Avatar Safe execution, so direct fund drainage requires
+        ///         exec-modifier compromise — but `managerSafe.owners` cannot be treated as
+        ///         purely operational signers.
         SafeConfig managerSafe;
         /// @notice Base salt that deterministically controls all five deployment addresses.
         ///         The same salt on the same factory yields identical addresses on every chain.
@@ -317,6 +340,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
+    //
+    // SECURITY: All setters take effect immediately with no timelock. A malicious or
+    //           compromised owner can swap `kpkSharesDeployer`, `rolesModifierMastercopy`,
+    //           `safeSingleton`, or `safeModuleSetup` to backdoor every future `deployOiv` /
+    //           `deployStack` call. Past deployments are unaffected (each fund references its
+    //           own already-deployed implementation), but the blast radius for FUTURE
+    //           deployments is unbounded. The factory `owner` MUST therefore be a
+    //           TimelockController or governance multisig — never an EOA — and any value
+    //           change SHOULD go through a public proposal/timelock cycle.
 
     /// @notice Updates the Gnosis Safe proxy factory address.
     /// @param _safeProxyFactory New address. Must not be zero.
