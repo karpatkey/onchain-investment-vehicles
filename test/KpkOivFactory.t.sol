@@ -404,19 +404,47 @@ contract KpkOivFactoryTest is Test {
         assertEq(predicted.kpkSharesProxy, address(0), "kpkSharesProxy should be unpredictable");
     }
 
-    /// @dev predictStack and predictOiv produce DIFFERENT Avatar Safe addresses for the same
-    ///      salt because deployOiv enables the factory as an additional setup-time module on
-    ///      the Avatar Safe, changing the setup() data and therefore the CREATE2 salt.
-    ///      Manager Safe and Roles Modifiers remain identical.
-    function test_predict_avatarSafeDiffersBetweenStackAndOiv() public {
-        KpkOivFactory.StackInstance memory stackPred = factory.predictStackAddresses(_buildStackConfig(), address(this));
+    /// @dev Cross-flow address invariant: `predictStackAddresses` and `predictOivAddresses` MUST
+    ///      produce identical operational-stack addresses for the same `(salt, caller)`. This
+    ///      is the entire point of the multichain design — `deployOiv` on mainnet must yield
+    ///      the same Avatar Safe address as `deployStack` on every sidechain. Both flows now
+    ///      include the factory as a setup-time Avatar Safe module so the setup() initializer
+    ///      is byte-identical.
+    function test_predict_addressesMatchBetweenStackAndOiv() public {
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
+        // Use the same salt for both predictions to assert cross-flow address agreement.
+        stackCfg.salt = oivConfig.salt;
+
+        KpkOivFactory.StackInstance memory stackPred = factory.predictStackAddresses(stackCfg, address(this));
         KpkOivFactory.OivInstance memory oivPred = factory.predictOivAddresses(oivConfig, address(this));
 
-        assertTrue(stackPred.avatarSafe != oivPred.avatarSafe, "avatarSafe should differ");
+        assertEq(stackPred.avatarSafe, oivPred.avatarSafe, "avatarSafe should match across flows");
         assertEq(stackPred.managerSafe, oivPred.managerSafe, "managerSafe should match");
         assertEq(stackPred.execRolesModifier, oivPred.execRolesModifier, "execMod should match");
         assertEq(stackPred.subRolesModifier, oivPred.subRolesModifier, "subMod should match");
         assertEq(stackPred.managerRolesModifier, oivPred.managerRolesModifier, "managerMod should match");
+    }
+
+    /// @dev Cross-flow real-deployment invariant: predictOiv before deploying via deployStack
+    ///      must agree on the Avatar Safe address that deployStack actually produces. (We can't
+    ///      run both deployStack and deployOiv on the same salt+caller — they'd CREATE2-collide
+    ///      — so this test verifies the prediction matches the actual deployment path the user
+    ///      will take on the OTHER chain.)
+    function test_predictOiv_avatarSafeMatchesDeployStackActualAddress() public {
+        // Predict via the deployOiv path for a given salt+caller.
+        KpkOivFactory.OivInstance memory oivPred = factory.predictOivAddresses(oivConfig, address(this));
+
+        // Now actually deploy via the deployStack path with the same salt+caller — should
+        // produce the same Avatar Safe address as the deployOiv prediction.
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
+        stackCfg.salt = oivConfig.salt;
+        KpkOivFactory.StackInstance memory stackActual = factory.deployStack(stackCfg);
+
+        assertEq(stackActual.avatarSafe, oivPred.avatarSafe, "deployStack avatarSafe != deployOiv prediction");
+        assertEq(stackActual.managerSafe, oivPred.managerSafe, "managerSafe mismatch");
+        assertEq(stackActual.execRolesModifier, oivPred.execRolesModifier, "execMod mismatch");
+        assertEq(stackActual.subRolesModifier, oivPred.subRolesModifier, "subMod mismatch");
+        assertEq(stackActual.managerRolesModifier, oivPred.managerRolesModifier, "managerMod mismatch");
     }
 
     /// @dev Different callers with the same salt must produce different predicted addresses
@@ -463,6 +491,17 @@ contract KpkOivFactoryTest is Test {
         address[] memory owners = ISafe(inst.avatarSafe).getOwners();
         assertEq(owners.length, 1, "avatarSafe should have exactly one owner");
         assertEq(owners[0], factory.EMPTY_CONTRACT(), "avatarSafe owner is not EMPTY_CONTRACT");
+    }
+
+    /// @dev The factory is enabled as an Avatar Safe module at setup() time (so the setup data
+    ///      matches deployOiv and the Avatar Safe address is identical across flows). It MUST
+    ///      be disabled before deployStack returns.
+    function test_deployStack_factoryIsNotModuleOfAvatarSafeAfterDeploy() public {
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+        assertFalse(
+            ISafe(inst.avatarSafe).isModuleEnabled(address(factory)),
+            "factory should not remain a module of avatarSafe after deployStack"
+        );
     }
 
     function test_deployStack_wiringMatchesDeployFund() public {

@@ -410,10 +410,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Deploys the five-contract operational stack: Avatar Safe, Manager Safe, and three
     ///         Zodiac Roles Modifiers, fully wired and ownership-transferred.
-    ///         Intended for multichain deployments — the same `config.salt` on the same factory
-    ///         (same constructor arguments, same address) produces identical addresses on every
-    ///         EVM-compatible chain.
+    ///         Intended for sidechain deployments paired with `deployOiv` on mainnet — the same
+    ///         `(caller, config.salt)` on the same factory (same constructor arguments, same
+    ///         address) produces IDENTICAL Avatar Safe / Manager Safe / Roles Modifier addresses
+    ///         across `deployStack` and `deployOiv` on every EVM-compatible chain.
     /// @dev    Permissionless — any caller may deploy a stack.
+    ///         The factory is enabled as an Avatar Safe module at setup time (so the setup()
+    ///         data is byte-identical with `deployOiv`) and disabled before this function
+    ///         returns. The factory is not used in this flow.
     ///         Reverts if `config` fails validation (see `_validateStackConfig`).
     ///         The returned `StackInstance` is also stored in `stacks[stackCount - 1]`.
     /// @param  config   Stack deployment parameters.
@@ -425,7 +429,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // future callback path that might re-enter the factory and shift indices.
         uint256 id = stackCount++;
 
-        instance = _deployAndWireStack(config, false);
+        instance = _deployAndWireStack(config);
+
+        // The factory was enabled as a setup-time Avatar Safe module to keep the setup() data
+        // byte-identical with `deployOiv` (so cross-chain Avatar Safe addresses match). The
+        // factory makes no use of the slot in this flow — disable immediately.
+        _disableFactoryAsAvatarModule(instance.avatarSafe);
 
         stacks[id] = instance;
         emit StackDeployed(id, instance);
@@ -441,10 +450,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         - Wires the Manager Safe as the OPERATOR on the shares proxy.
     ///         - Removes itself as a module from the Avatar Safe before returning.
     ///         Typically called on mainnet only; use `deployStack` for sidechain deployments.
+    ///         The five operational-stack addresses (Avatar Safe, Manager Safe, three Roles
+    ///         Modifiers) are IDENTICAL to those produced by `deployStack` for the same
+    ///         `(caller, config.salt)`.
     /// @dev    Permissionless — any caller may deploy a fund.
-    ///         The factory is temporarily enabled as an additional module on the Avatar Safe so
-    ///         it can call `execTransactionFromModule` for the approve transactions. It removes
-    ///         itself (SENTINEL → factory → execMod) before returning.
+    ///         The factory is enabled as an additional module on the Avatar Safe at setup
+    ///         time so it can call `execTransactionFromModule` for the approve transactions
+    ///         and grant token approvals. It removes itself (SENTINEL → factory → execMod)
+    ///         before returning.
     ///         Reverts if `config` fails validation (see `_validateOivConfig`).
     ///         The returned `OivInstance` is also stored in `instances[instanceCount - 1]`.
     /// @param  config   Fund deployment parameters. `config.admin` is used as both the exec
@@ -466,8 +479,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             salt: config.salt
         });
 
-        // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
-        StackInstance memory stack = _deployAndWireStack(stackConfig, true);
+        // The factory is always enabled as a setup-time Avatar Safe module by `_deployAndWireStack`
+        // (see that helper for the cross-chain rationale). It is used here to grant the approvals
+        // below before being disabled.
+        StackInstance memory stack = _deployAndWireStack(stackConfig);
 
         (address sharesImpl, address sharesProxy) = _deploySharesProxy(
             config.sharesParams, stack.managerSafe, stack.avatarSafe, config.admin, config.additionalAssets
@@ -476,20 +491,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
 
-        // Remove factory as module from Avatar Safe. Under standard Gnosis SafeModuleSetup
-        // semantics (reverse-order insertion) the factory is at the head of the module list
-        // (SENTINEL → factory → execMod), so SENTINEL is the correct `prevModule`.
-        bool moduleDisabled = ISafe(stack.avatarSafe)
-            .execTransactionFromModule(
-                stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
-            );
-        require(moduleDisabled, "KpkOivFactory: failed to disable module");
-        // Defensive post-condition: independent of module-list ordering / SafeModuleSetup
-        // implementation. Catches any failure mode where the disableModule call returned
-        // success without actually removing the factory.
-        require(
-            !ISafe(stack.avatarSafe).isModuleEnabled(address(this)), "KpkOivFactory: factory still enabled as module"
-        );
+        // Remove factory as module from Avatar Safe.
+        _disableFactoryAsAvatarModule(stack.avatarSafe);
 
         instance = OivInstance({
             avatarSafe: stack.avatarSafe,
@@ -513,10 +516,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         (factory address, infrastructure addresses, `caller`, `config.salt`, and the
     ///         Manager Safe's owners/threshold). The prediction does NOT validate `config` —
     ///         pass a config that would actually succeed (see `_validateStackConfig`).
-    ///         Note that `predictStackAddresses` and `predictOivAddresses` produce DIFFERENT
-    ///         Avatar Safe addresses for the same salt: `deployOiv` enables the factory as a
-    ///         second module on the Avatar Safe during setup, which changes the setup() data
-    ///         and therefore the CREATE2 salt.
+    ///         By design, `predictStackAddresses` and `predictOivAddresses` produce IDENTICAL
+    ///         Avatar Safe / Manager Safe / Roles Modifier addresses for the same `(salt,
+    ///         caller)` — the factory is always enabled as a setup-time Avatar Safe module
+    ///         in both flows so the setup() initializer is byte-identical.
     /// @param  config  Stack deployment parameters.
     /// @param  caller  Address that would call `deployStack`. Pass `msg.sender` if you intend
     ///                 to be the deployer.
@@ -526,7 +529,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         view
         returns (StackInstance memory inst)
     {
-        return _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller, false);
+        return _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
     }
 
     /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
@@ -534,9 +537,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         `address(0)` because they are NOT deterministic — both are deployed via plain
     ///         CREATE (the implementation by `KpkSharesDeployer` and the proxy by this factory),
     ///         so their addresses depend on the deployer's nonce at the time of execution.
-    /// @dev    Inherits the caveats of `predictStackAddresses`. The Avatar Safe address differs
-    ///         from `predictStackAddresses` because `deployOiv` enables the factory as an
-    ///         additional Avatar Safe module during setup (see `_deployAndWireStack`).
+    /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
+    ///         the same `(salt, caller)` — see that function's NatSpec.
     /// @param  config  Fund deployment parameters.
     /// @param  caller  Address that would call `deployOiv`.
     /// @return inst    Predicted addresses; `kpkSharesImpl` and `kpkSharesProxy` are zero.
@@ -546,7 +548,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         returns (OivInstance memory inst)
     {
         StackInstance memory stack =
-            _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller, true);
+            _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
         inst = OivInstance({
             avatarSafe: stack.avatarSafe,
             managerSafe: stack.managerSafe,
@@ -560,14 +562,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @dev Predicts the operational stack addresses. Mirrors the deployment paths in
     ///      `_deployAndWireStack` exactly — any change to the deployment flow that affects
-    ///      addresses MUST be mirrored here.
-    function _predictStack(
-        address[] memory managerOwners,
-        uint256 managerThreshold,
-        uint256 baseSalt,
-        address caller,
-        bool includeFactoryAsAvatarModule
-    ) internal view returns (StackInstance memory inst) {
+    ///      addresses MUST be mirrored here. The factory is always part of the Avatar Safe's
+    ///      setup-time module list, matching the unconditional inclusion in
+    ///      `_deployAndWireStack`.
+    function _predictStack(address[] memory managerOwners, uint256 managerThreshold, uint256 baseSalt, address caller)
+        internal
+        view
+        returns (StackInstance memory inst)
+    {
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(baseSalt, caller);
 
@@ -578,15 +580,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address[] memory avatarOwners = new address[](1);
         avatarOwners[0] = EMPTY_CONTRACT;
 
-        address[] memory avatarModules;
-        if (includeFactoryAsAvatarModule) {
-            avatarModules = new address[](2);
-            avatarModules[0] = inst.execRolesModifier;
-            avatarModules[1] = address(this);
-        } else {
-            avatarModules = new address[](1);
-            avatarModules[0] = inst.execRolesModifier;
-        }
+        address[] memory avatarModules = new address[](2);
+        avatarModules[0] = inst.execRolesModifier;
+        avatarModules[1] = address(this);
         inst.avatarSafe = _predictSafe(avatarOwners, 1, avatarModules, avatarNonce);
 
         address[] memory managerModules = new address[](1);
@@ -633,20 +629,37 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
     }
 
+    /// @dev Disables the factory as an Avatar Safe module by routing a `disableModule(SENTINEL,
+    ///      factory)` call through the factory's own module slot. The factory must currently be
+    ///      at the head of the Safe's module linked list — which is guaranteed by
+    ///      `_deployAndWireStack`'s use of `SafeModuleSetup.enableModules([execMod, factory])`
+    ///      (modules are applied in reverse order, leaving `SENTINEL → factory → execMod`).
+    ///      The post-condition `isModuleEnabled(factory) == false` is independent of list
+    ///      ordering and catches any failure mode where the disableModule call returned success
+    ///      without actually removing the factory.
+    function _disableFactoryAsAvatarModule(address avatarSafe) internal {
+        bool moduleDisabled = ISafe(avatarSafe)
+            .execTransactionFromModule(
+                avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
+            );
+        require(moduleDisabled, "KpkOivFactory: failed to disable module");
+        require(!ISafe(avatarSafe).isModuleEnabled(address(this)), "KpkOivFactory: factory still enabled as module");
+    }
+
     // ── Internal: stack deployment ──────────────────────────────────────────────
 
-    /// @dev Deploys and fully wires the five-contract operational stack.
-    ///      When `includeFactoryAsAvatarModule` is true, the factory is pre-enabled as an
-    ///      additional module on the Avatar Safe (inserted at the front of the module list:
-    ///      SENTINEL → factory → execMod) so the caller can perform post-deployment actions
-    ///      such as granting token approvals before removing itself.
-    /// @param config                    Stack deployment parameters.
-    /// @param includeFactoryAsAvatarModule Whether to include the factory as a temporary module.
-    /// @return inst                     Addresses of the five deployed contracts.
-    function _deployAndWireStack(StackConfig memory config, bool includeFactoryAsAvatarModule)
-        internal
-        returns (StackInstance memory inst)
-    {
+    /// @dev Deploys and fully wires the five-contract operational stack. The factory is always
+    ///      pre-enabled as an additional module on the Avatar Safe at setup time (SafeModuleSetup
+    ///      enables modules in reverse order, so [execMod, factory] yields
+    ///      `SENTINEL → factory → execMod → SENTINEL` — factory at the head). The caller is
+    ///      responsible for disabling the factory module before returning, via
+    ///      `_disableFactoryAsAvatarModule`. Including the factory in setup() unconditionally
+    ///      (rather than only for `deployOiv`) is what guarantees the Avatar Safe's CREATE2
+    ///      address is identical between `deployStack` (sidechains) and `deployOiv` (mainnet)
+    ///      for the same `(salt, caller)`, which is the entire point of the multichain design.
+    /// @param config Stack deployment parameters.
+    /// @return inst  Addresses of the five deployed contracts.
+    function _deployAndWireStack(StackConfig memory config) internal returns (StackInstance memory inst) {
         // Defense against `EMPTY_CONTRACT` not being deployed on the current chain. If absent,
         // the Avatar Safe's sole owner would be a bare-EOA address, breaking the
         // Roles-Modifier-only execution invariant the entire fund stack depends on.
@@ -661,22 +674,18 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address managerMod = _deployRolesModifier(mgrSalt);
 
         // Step 2 – Deploy Avatar Safe with EMPTY_CONTRACT as sole signer.
-        //          Modules enabled during setup(): always execMod, optionally the factory.
-        //          If factory is enabled, it is inserted at the front: SENTINEL → factory → execMod.
+        //          Modules enabled during setup() (in array order, but applied in reverse by
+        //          SafeModuleSetup): SENTINEL → factory → execMod → SENTINEL after setup.
+        //          The factory module is disabled by the caller before this entry point returns.
         address avatarSafe;
         {
             address[] memory avatarOwners = new address[](1);
             avatarOwners[0] = EMPTY_CONTRACT;
 
-            address[] memory avatarModules;
-            if (includeFactoryAsAvatarModule) {
-                avatarModules = new address[](2);
-                avatarModules[0] = execMod;
-                avatarModules[1] = address(this);
-            } else {
-                avatarModules = new address[](1);
-                avatarModules[0] = execMod;
-            }
+            address[] memory avatarModules = new address[](2);
+            avatarModules[0] = execMod;
+            avatarModules[1] = address(this);
+
             avatarSafe = _deploySafe(avatarOwners, 1, avatarModules, avatarNonce);
         }
 
