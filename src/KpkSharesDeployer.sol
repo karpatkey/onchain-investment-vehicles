@@ -41,15 +41,38 @@ contract KpkSharesDeployer {
         factory = _factory;
     }
 
-    /// @notice Deploys a new KpkShares implementation contract.
-    /// @dev    Each call produces an independent implementation instance.
+    /// @notice Deploys a new KpkShares implementation contract via CREATE2.
+    /// @dev    Each call produces an independent implementation instance whose address is
+    ///         deterministic from `(this deployer, salt, type(KpkShares).creationCode)`.
+    ///         The factory threads a salt derived from `(caller, baseSalt, index)` so each OIV's
+    ///         impl address is predictable in advance via `predictImpl`.
     ///         No constructor arguments are required — KpkShares uses initializers
     ///         on the proxy side.
     ///         Restricted to `factory` to prevent arbitrary callers from spawning
     ///         uninitialised KpkShares implementations.
+    /// @param  salt CREATE2 salt; forwarded by the factory from its salt-derivation routine.
     /// @return impl Address of the freshly deployed KpkShares implementation.
-    function deploy() external returns (address impl) {
+    function deploy(bytes32 salt) external returns (address impl) {
         if (msg.sender != factory) revert UnauthorizedCaller();
-        return address(new KpkShares());
+        return address(new KpkShares{salt: salt}());
+    }
+
+    /// @notice Predicts the address `deploy(salt)` will produce on this chain.
+    /// @dev    Pure CREATE2 calculation — does not check whether the address is already deployed.
+    ///         Lives on this contract (not on the factory) so importers don't pull in
+    ///         `type(KpkShares).creationCode` and exceed EIP-170 — same rationale as the
+    ///         deployer's own existence.
+    /// @param  salt CREATE2 salt the factory would pass to `deploy`.
+    /// @return predicted The CREATE2 address `deploy(salt)` would write to.
+    function predictImpl(bytes32 salt) external view returns (address predicted) {
+        predicted = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(type(KpkShares).creationCode))
+                    )
+                )
+            )
+        );
     }
 }

@@ -450,9 +450,10 @@ contract KpkOivFactoryTest is Test {
         assertEq(predicted.managerRolesModifier, actual.managerRolesModifier, "managerMod prediction mismatch");
     }
 
-    /// @dev `predictOivAddresses` must match `deployOiv` for the five deterministic contracts.
-    ///      `kpkSharesImpl` and `kpkSharesProxy` are explicitly NOT deterministic (CREATE, not
-    ///      CREATE2) so the prediction returns address(0) for them.
+    /// @dev `predictOivAddresses` must match `deployOiv` for ALL seven contracts. Since the
+    ///      KpkShares implementation and ERC-1967 proxy now use CREATE2 (with salts derived from
+    ///      `(caller, baseSalt, 5)` and `(caller, baseSalt, 6)`), they are deterministic and the
+    ///      prediction must agree byte-for-byte with the actual deployment.
     function test_predictOivAddresses_matchesActualDeployment() public {
         KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
         KpkOivFactory.OivInstance memory actual = factory.deployOiv(oivConfig);
@@ -462,8 +463,10 @@ contract KpkOivFactoryTest is Test {
         assertEq(predicted.execRolesModifier, actual.execRolesModifier, "execMod prediction mismatch");
         assertEq(predicted.subRolesModifier, actual.subRolesModifier, "subMod prediction mismatch");
         assertEq(predicted.managerRolesModifier, actual.managerRolesModifier, "managerMod prediction mismatch");
-        assertEq(predicted.kpkSharesImpl, address(0), "kpkSharesImpl should be unpredictable");
-        assertEq(predicted.kpkSharesProxy, address(0), "kpkSharesProxy should be unpredictable");
+        assertEq(predicted.kpkSharesImpl, actual.kpkSharesImpl, "kpkSharesImpl prediction mismatch");
+        assertEq(predicted.kpkSharesProxy, actual.kpkSharesProxy, "kpkSharesProxy prediction mismatch");
+        assertTrue(predicted.kpkSharesImpl != address(0), "kpkSharesImpl should be predicted non-zero");
+        assertTrue(predicted.kpkSharesProxy != address(0), "kpkSharesProxy should be predicted non-zero");
     }
 
     /// @dev Cross-flow address invariant: `predictStackAddresses` and `predictOivAddresses` MUST
@@ -592,7 +595,7 @@ contract KpkOivFactoryTest is Test {
         KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(KpkSharesDeployer.UnauthorizedCaller.selector);
-        deployer.deploy();
+        deployer.deploy(bytes32(uint256(1)));
     }
 
     /// @dev L-01: KpkSharesDeployer constructor rejects address(0) factory.

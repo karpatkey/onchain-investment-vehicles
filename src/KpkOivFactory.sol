@@ -16,8 +16,12 @@ import {IRoles} from "./interfaces/IRoles.sol";
 /// @dev    Kept as a local interface so importing KpkSharesDeployer.sol (which imports KpkShares)
 ///         does not embed KpkShares creation bytecode into this contract's runtime.
 interface IKpkSharesDeployer {
-    /// @notice Deploys a fresh KpkShares implementation and returns its address.
-    function deploy() external returns (address);
+    /// @notice Deploys a fresh KpkShares implementation at the CREATE2 address derived from
+    ///         `(deployer, salt, type(KpkShares).creationCode)` and returns its address.
+    function deploy(bytes32 salt) external returns (address);
+
+    /// @notice Predicts the address `deploy(salt)` will produce on this chain.
+    function predictImpl(bytes32 salt) external view returns (address);
 }
 
 /// @title  KpkOivFactory
@@ -518,8 +522,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // below before being disabled.
         StackInstance memory stack = _deployAndWireStack(stackConfig);
 
+        (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, msg.sender);
         (address sharesImpl, address sharesProxy) = _deploySharesProxy(
-            config.sharesParams, stack.managerSafe, stack.avatarSafe, config.admin, config.additionalAssets
+            config.sharesParams,
+            stack.managerSafe,
+            stack.avatarSafe,
+            config.admin,
+            config.additionalAssets,
+            implSalt,
+            proxySalt
         );
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
@@ -567,15 +578,20 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
-    ///         by `caller`. The KpkShares implementation and proxy fields are returned as
-    ///         `address(0)` because they are NOT deterministic — both are deployed via plain
-    ///         CREATE (the implementation by `KpkSharesDeployer` and the proxy by this factory),
-    ///         so their addresses depend on the deployer's nonce at the time of execution.
+    ///         by `caller`. All seven addresses (5 operational-stack + KpkShares impl + proxy) are
+    ///         CREATE2-deployed and fully predictable from `(factory, infrastructure addresses,
+    ///         caller, config.salt, manager owners/threshold, KpkShares constructor parameters)`.
     /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
-    ///         the same `(salt, caller)` — see that function's NatSpec.
+    ///         the same `(salt, caller)` — see that function's NatSpec. The shares impl is deployed
+    ///         via the wired `kpkSharesDeployer` using a CREATE2 salt derived from
+    ///         `(caller, salt, 5)`; the ERC-1967 proxy is deployed by this factory using a salt
+    ///         derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code includes the
+    ///         `KpkShares.initialize(params)` calldata where `params.safe` is overridden with the
+    ///         predicted Avatar Safe and `params.admin` is set to `address(this)`, mirroring
+    ///         `_deploySharesProxy` exactly.
     /// @param  config  Fund deployment parameters.
     /// @param  caller  Address that would call `deployOiv`.
-    /// @return inst    Predicted addresses; `kpkSharesImpl` and `kpkSharesProxy` are zero.
+    /// @return inst    Predicted addresses for all seven contracts.
     function predictOivAddresses(OivConfig calldata config, address caller)
         external
         view
@@ -583,15 +599,37 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     {
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
+
+        (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, caller);
+        address predictedImpl = IKpkSharesDeployer(kpkSharesDeployer).predictImpl(implSalt);
+        address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl, config.sharesParams, stack.avatarSafe);
+
         inst = OivInstance({
             avatarSafe: stack.avatarSafe,
             managerSafe: stack.managerSafe,
             execRolesModifier: stack.execRolesModifier,
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
-            kpkSharesImpl: address(0),
-            kpkSharesProxy: address(0)
+            kpkSharesImpl: predictedImpl,
+            kpkSharesProxy: predictedProxy
         });
+    }
+
+    /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
+    ///      Mirrors the deployment exactly: same `params.safe` override (predicted Avatar Safe),
+    ///      same `params.admin` placeholder (`address(this)`), same initializer calldata.
+    function _predictSharesProxy(
+        bytes32 proxySalt,
+        address impl,
+        KpkShares.ConstructorParams memory params,
+        address avatarSafe
+    ) internal view returns (address predicted) {
+        params.safe = avatarSafe;
+        params.admin = address(this);
+        bytes memory initCode = abi.encodePacked(
+            type(ERC1967Proxy).creationCode, abi.encode(impl, abi.encodeCall(KpkShares.initialize, (params)))
+        );
+        predicted = _create2Address(address(this), proxySalt, keccak256(initCode));
     }
 
     /// @dev Predicts the operational stack addresses. Mirrors the deployment paths in
@@ -770,6 +808,24 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         mgrNonce = uint256(keccak256(abi.encode(caller, baseSalt, uint8(4))));
     }
 
+    /// @dev Derives the two CREATE2 salts used by `_deploySharesProxy` (KpkShares implementation
+    ///      and ERC-1967 proxy). Indices 5 and 6 extend the `_deriveSalts` index space so all
+    ///      seven OIV addresses are deterministic from `(caller, baseSalt)`. Same caller-mixing
+    ///      rationale: prevents salt-squat front-running while keeping cross-chain determinism.
+    ///      Index mapping: 5 = KpkShares implementation, 6 = ERC-1967 shares proxy.
+    /// @param baseSalt The user-supplied base salt from `OivConfig.salt`.
+    /// @param caller   The address calling `deployOiv`.
+    /// @return implSalt  CREATE2 salt the deployer uses for the KpkShares implementation.
+    /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
+    function _deriveSharesSalts(uint256 baseSalt, address caller)
+        internal
+        pure
+        returns (bytes32 implSalt, bytes32 proxySalt)
+    {
+        implSalt = keccak256(abi.encode(caller, baseSalt, uint8(5)));
+        proxySalt = keccak256(abi.encode(caller, baseSalt, uint8(6)));
+    }
+
     // ── Internal: deployment helpers ────────────────────────────────────────────
 
     /// @dev Deploys a Zodiac Roles Modifier EIP-1167 proxy via the ModuleProxyFactory using
@@ -878,6 +934,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param avatarSafe       Avatar Safe address — overrides `params.safe`.
     /// @param finalAdmin       Address that receives DEFAULT_ADMIN_ROLE — overrides `params.admin`.
     /// @param additionalAssets Additional assets to register via `updateAsset`.
+    /// @param implSalt        CREATE2 salt forwarded to `KpkSharesDeployer.deploy(salt)` so the
+    ///                        impl address is deterministic from `(caller, baseSalt)`.
+    /// @param proxySalt       CREATE2 salt for the ERC-1967 proxy created by this factory so the
+    ///                        proxy address is deterministic from `(caller, baseSalt)`.
     /// @return impl  Address of the newly deployed KpkShares implementation.
     /// @return proxy Address of the ERC-1967 proxy (the fund's shares token).
     function _deploySharesProxy(
@@ -885,13 +945,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address operator,
         address avatarSafe,
         address finalAdmin,
-        AssetConfig[] calldata additionalAssets
+        AssetConfig[] calldata additionalAssets,
+        bytes32 implSalt,
+        bytes32 proxySalt
     ) internal returns (address impl, address proxy) {
-        impl = IKpkSharesDeployer(kpkSharesDeployer).deploy();
+        impl = IKpkSharesDeployer(kpkSharesDeployer).deploy(implSalt);
         params.safe = avatarSafe;
         params.admin = address(this);
 
-        proxy = address(new ERC1967Proxy(impl, abi.encodeCall(KpkShares.initialize, (params))));
+        proxy = address(new ERC1967Proxy{salt: proxySalt}(impl, abi.encodeCall(KpkShares.initialize, (params))));
 
         KpkShares shares = KpkShares(proxy);
 
