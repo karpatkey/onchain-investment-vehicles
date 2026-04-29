@@ -432,12 +432,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
 
-        // Remove factory as module from Avatar Safe — it is at the front of the list (SENTINEL → factory → execMod).
+        // Remove factory as module from Avatar Safe. Under standard Gnosis SafeModuleSetup
+        // semantics (reverse-order insertion) the factory is at the head of the module list
+        // (SENTINEL → factory → execMod), so SENTINEL is the correct `prevModule`.
         bool moduleDisabled = ISafe(stack.avatarSafe)
             .execTransactionFromModule(
                 stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
             );
         require(moduleDisabled, "KpkOivFactory: failed to disable module");
+        // Defensive post-condition: independent of module-list ordering / SafeModuleSetup
+        // implementation. Catches any failure mode where the disableModule call returned
+        // success without actually removing the factory.
+        require(
+            !ISafe(stack.avatarSafe).isModuleEnabled(address(this)),
+            "KpkOivFactory: factory still enabled as module"
+        );
 
         instance = OivInstance({
             avatarSafe: stack.avatarSafe,
