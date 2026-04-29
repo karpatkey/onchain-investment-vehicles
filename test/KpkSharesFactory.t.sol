@@ -344,6 +344,24 @@ contract KpkSharesFactoryTest is Test {
         assertEq(factory.stackCount(), 2);
     }
 
+    // ── Permissionless deployment tests ────────────────────────────────────────
+
+    function test_deployOiv_isPermissionless() public {
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertTrue(inst.kpkSharesProxy != address(0), "stranger could not deploy OIV");
+    }
+
+    function test_deployStack_isPermissionless() public {
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+
+        assertTrue(inst.avatarSafe != address(0), "stranger could not deploy stack");
+    }
+
     // ── Integration tests ───────────────────────────────────────────────────────
 
     /// @dev End-to-end: factory deploys a USDC fund, an investor submits the first
