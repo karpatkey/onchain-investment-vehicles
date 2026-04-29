@@ -76,11 +76,11 @@ The following are **wired automatically** and require no input:
 ```mermaid
 graph LR
     MS["Manager Safe\n(owners + threshold)"]
-    EM["execRolesModifier\n(owner: Security Council)"]
+    EM["execRolesModifier\n(owner: admin)"]
     SM["subRolesModifier\n(owner: Manager Safe)"]
     MM["managerRolesModifier\n(owner: Manager Safe)"]
     AS["Avatar Safe\n(signer: EMPTY_CONTRACT)"]
-    KS["KpkShares Proxy\n(admin: sharesParams.admin)"]
+    KS["KpkShares Proxy\n(DEFAULT_ADMIN_ROLE: admin)"]
 
     EM -- "module of" --> AS
     SM -- "module of" --> EM
@@ -143,7 +143,7 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
 10. Deploy KpkShares UUPS proxy (factory temporarily holds DEFAULT_ADMIN_ROLE)
                                → register additional assets (factory temporarily holds OPERATOR)
                                → grant OPERATOR to sharesOperator
-                               → grant DEFAULT_ADMIN_ROLE to sharesParams.admin
+                               → grant DEFAULT_ADMIN_ROLE to admin
                                → factory renounces DEFAULT_ADMIN_ROLE
 11. Grant infinite allowance from Avatar Safe to shares proxy for:
                                → base asset (sharesParams.asset)
@@ -304,7 +304,7 @@ Optional list of assets to enable on the shares proxy beyond the base asset. The
 |----------------------------------------|------------------------------------------|
 | Avatar                                 | `avatarSafe`                             |
 | Target                                 | `avatarSafe`                             |
-| Owner                                  | `execRolesMod.finalOwner` (Security Council) |
+| Owner                                  | `execRolesMod.finalOwner` (deployStack) / `admin` (deployOiv) |
 | MANAGER role                           | Assigned to `managerSafe` and `subRolesModifier` |
 | Default role of `subRolesModifier`     | `MANAGER`                                |
 | Enabled modules                        | `subRolesModifier`                       |
@@ -333,7 +333,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 |-----------------------------|------------------------------------------------------------------------|
 | Implementation              | Fresh `KpkShares` instance deployed by `KpkSharesDeployer` (one per fund — upgrades are isolated per fund) |
 | `portfolioSafe`             | `avatarSafe`                                                           |
-| `DEFAULT_ADMIN_ROLE`        | `sharesParams.admin`                                                   |
+| `DEFAULT_ADMIN_ROLE`        | `admin` (OivConfig.admin)                                              |
 | `OPERATOR`                  | `managerSafe` (automatically wired — no separate input required)       |
 | Base asset                  | `sharesParams.asset` — deposit + redeem enabled                        |
 | Base asset allowance        | `type(uint256).max` from `avatarSafe`                                  |
@@ -350,14 +350,16 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 ## Validation rules
 
-`deployStack` and `deployOiv` revert on invalid `StackConfig`:
+`deployStack` reverts if:
 
 - `managerSafe.owners` is empty (`EmptyOwners`)
 - `managerSafe.threshold == 0` or `threshold > owners.length` (`InvalidThreshold`)
 - `execRolesMod.finalOwner` is `address(0)` (`ZeroAddress`)
 
-`deployOiv` additionally reverts if:
+`deployOiv` reverts if:
 
+- `managerSafe.owners` is empty (`EmptyOwners`)
+- `managerSafe.threshold == 0` or `threshold > owners.length` (`InvalidThreshold`)
 - `admin` is `address(0)` (`ZeroAddress`)
 - `sharesParams.asset` is `address(0)` (`ZeroAddress`)
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)
