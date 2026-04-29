@@ -268,6 +268,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Thrown when `SafeConfig.owners` contains a duplicate entry.
     error DuplicateOwner();
 
+    /// @notice Thrown when a required `OivConfig.sharesParams` field is unset
+    ///         (`feeReceiver`, `subscriptionRequestTtl`, or `redemptionRequestTtl`).
+    error InvalidSharesParams();
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
@@ -755,14 +759,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `DuplicateOwner`   if `managerSafe.owners` contains duplicates.
     ///      Reverts with `ZeroAddress`      if `admin`, any owner, `sharesParams.asset`,
     ///                                      or any `additionalAssets[i].asset` is zero.
-    ///      Reverts with `DuplicateAsset`   if `additionalAssets` contains duplicates or any
-    ///                                      entry equals `sharesParams.asset` (the latter would
-    ///                                      silently clear the base asset's `isFeeModuleAsset`
-    ///                                      flag, disabling performance fees).
+    ///      Reverts with `DuplicateAsset`     if `additionalAssets` contains duplicates or any
+    ///                                        entry equals `sharesParams.asset` (the latter would
+    ///                                        silently clear the base asset's `isFeeModuleAsset`
+    ///                                        flag, disabling performance fees).
+    ///      Reverts with `InvalidSharesParams` if `sharesParams.feeReceiver`,
+    ///                                        `sharesParams.subscriptionRequestTtl`, or
+    ///                                        `sharesParams.redemptionRequestTtl` is unset.
     function _validateOivConfig(OivConfig calldata config) internal pure {
         _validateManagerOwners(config.managerSafe);
         if (config.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
+        // Mirror KpkShares._validateInitializationParams so misconfiguration fails fast at the
+        // factory level instead of deep inside the proxy initializer.
+        if (
+            config.sharesParams.feeReceiver == address(0) || config.sharesParams.subscriptionRequestTtl == 0
+                || config.sharesParams.redemptionRequestTtl == 0
+        ) revert InvalidSharesParams();
 
         uint256 len = config.additionalAssets.length;
         for (uint256 i = 0; i < len; i++) {

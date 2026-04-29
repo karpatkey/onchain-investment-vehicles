@@ -354,6 +354,27 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    /// @dev L-06: `feeReceiver` is validated at the factory level so misconfiguration fails
+    ///      fast instead of surfacing as a deep KpkShares initializer revert.
+    function test_deployOiv_revertsOnZeroFeeReceiver() public {
+        oivConfig.sharesParams.feeReceiver = address(0);
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @dev L-06: TTLs are validated at the factory level for the same reason.
+    function test_deployOiv_revertsOnZeroSubscriptionTtl() public {
+        oivConfig.sharesParams.subscriptionRequestTtl = 0;
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    function test_deployOiv_revertsOnZeroRedemptionTtl() public {
+        oivConfig.sharesParams.redemptionRequestTtl = 0;
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        factory.deployOiv(oivConfig);
+    }
+
     /// @dev L-01: KpkSharesDeployer.deploy() rejects callers other than the factory.
     function test_kpkSharesDeployer_deploy_revertsForNonFactoryCaller() public {
         KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));
