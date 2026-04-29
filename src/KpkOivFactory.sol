@@ -710,6 +710,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         shares.grantRole(OPERATOR, operator);
         shares.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
         shares.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
+        // Defensive: under OZ AccessControl v5, `renounceRole` cannot fail when the caller passes
+        // its own address, so this assert holds in all valid execution paths. Kept as a guard
+        // against a future OZ version change or an upgraded shares implementation.
+        assert(!shares.hasRole(DEFAULT_ADMIN_ROLE, address(this)));
     }
 
     /// @dev Instructs the Avatar Safe (via `execTransactionFromModule`) to approve `sharesProxy`
