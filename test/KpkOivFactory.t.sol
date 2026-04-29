@@ -307,6 +307,28 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    /// @dev L-05: zero owner is rejected at the factory level (descriptive error) instead of
+    ///      surfacing as an opaque GS203 from deep inside Safe `setup()`.
+    function test_deployOiv_revertsOnZeroOwner() public {
+        oivConfig.managerSafe.owners = new address[](2);
+        oivConfig.managerSafe.owners[0] = managerSigner;
+        oivConfig.managerSafe.owners[1] = address(0);
+        oivConfig.managerSafe.threshold = 1;
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @dev L-05: duplicate owner is rejected at the factory level (descriptive error) instead
+    ///      of surfacing as an opaque GS204 from deep inside Safe `setup()`.
+    function test_deployOiv_revertsOnDuplicateOwner() public {
+        oivConfig.managerSafe.owners = new address[](2);
+        oivConfig.managerSafe.owners[0] = managerSigner;
+        oivConfig.managerSafe.owners[1] = managerSigner;
+        oivConfig.managerSafe.threshold = 1;
+        vm.expectRevert(KpkOivFactory.DuplicateOwner.selector);
+        factory.deployOiv(oivConfig);
+    }
+
     /// @dev M-06 / L-03: `additionalAssets` cannot include the base deposit asset, otherwise
     ///      the second `updateAsset` call would clear `isFeeModuleAsset`, silently disabling
     ///      performance fees.

@@ -265,6 +265,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         entry equal to `OivConfig.sharesParams.asset`.
     error DuplicateAsset();
 
+    /// @notice Thrown when `SafeConfig.owners` contains a duplicate entry.
+    error DuplicateOwner();
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
@@ -737,31 +740,27 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     // ── Internal: validation ────────────────────────────────────────────────────
 
     /// @dev Validates a `StackConfig` before deployment.
-    ///      Reverts with `EmptyOwners`     if `managerSafe.owners` is empty.
+    ///      Reverts with `EmptyOwners`      if `managerSafe.owners` is empty.
     ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
-    ///      Reverts with `ZeroAddress`     if `execRolesMod.finalOwner` is zero.
+    ///      Reverts with `ZeroAddress`      if any owner or `execRolesMod.finalOwner` is zero.
+    ///      Reverts with `DuplicateOwner`   if `managerSafe.owners` contains duplicates.
     function _validateStackConfig(StackConfig calldata config) internal pure {
-        if (config.managerSafe.owners.length == 0) revert EmptyOwners();
-        if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
-            revert InvalidThreshold();
-        }
+        _validateManagerOwners(config.managerSafe);
         if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
     }
 
     /// @dev Validates an `OivConfig` before deployment.
     ///      Reverts with `EmptyOwners`      if `managerSafe.owners` is empty.
     ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
-    ///      Reverts with `ZeroAddress`      if `admin`, `sharesParams.asset`, or any
-    ///                                      `additionalAssets[i].asset` is zero.
+    ///      Reverts with `DuplicateOwner`   if `managerSafe.owners` contains duplicates.
+    ///      Reverts with `ZeroAddress`      if `admin`, any owner, `sharesParams.asset`,
+    ///                                      or any `additionalAssets[i].asset` is zero.
     ///      Reverts with `DuplicateAsset`   if `additionalAssets` contains duplicates or any
     ///                                      entry equals `sharesParams.asset` (the latter would
     ///                                      silently clear the base asset's `isFeeModuleAsset`
     ///                                      flag, disabling performance fees).
     function _validateOivConfig(OivConfig calldata config) internal pure {
-        if (config.managerSafe.owners.length == 0) revert EmptyOwners();
-        if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
-            revert InvalidThreshold();
-        }
+        _validateManagerOwners(config.managerSafe);
         if (config.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
 
@@ -778,6 +777,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             // on USDT-like tokens (non-zero → non-zero allowance), DoS'ing the entire deployment.
             for (uint256 j = i + 1; j < len; j++) {
                 if (asset == config.additionalAssets[j].asset) revert DuplicateAsset();
+            }
+        }
+    }
+
+    /// @dev Validates a Manager Safe owners array: non-empty, threshold within bounds, every
+    ///      owner non-zero, no duplicates. Mirrors Gnosis Safe v1.4.1 `setup()` invariants but
+    ///      surfaces descriptive factory-level errors instead of opaque `GS20x` reverts from
+    ///      deep inside `createProxyWithNonce`.
+    function _validateManagerOwners(SafeConfig calldata managerSafe) internal pure {
+        uint256 len = managerSafe.owners.length;
+        if (len == 0) revert EmptyOwners();
+        if (managerSafe.threshold == 0 || managerSafe.threshold > len) revert InvalidThreshold();
+        for (uint256 i = 0; i < len; i++) {
+            address owner = managerSafe.owners[i];
+            if (owner == address(0)) revert ZeroAddress();
+            for (uint256 j = i + 1; j < len; j++) {
+                if (owner == managerSafe.owners[j]) revert DuplicateOwner();
             }
         }
     }
