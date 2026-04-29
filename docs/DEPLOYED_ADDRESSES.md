@@ -35,7 +35,7 @@ The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches 
 | Chain | ID | Status |
 |---|---|---|
 | Ethereum Mainnet | 1 | ⏳ pending |
-| Optimism | 10 | ⏳ pending |
+| Optimism | 10 | ✅ deployed |
 | Gnosis | 100 | ✅ deployed |
 | Base | 8453 | ⏳ pending |
 | Arbitrum | 42161 | ⏳ pending |
@@ -48,7 +48,25 @@ _pending_
 
 ### Optimism (chainId `10`)
 
-_pending_
+| Component | Address |
+|---|---|
+| `KpkOivFactory` | [`0x0d94255fdE65D302616b02A2F070CdB21190d420`](https://optimistic.etherscan.io/address/0x0d94255fdE65D302616b02A2F070CdB21190d420) |
+| `KpkSharesDeployer` | [`0xA4B485Efe30F2b1D277b7A2279310239B26775F0`](https://optimistic.etherscan.io/address/0xA4B485Efe30F2b1D277b7A2279310239B26775F0) |
+| Owner (final) | [`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`](https://optimistic.etherscan.io/address/0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537) (OIV Safe) |
+
+Deployed in block [`150953232`](https://optimistic.etherscan.io/block/150953232). Transactions:
+
+| Step | Tx hash |
+|---|---|
+| Factory CREATE2 deploy | [`0x3c8b951ccfac37199811b401ac43067e220d281e4d517c69a20f31a1829ec845`](https://optimistic.etherscan.io/tx/0x3c8b951ccfac37199811b401ac43067e220d281e4d517c69a20f31a1829ec845) |
+| Deployer CREATE2 deploy | [`0x298c3a4310181c68a28b55ac096100ce69a95f0ebf9d429f592ab19e5c439d2d`](https://optimistic.etherscan.io/tx/0x298c3a4310181c68a28b55ac096100ce69a95f0ebf9d429f592ab19e5c439d2d) |
+| `setKpkSharesDeployer` | [`0x439d7e9ce77ebbca2e3111adb7b868fde4a73cd62840a42ec4f3473de5780d1a`](https://optimistic.etherscan.io/tx/0x439d7e9ce77ebbca2e3111adb7b868fde4a73cd62840a42ec4f3473de5780d1a) |
+| `transferOwnership` → OIV Safe | [`0xc19f706eaf71e207395c17170d0ee8fbe3c56662d0c3474c5f6bb56b17c6e73f`](https://optimistic.etherscan.io/tx/0xc19f706eaf71e207395c17170d0ee8fbe3c56662d0c3474c5f6bb56b17c6e73f) |
+
+Independent on-chain verification (post-deploy):
+- `factory.owner()` = OIV Safe ✓
+- `factory.kpkSharesDeployer()` = `0xA4B485Ef...75F0` ✓
+- `KpkSharesDeployer.factory()` = `0x0d94255f...d420` ✓
 
 ### Gnosis Chain (chainId `100`)
 
