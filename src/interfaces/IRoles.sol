@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 /// @title  IRoles
+/// @author KPK
 /// @notice Minimal interface for the Zodiac Roles Modifier v2.
 /// @dev    Only the functions used by KpkSharesFactory (and its tests) are included.
 ///         setUp encodes (address owner, address avatar, address target).

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 /// @title  ISafe
+/// @author KPK
 /// @notice Minimal interface for a Gnosis Safe proxy (v1.4.1).
 /// @dev    Only the functions used by KpkSharesFactory are included.
 interface ISafe {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 /// @title  IModuleProxyFactory
+/// @author KPK
 /// @notice Minimal interface for the Zodiac ModuleProxyFactory.
 /// @dev    Deploys EIP-1167 minimal proxies for Zodiac modules (e.g. Roles Modifier) via CREATE2.
 ///         Only the function used by KpkSharesFactory is included.

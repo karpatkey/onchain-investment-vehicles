@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {KpkShares} from "./kpkShares.sol";
 
 /// @title  KpkSharesDeployer
+/// @author KPK
 /// @notice Standalone deployer for KpkShares implementations.
 /// @dev    Lives in a separate contract so KpkSharesFactory does not embed the
 ///         KpkShares creation bytecode in its own runtime, which would exceed the

@@ -20,6 +20,7 @@ interface IKpkSharesDeployer {
 }
 
 /// @title  KpkSharesFactory
+/// @author KPK
 /// @notice On-chain factory that atomically deploys a full kpk fund stack:
 ///         Avatar Safe → Manager Safe → 3 Zodiac Roles Modifiers → KpkShares UUPS proxy.
 ///
