@@ -274,6 +274,15 @@ contract KpkSharesFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    function test_deployOiv_revertsIfApproveModuleCallFails() public {
+        // Make USDC.approve revert so that the Avatar Safe's execTransactionFromModule
+        // returns false when the factory tries to grant the shares proxy its allowance.
+        vm.mockCallRevert(USDC, abi.encodeWithSelector(IERC20.approve.selector), "");
+        vm.expectRevert("KpkSharesFactory: approve module call failed");
+        factory.deployOiv(oivConfig);
+    }
+
+
     // ── deployStack tests ───────────────────────────────────────────────────────
 
     function test_deployStack_deploysFiveContracts() public {
@@ -437,5 +446,79 @@ contract KpkSharesFactoryTest is Test {
             performanceFeeModule: address(0),
             performanceFeeRate: 0
         });
+    }
+}
+
+/// @notice Exposes internal KpkSharesFactory functions for unit testing.
+contract KpkSharesFactoryHarness is KpkSharesFactory {
+    constructor(address owner, address safeProxyFactory, address safeSingleton, address safeModuleSetup, address safeFallbackHandler, address moduleProxyFactory, address rolesModifierMastercopy, address kpkSharesDeployer)
+        KpkSharesFactory(owner, safeProxyFactory, safeSingleton, safeModuleSetup, safeFallbackHandler, moduleProxyFactory, rolesModifierMastercopy, kpkSharesDeployer)
+    {}
+
+    function exposed_execApprove(address avatarSafe, address asset, address spender) external {
+        _execApprove(avatarSafe, asset, spender);
+    }
+
+    function exposed_disableFactoryModule(address avatarSafe) external {
+        bool moduleDisabled = ISafe(avatarSafe).execTransactionFromModule(
+            avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(this))), 0
+        );
+        require(moduleDisabled, "KpkSharesFactory: failed to disable module");
+    }
+}
+
+/// @notice Pure unit tests for the execTransactionFromModule return-value checks.
+///         No fork required — uses vm.mockCall to simulate Safe responses.
+contract KpkSharesFactoryUnitTest is Test {
+    // Safe v1.4.1 — addresses kept so harness constructor is valid; not called in unit tests.
+    address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
+    address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
+    address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
+    address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
+    address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
+    address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+
+    KpkSharesFactoryHarness harness;
+
+    function setUp() public {
+        KpkSharesDeployer deployer = new KpkSharesDeployer();
+        harness = new KpkSharesFactoryHarness(
+            address(this),
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(deployer)
+        );
+    }
+
+    function test_execApprove_revertsIfModuleCallReturnsFalse() public {
+        address mockSafe = makeAddr("mockSafe");
+        address mockToken = makeAddr("mockToken");
+        address spender = makeAddr("spender");
+
+        vm.mockCall(
+            mockSafe,
+            abi.encodeCall(ISafe.execTransactionFromModule, (mockToken, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0)),
+            abi.encode(false)
+        );
+
+        vm.expectRevert("KpkSharesFactory: approve module call failed");
+        harness.exposed_execApprove(mockSafe, mockToken, spender);
+    }
+
+    function test_disableModule_revertsIfModuleCallReturnsFalse() public {
+        address mockSafe = makeAddr("mockSafe");
+
+        vm.mockCall(
+            mockSafe,
+            abi.encodeCall(ISafe.execTransactionFromModule, (mockSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(harness))), 0)),
+            abi.encode(false)
+        );
+
+        vm.expectRevert("KpkSharesFactory: failed to disable module");
+        harness.exposed_disableFactoryModule(mockSafe);
     }
 }
