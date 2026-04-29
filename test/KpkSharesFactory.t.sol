@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkSharesFactory} from "src/KpkSharesFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
+import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 
@@ -386,6 +387,52 @@ contract KpkSharesFactoryTest is Test {
         vm.prank(attacker);
         vm.expectRevert();
         factory.deployStack(_buildStackConfig());
+    }
+
+    // ── Integration tests ───────────────────────────────────────────────────────
+
+    /// @dev End-to-end: factory deploys a USDC fund, an investor submits the first
+    ///      subscription request, and the request sits pending for the operator.
+    ///      Verifies the full path from factory deployment to investor interaction.
+    function test_integration_firstUsdcSubscriptionRequest() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        KpkShares shares = KpkShares(inst.kpkSharesProxy);
+        address investor = makeAddr("investor");
+        uint256 subscriptionAmount = 1_000e6; // 1,000 USDC
+
+        deal(USDC, investor, subscriptionAmount);
+
+        vm.prank(investor);
+        IERC20(USDC).approve(address(shares), subscriptionAmount);
+
+        // Expected shares at the opening price of 1 USDC = 1e8 NAV
+        uint256 sharesPrice = 1e8;
+        uint256 minSharesOut = shares.assetsToShares(subscriptionAmount, sharesPrice, USDC);
+
+        uint256 expectedRequestId = shares.requestId() + 1;
+        uint256 investorUsdcBefore = IERC20(USDC).balanceOf(investor);
+
+        vm.prank(investor);
+        uint256 requestId = shares.requestSubscription(subscriptionAmount, minSharesOut, USDC, investor);
+
+        // ── request ID ──────────────────────────────────────────────────────────
+        assertEq(requestId, expectedRequestId, "unexpected request ID");
+
+        // ── USDC moved from investor to the shares proxy ─────────────────────────
+        assertEq(IERC20(USDC).balanceOf(investor), investorUsdcBefore - subscriptionAmount, "investor USDC not pulled");
+        assertGe(IERC20(USDC).balanceOf(address(shares)), subscriptionAmount, "shares proxy did not receive USDC");
+
+        // ── request state ────────────────────────────────────────────────────────
+        IkpkShares.UserRequest memory req = shares.getRequest(requestId);
+        assertEq(uint8(req.requestStatus), uint8(IkpkShares.RequestStatus.PENDING), "request not pending");
+        assertEq(uint8(req.requestType), uint8(IkpkShares.RequestType.SUBSCRIPTION), "wrong request type");
+        assertEq(req.investor, investor, "request investor mismatch");
+        assertEq(req.receiver, investor, "request receiver mismatch");
+        assertEq(req.asset, USDC, "request asset mismatch");
+        assertEq(req.assetAmount, subscriptionAmount, "request assetAmount mismatch");
+        assertEq(req.sharesAmount, minSharesOut, "request minSharesOut mismatch");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────
