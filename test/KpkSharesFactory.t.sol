@@ -208,6 +208,26 @@ contract KpkSharesFactoryTest is Test {
         assertTrue(shares.hasRole(0x00, admin), "admin does not have DEFAULT_ADMIN_ROLE");
     }
 
+    /// @dev The admin arg to deployOiv must be the single source of truth for both
+    ///      the exec Roles Modifier owner and DEFAULT_ADMIN_ROLE on the shares proxy.
+    function test_deployOiv_adminArgControlsBothExecModOwnerAndSharesAdmin() public {
+        address customAdmin = makeAddr("customAdmin");
+        KpkSharesFactory.OivConfig memory cfg = _buildOivConfig();
+        cfg.admin = customAdmin;
+
+        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(cfg);
+
+        assertEq(IRoles(inst.execRolesModifier).owner(), customAdmin, "execMod owner must equal admin arg");
+        assertTrue(
+            KpkShares(inst.kpkSharesProxy).hasRole(0x00, customAdmin), "shares DEFAULT_ADMIN_ROLE must equal admin arg"
+        );
+        assertEq(
+            IRoles(inst.execRolesModifier).owner(),
+            customAdmin,
+            "execMod owner and shares admin must be the same address"
+        );
+    }
+
     function test_sharesProxy_operatorIsManagerSafe() public {
         KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
