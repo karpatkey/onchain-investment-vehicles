@@ -282,7 +282,6 @@ contract KpkSharesFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
-
     // ── deployStack tests ───────────────────────────────────────────────────────
 
     function test_deployStack_deploysFiveContracts() public {
@@ -451,8 +450,26 @@ contract KpkSharesFactoryTest is Test {
 
 /// @notice Exposes internal KpkSharesFactory functions for unit testing.
 contract KpkSharesFactoryHarness is KpkSharesFactory {
-    constructor(address owner, address safeProxyFactory, address safeSingleton, address safeModuleSetup, address safeFallbackHandler, address moduleProxyFactory, address rolesModifierMastercopy, address kpkSharesDeployer)
-        KpkSharesFactory(owner, safeProxyFactory, safeSingleton, safeModuleSetup, safeFallbackHandler, moduleProxyFactory, rolesModifierMastercopy, kpkSharesDeployer)
+    constructor(
+        address owner,
+        address safeProxyFactory,
+        address safeSingleton,
+        address safeModuleSetup,
+        address safeFallbackHandler,
+        address moduleProxyFactory,
+        address rolesModifierMastercopy,
+        address kpkSharesDeployer
+    )
+        KpkSharesFactory(
+            owner,
+            safeProxyFactory,
+            safeSingleton,
+            safeModuleSetup,
+            safeFallbackHandler,
+            moduleProxyFactory,
+            rolesModifierMastercopy,
+            kpkSharesDeployer
+        )
     {}
 
     function exposed_execApprove(address avatarSafe, address asset, address spender) external {
@@ -460,9 +477,10 @@ contract KpkSharesFactoryHarness is KpkSharesFactory {
     }
 
     function exposed_disableFactoryModule(address avatarSafe) external {
-        bool moduleDisabled = ISafe(avatarSafe).execTransactionFromModule(
-            avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(this))), 0
-        );
+        bool moduleDisabled = ISafe(avatarSafe)
+            .execTransactionFromModule(
+                avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(this))), 0
+            );
         require(moduleDisabled, "KpkSharesFactory: failed to disable module");
     }
 }
@@ -501,7 +519,10 @@ contract KpkSharesFactoryUnitTest is Test {
 
         vm.mockCall(
             mockSafe,
-            abi.encodeCall(ISafe.execTransactionFromModule, (mockToken, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0)),
+            abi.encodeCall(
+                ISafe.execTransactionFromModule,
+                (mockToken, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0)
+            ),
             abi.encode(false)
         );
 
@@ -514,7 +535,10 @@ contract KpkSharesFactoryUnitTest is Test {
 
         vm.mockCall(
             mockSafe,
-            abi.encodeCall(ISafe.execTransactionFromModule, (mockSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(harness))), 0)),
+            abi.encodeCall(
+                ISafe.execTransactionFromModule,
+                (mockSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(harness))), 0)
+            ),
             abi.encode(false)
         );
 

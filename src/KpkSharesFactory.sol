@@ -406,9 +406,10 @@ contract KpkSharesFactory is Ownable {
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
 
         // Remove factory as module from Avatar Safe — it is at the front of the list (SENTINEL → factory → execMod).
-        bool moduleDisabled = ISafe(stack.avatarSafe).execTransactionFromModule(
-            stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
-        );
+        bool moduleDisabled = ISafe(stack.avatarSafe)
+            .execTransactionFromModule(
+                stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
+            );
         require(moduleDisabled, "KpkSharesFactory: failed to disable module");
 
         instance = OivInstance({
@@ -681,9 +682,8 @@ contract KpkSharesFactory is Ownable {
     /// @param asset      ERC-20 token to approve.
     /// @param spender    Address to grant the unlimited allowance to.
     function _execApprove(address avatarSafe, address asset, address spender) internal {
-        bool success = ISafe(avatarSafe).execTransactionFromModule(
-            asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0
-        );
+        bool success = ISafe(avatarSafe)
+            .execTransactionFromModule(asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0);
         require(success, "KpkSharesFactory: approve module call failed");
     }
 
