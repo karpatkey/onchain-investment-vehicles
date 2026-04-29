@@ -112,18 +112,46 @@ contract KpkSharesFactoryTest is Test {
         );
     }
 
-    function test_execModifier_avatarAndTargetAreAvatarSafe() public {
+    function test_execModifier_avatarIsAvatarSafe() public {
         vm.prank(factoryOwner);
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
 
         assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "execMod avatar mismatch");
     }
 
-    function test_subModifier_targetIsExecModifier() public {
+    function test_execModifier_targetIsAvatarSafe() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertEq(IRoles(inst.execRolesModifier).target(), inst.avatarSafe, "execMod target mismatch");
+    }
+
+    function test_subModifier_avatarIsAvatarSafe() public {
         vm.prank(factoryOwner);
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
 
         assertEq(IRoles(inst.subRolesModifier).avatar(), inst.avatarSafe, "subMod avatar mismatch");
+    }
+
+    function test_subModifier_targetIsExecModifier() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertEq(IRoles(inst.subRolesModifier).target(), inst.execRolesModifier, "subMod target mismatch");
+    }
+
+    function test_managerModifier_avatarIsManagerSafe() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertEq(IRoles(inst.managerRolesModifier).avatar(), inst.managerSafe, "managerMod avatar mismatch");
+    }
+
+    function test_managerModifier_targetIsManagerSafe() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        assertEq(IRoles(inst.managerRolesModifier).target(), inst.managerSafe, "managerMod target mismatch");
     }
 
     /// @dev Proves MANAGER role is assigned to managerSafe on execRolesModifier by having
@@ -308,8 +336,14 @@ contract KpkSharesFactoryTest is Test {
         assertTrue(
             ISafe(inst.managerSafe).isModuleEnabled(inst.managerRolesModifier), "managerMod not module of managerSafe"
         );
+        assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "execMod avatar mismatch");
+        assertEq(IRoles(inst.execRolesModifier).target(), inst.avatarSafe, "execMod target mismatch");
         assertEq(IRoles(inst.execRolesModifier).owner(), securityCouncil, "execMod owner mismatch");
+        assertEq(IRoles(inst.subRolesModifier).avatar(), inst.avatarSafe, "subMod avatar mismatch");
+        assertEq(IRoles(inst.subRolesModifier).target(), inst.execRolesModifier, "subMod target mismatch");
         assertEq(IRoles(inst.subRolesModifier).owner(), inst.managerSafe, "subMod owner mismatch");
+        assertEq(IRoles(inst.managerRolesModifier).avatar(), inst.managerSafe, "managerMod avatar mismatch");
+        assertEq(IRoles(inst.managerRolesModifier).target(), inst.managerSafe, "managerMod target mismatch");
         assertEq(IRoles(inst.managerRolesModifier).owner(), inst.managerSafe, "managerMod owner mismatch");
     }
 

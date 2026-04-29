@@ -10,6 +10,8 @@ interface IRoles {
 
     function avatar() external view returns (address);
 
+    function target() external view returns (address);
+
     function setAvatar(address _avatar) external;
 
     function setTarget(address _target) external;
