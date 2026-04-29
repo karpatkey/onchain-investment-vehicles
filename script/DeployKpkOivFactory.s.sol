@@ -41,9 +41,16 @@ contract DeployKpkOivFactory is Script {
     function run(address owner) external {
         require(owner != address(0), "owner cannot be zero");
 
+        // The deployer EOA's next two nonces produce the KpkSharesDeployer (n) and the
+        // KpkOivFactory (n+1) respectively. Pre-compute the factory address so the deployer
+        // can be locked to the factory at construction time.
+        address broadcaster = msg.sender;
+        uint256 nextNonce = vm.getNonce(broadcaster);
+        address predictedFactory = vm.computeCreateAddress(broadcaster, nextNonce + 1);
+
         vm.startBroadcast();
 
-        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
+        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
 
         KpkOivFactory factory = new KpkOivFactory(
             owner,
@@ -57,6 +64,8 @@ contract DeployKpkOivFactory is Script {
         );
 
         vm.stopBroadcast();
+
+        require(address(factory) == predictedFactory, "factory address mismatch");
 
         console.log("==========================================");
         console.log("KpkSharesDeployer deployed at:", address(sharesDeployer));

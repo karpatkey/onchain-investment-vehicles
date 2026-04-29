@@ -45,7 +45,13 @@ contract KpkOivFactoryTest is Test {
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
 
-        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
+        // KpkSharesDeployer is now factory-locked. Pre-compute the factory address so the
+        // deployer can be constructed with it: this contract's next nonce produces the
+        // deployer, and the one after that produces the factory.
+        uint256 nextNonce = vm.getNonce(address(this));
+        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 1);
+
+        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
 
         factory = new KpkOivFactory(
             factoryOwner,
@@ -57,6 +63,7 @@ contract KpkOivFactoryTest is Test {
             ROLES_MODIFIER_MASTERCOPY,
             address(sharesDeployer)
         );
+        require(address(factory) == predictedFactory, "factory address mismatch");
 
         oivConfig = _buildOivConfig();
     }
@@ -300,6 +307,20 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    /// @dev L-01: KpkSharesDeployer.deploy() rejects callers other than the factory.
+    function test_kpkSharesDeployer_deploy_revertsForNonFactoryCaller() public {
+        KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(KpkSharesDeployer.UnauthorizedCaller.selector);
+        deployer.deploy();
+    }
+
+    /// @dev L-01: KpkSharesDeployer constructor rejects address(0) factory.
+    function test_kpkSharesDeployer_constructor_revertsOnZeroFactory() public {
+        vm.expectRevert(KpkSharesDeployer.ZeroFactory.selector);
+        new KpkSharesDeployer(address(0));
+    }
+
     // ── deployStack tests ───────────────────────────────────────────────────────
 
     function test_deployStack_deploysFiveContracts() public {
@@ -522,7 +543,13 @@ contract KpkOivFactoryUnitTest is Test {
     KpkOivFactoryHarness harness;
 
     function setUp() public {
-        KpkSharesDeployer deployer = new KpkSharesDeployer();
+        // KpkSharesDeployer is factory-locked. Pre-compute the harness address so the deployer
+        // can be constructed with it: this contract's next nonce produces the deployer,
+        // and the one after that produces the harness.
+        uint256 nextNonce = vm.getNonce(address(this));
+        address predictedHarness = vm.computeCreateAddress(address(this), nextNonce + 1);
+
+        KpkSharesDeployer deployer = new KpkSharesDeployer(predictedHarness);
         harness = new KpkOivFactoryHarness(
             address(this),
             SAFE_PROXY_FACTORY,
@@ -533,6 +560,7 @@ contract KpkOivFactoryUnitTest is Test {
             ROLES_MODIFIER_MASTERCOPY,
             address(deployer)
         );
+        require(address(harness) == predictedHarness, "harness address mismatch");
     }
 
     function test_execApprove_revertsIfModuleCallReturnsFalse() public {
