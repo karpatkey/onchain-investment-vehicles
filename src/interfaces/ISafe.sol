@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /// @title  ISafe
 /// @author KPK
 /// @notice Minimal interface for a Gnosis Safe proxy (v1.4.1).
-/// @dev    Only the functions used by KpkSharesFactory are included.
+/// @dev    Only the functions used by KpkOivFactory are included.
 interface ISafe {
     /// @notice One-time initializer called by SafeProxyFactory immediately after proxy creation.
     /// @dev    Must be called exactly once. `to` and `data` form an optional delegatecall

@@ -19,7 +19,7 @@ interface IKpkSharesDeployer {
     function deploy() external returns (address);
 }
 
-/// @title  KpkSharesFactory
+/// @title  KpkOivFactory
 /// @author KPK
 /// @notice On-chain factory that atomically deploys a full kpk fund stack:
 ///         Avatar Safe → Manager Safe → 3 Zodiac Roles Modifiers → KpkShares UUPS proxy.
@@ -43,7 +43,7 @@ interface IKpkSharesDeployer {
 ///         A single `salt` in `StackConfig` drives all five CREATE2 deployments, guaranteeing
 ///         identical contract addresses across chains when the factory is deployed at the same
 ///         address with the same constructor arguments.
-contract KpkSharesFactory is Ownable {
+contract KpkOivFactory is Ownable {
     // ── Role keys ─────────────────────────────────────────────────────────────
 
     /// @dev keccak256("OPERATOR") — role key used by KpkShares to gate process/asset functions.
@@ -424,7 +424,7 @@ contract KpkSharesFactory is Ownable {
             .execTransactionFromModule(
                 stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
             );
-        require(moduleDisabled, "KpkSharesFactory: failed to disable module");
+        require(moduleDisabled, "KpkOivFactory: failed to disable module");
 
         instance = OivInstance({
             avatarSafe: stack.avatarSafe,
@@ -699,7 +699,7 @@ contract KpkSharesFactory is Ownable {
     function _execApprove(address avatarSafe, address asset, address spender) internal {
         bool success = ISafe(avatarSafe)
             .execTransactionFromModule(asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0);
-        require(success, "KpkSharesFactory: approve module call failed");
+        require(success, "KpkOivFactory: approve module call failed");
     }
 
     // ── Internal: validation ────────────────────────────────────────────────────

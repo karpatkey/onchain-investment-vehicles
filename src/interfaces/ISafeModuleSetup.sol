@@ -5,7 +5,7 @@ pragma solidity ^0.8.0;
 /// @author KPK
 /// @notice Delegatecall target used in Safe's setup() to enable modules during initialization.
 /// @dev    Deployed at a deterministic address by Safe as part of their v1.4.1 contracts.
-///         KpkSharesFactory encodes a delegatecall to `enableModules` inside the Safe
+///         KpkOivFactory encodes a delegatecall to `enableModules` inside the Safe
 ///         `setup()` initializer so that modules are pre-enabled at proxy creation time,
 ///         avoiding the need for a post-deployment owner transaction.
 interface ISafeModuleSetup {

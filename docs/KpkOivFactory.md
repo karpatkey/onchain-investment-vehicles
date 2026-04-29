@@ -1,6 +1,6 @@
-# KpkSharesFactory
+# KpkOivFactory
 
-`KpkSharesFactory` deploys kpk fund infrastructure in a single transaction. Both entry points are permissionless and may be called by any account.
+`KpkOivFactory` deploys KPK fund infrastructure in a single transaction. Both entry points are permissionless and may be called by any account.
 
 Two entry points:
 

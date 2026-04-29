@@ -2,10 +2,10 @@
 pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
-import {KpkSharesFactory} from "../src/KpkSharesFactory.sol";
+import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 
-/// @notice Deploys KpkSharesDeployer and KpkSharesFactory with hardcoded Safe v1.4.1
+/// @notice Deploys KpkSharesDeployer and KpkOivFactory with hardcoded Safe v1.4.1
 ///         and Zodiac infrastructure addresses.
 ///         Infrastructure addresses can be updated by the owner post-deployment via the setter functions.
 ///         Each fund deployed via deployOiv() gets a fresh KpkShares implementation from KpkSharesDeployer.
@@ -13,7 +13,7 @@ import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 /// Usage (import key first with `cast wallet import $MAINNET_DEPLOYER_NAME --interactive`):
 ///
 ///   # Mainnet
-///   source .env && forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
+///   source .env && forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
 ///     --rpc-url mainnet \
 ///     --account $MAINNET_DEPLOYER_NAME \
 ///     --broadcast \
@@ -21,13 +21,13 @@ import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 ///     --sig "run(address)" <ownerAddress>
 ///
 ///   # Sepolia
-///   source .env && forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
+///   source .env && forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
 ///     --rpc-url sepolia \
 ///     --account $SEPOLIA_DEPLOYER_NAME \
 ///     --broadcast \
 ///     --verify \
 ///     --sig "run(address)" <ownerAddress>
-contract DeployKpkSharesFactory is Script {
+contract DeployKpkOivFactory is Script {
     // Safe v1.4.1
     address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
     address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
@@ -45,7 +45,7 @@ contract DeployKpkSharesFactory is Script {
 
         KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
 
-        KpkSharesFactory factory = new KpkSharesFactory(
+        KpkOivFactory factory = new KpkOivFactory(
             owner,
             SAFE_PROXY_FACTORY,
             SAFE_SINGLETON,
@@ -60,7 +60,7 @@ contract DeployKpkSharesFactory is Script {
 
         console.log("==========================================");
         console.log("KpkSharesDeployer deployed at:", address(sharesDeployer));
-        console.log("KpkSharesFactory deployed at: ", address(factory));
+        console.log("KpkOivFactory deployed at: ", address(factory));
         console.log("Owner:             ", owner);
         console.log("SafeProxyFactory:  ", factory.safeProxyFactory());
         console.log("SafeSingleton:     ", factory.safeSingleton());

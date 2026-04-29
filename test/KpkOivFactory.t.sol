@@ -3,16 +3,16 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {KpkSharesFactory} from "src/KpkSharesFactory.sol";
+import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 
-/// @notice Fork tests for KpkSharesFactory against mainnet Safe and Zodiac contracts.
-///         Run with: forge test --match-contract KpkSharesFactoryTest --fork-url $MAINNET_URL -vvv
-contract KpkSharesFactoryTest is Test {
+/// @notice Fork tests for KpkOivFactory against mainnet Safe and Zodiac contracts.
+///         Run with: forge test --match-contract KpkOivFactoryTest --fork-url $MAINNET_URL -vvv
+contract KpkOivFactoryTest is Test {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
@@ -36,9 +36,9 @@ contract KpkSharesFactoryTest is Test {
 
     // ── Contracts under test ────────────────────────────────────────────────────
 
-    KpkSharesFactory factory;
+    KpkOivFactory factory;
 
-    KpkSharesFactory.OivConfig oivConfig;
+    KpkOivFactory.OivConfig oivConfig;
 
     // ── Setup ───────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ contract KpkSharesFactoryTest is Test {
 
         KpkSharesDeployer sharesDeployer = new KpkSharesDeployer();
 
-        factory = new KpkSharesFactory(
+        factory = new KpkOivFactory(
             factoryOwner,
             SAFE_PROXY_FACTORY,
             SAFE_SINGLETON,
@@ -64,7 +64,7 @@ contract KpkSharesFactoryTest is Test {
     // ── deployOiv tests ────────────────────────────────────────────────────────
 
     function test_deployOiv_deploysAllSixContracts() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(inst.avatarSafe != address(0), "avatarSafe not deployed");
         assertTrue(inst.managerSafe != address(0), "managerSafe not deployed");
@@ -75,7 +75,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_avatarSafe_hasExecModifierAsModule() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(
             ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier),
@@ -84,7 +84,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_avatarSafe_ownerIsEmptyContract() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         address[] memory owners = ISafe(inst.avatarSafe).getOwners();
         assertEq(owners.length, 1, "avatarSafe should have exactly one owner");
@@ -92,7 +92,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_factory_isNotModuleOfAvatarSafeAfterDeploy() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertFalse(
             ISafe(inst.avatarSafe).isModuleEnabled(address(factory)), "factory should not remain a module of avatarSafe"
@@ -100,7 +100,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_managerSafe_hasManagerModifierAsModule() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(
             ISafe(inst.managerSafe).isModuleEnabled(inst.managerRolesModifier),
@@ -109,37 +109,37 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_execModifier_avatarIsAvatarSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "execMod avatar mismatch");
     }
 
     function test_execModifier_targetIsAvatarSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.execRolesModifier).target(), inst.avatarSafe, "execMod target mismatch");
     }
 
     function test_subModifier_avatarIsAvatarSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.subRolesModifier).avatar(), inst.avatarSafe, "subMod avatar mismatch");
     }
 
     function test_subModifier_targetIsExecModifier() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.subRolesModifier).target(), inst.execRolesModifier, "subMod target mismatch");
     }
 
     function test_managerModifier_avatarIsManagerSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.managerRolesModifier).avatar(), inst.managerSafe, "managerMod avatar mismatch");
     }
 
     function test_managerModifier_targetIsManagerSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.managerRolesModifier).target(), inst.managerSafe, "managerMod target mismatch");
     }
@@ -149,7 +149,7 @@ contract KpkSharesFactoryTest is Test {
     ///      first scopes a target and allows a function for the MANAGER role, then managerSafe
     ///      calls execTransactionWithRole — which succeeds only if managerSafe holds MANAGER.
     function test_execModifier_managerSafeHasManagerRole() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         bytes32 managerRole = bytes32("MANAGER");
         // Scope USDC and allow approve() for the MANAGER role — approving 0 always succeeds.
@@ -169,7 +169,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_execModifier_hasSubModifierAsNestedModule() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(
             IRoles(inst.execRolesModifier).isModuleEnabled(inst.subRolesModifier),
@@ -178,31 +178,31 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_execModifier_ownerIsAdmin() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.execRolesModifier).owner(), admin, "execMod owner is not admin");
     }
 
     function test_subModifier_ownerIsManagerSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.subRolesModifier).owner(), inst.managerSafe, "subMod owner is not managerSafe");
     }
 
     function test_managerModifier_ownerIsManagerSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(IRoles(inst.managerRolesModifier).owner(), inst.managerSafe, "managerMod owner is not managerSafe");
     }
 
     function test_sharesProxy_portfolioSafeIsAvatarSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(KpkShares(inst.kpkSharesProxy).portfolioSafe(), inst.avatarSafe, "portfolioSafe mismatch");
     }
 
     function test_sharesProxy_adminHasDefaultAdminRole() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
         assertTrue(shares.hasRole(0x00, admin), "admin does not have DEFAULT_ADMIN_ROLE");
@@ -212,10 +212,10 @@ contract KpkSharesFactoryTest is Test {
     ///      the exec Roles Modifier owner and DEFAULT_ADMIN_ROLE on the shares proxy.
     function test_deployOiv_adminArgControlsBothExecModOwnerAndSharesAdmin() public {
         address customAdmin = makeAddr("customAdmin");
-        KpkSharesFactory.OivConfig memory cfg = _buildOivConfig();
+        KpkOivFactory.OivConfig memory cfg = _buildOivConfig();
         cfg.admin = customAdmin;
 
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(cfg);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(cfg);
 
         assertEq(IRoles(inst.execRolesModifier).owner(), customAdmin, "execMod owner must equal admin arg");
         assertTrue(
@@ -229,21 +229,21 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_sharesProxy_operatorIsManagerSafe() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
         assertTrue(shares.hasRole(keccak256("OPERATOR"), inst.managerSafe), "managerSafe does not have OPERATOR role");
     }
 
     function test_sharesProxy_factoryHasNoAdminRole() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
         assertFalse(shares.hasRole(0x00, address(factory)), "factory still has DEFAULT_ADMIN_ROLE");
     }
 
     function test_sharesProxy_baseAssetHasInfiniteAllowance() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertEq(
             IERC20(USDC).allowance(inst.avatarSafe, inst.kpkSharesProxy),
@@ -253,7 +253,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_sharesProxy_cannotReinitialize() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         vm.expectRevert();
         KpkShares(inst.kpkSharesProxy).initialize(oivConfig.sharesParams);
@@ -266,7 +266,7 @@ contract KpkSharesFactoryTest is Test {
         assertEq(factory.instanceCount(), 1);
 
         // Deploy a second fund with a different salt to avoid CREATE2 collisions.
-        KpkSharesFactory.OivConfig memory cfg2 = _buildOivConfig();
+        KpkOivFactory.OivConfig memory cfg2 = _buildOivConfig();
         cfg2.salt = 999;
 
         factory.deployOiv(cfg2);
@@ -275,19 +275,19 @@ contract KpkSharesFactoryTest is Test {
 
     function test_deployOiv_revertsOnZeroAdmin() public {
         oivConfig.admin = address(0);
-        vm.expectRevert(KpkSharesFactory.ZeroAddress.selector);
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
         factory.deployOiv(oivConfig);
     }
 
     function test_deployOiv_revertsOnEmptyManagerOwners() public {
         oivConfig.managerSafe.owners = new address[](0);
-        vm.expectRevert(KpkSharesFactory.EmptyOwners.selector);
+        vm.expectRevert(KpkOivFactory.EmptyOwners.selector);
         factory.deployOiv(oivConfig);
     }
 
     function test_deployOiv_revertsOnInvalidThreshold() public {
         oivConfig.managerSafe.threshold = 5; // more than 1 owner
-        vm.expectRevert(KpkSharesFactory.InvalidThreshold.selector);
+        vm.expectRevert(KpkOivFactory.InvalidThreshold.selector);
         factory.deployOiv(oivConfig);
     }
 
@@ -295,14 +295,14 @@ contract KpkSharesFactoryTest is Test {
         // Make USDC.approve revert so that the Avatar Safe's execTransactionFromModule
         // returns false when the factory tries to grant the shares proxy its allowance.
         vm.mockCallRevert(USDC, abi.encodeWithSelector(IERC20.approve.selector), "");
-        vm.expectRevert("KpkSharesFactory: approve module call failed");
+        vm.expectRevert("KpkOivFactory: approve module call failed");
         factory.deployOiv(oivConfig);
     }
 
     // ── deployStack tests ───────────────────────────────────────────────────────
 
     function test_deployStack_deploysFiveContracts() public {
-        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
 
         assertTrue(inst.avatarSafe != address(0), "avatarSafe not deployed");
         assertTrue(inst.managerSafe != address(0), "managerSafe not deployed");
@@ -312,7 +312,7 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_deployStack_avatarSafe_ownerIsEmptyContract() public {
-        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
 
         address[] memory owners = ISafe(inst.avatarSafe).getOwners();
         assertEq(owners.length, 1, "avatarSafe should have exactly one owner");
@@ -320,9 +320,9 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_deployStack_wiringMatchesDeployFund() public {
-        KpkSharesFactory.StackConfig memory stackCfg = _buildStackConfig();
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
 
-        KpkSharesFactory.StackInstance memory inst = factory.deployStack(stackCfg);
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(stackCfg);
 
         assertTrue(ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier), "execMod not module of avatarSafe");
         assertTrue(
@@ -340,9 +340,9 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function test_deployStack_sameSaltProducesSameAddresses() public {
-        KpkSharesFactory.StackConfig memory cfg = _buildStackConfig();
+        KpkOivFactory.StackConfig memory cfg = _buildStackConfig();
 
-        KpkSharesFactory.StackInstance memory inst1 = factory.deployStack(cfg);
+        KpkOivFactory.StackInstance memory inst1 = factory.deployStack(cfg);
 
         // Deploying again with the same salt must revert (CREATE2 collision).
         vm.prank(factoryOwner);
@@ -351,7 +351,7 @@ contract KpkSharesFactoryTest is Test {
 
         // A different salt produces different addresses.
         cfg.salt = 999;
-        KpkSharesFactory.StackInstance memory inst2 = factory.deployStack(cfg);
+        KpkOivFactory.StackInstance memory inst2 = factory.deployStack(cfg);
 
         assertTrue(inst1.avatarSafe != inst2.avatarSafe, "same avatarSafe address with different salt");
         assertTrue(inst1.execRolesModifier != inst2.execRolesModifier, "same execMod address with different salt");
@@ -363,7 +363,7 @@ contract KpkSharesFactoryTest is Test {
         factory.deployStack(_buildStackConfig());
         assertEq(factory.stackCount(), 1);
 
-        KpkSharesFactory.StackConfig memory cfg2 = _buildStackConfig();
+        KpkOivFactory.StackConfig memory cfg2 = _buildStackConfig();
         cfg2.salt = 999;
         factory.deployStack(cfg2);
         assertEq(factory.stackCount(), 2);
@@ -374,7 +374,7 @@ contract KpkSharesFactoryTest is Test {
     function test_deployOiv_isPermissionless() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(inst.kpkSharesProxy != address(0), "stranger could not deploy OIV");
     }
@@ -382,7 +382,7 @@ contract KpkSharesFactoryTest is Test {
     function test_deployStack_isPermissionless() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        KpkSharesFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(_buildStackConfig());
 
         assertTrue(inst.avatarSafe != address(0), "stranger could not deploy stack");
     }
@@ -393,7 +393,7 @@ contract KpkSharesFactoryTest is Test {
     ///      subscription request, and the request sits pending for the operator.
     ///      Verifies the full path from factory deployment to investor interaction.
     function test_integration_firstUsdcSubscriptionRequest() public {
-        KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
         address investor = makeAddr("investor");
@@ -434,25 +434,25 @@ contract KpkSharesFactoryTest is Test {
 
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
-    function _buildStackConfig() internal view returns (KpkSharesFactory.StackConfig memory cfg) {
+    function _buildStackConfig() internal view returns (KpkOivFactory.StackConfig memory cfg) {
         address[] memory managerOwners = new address[](1);
         managerOwners[0] = managerSigner;
 
-        cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1});
-        cfg.execRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: securityCouncil});
-        cfg.subRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: address(0)});
-        cfg.managerRolesMod = KpkSharesFactory.RolesModifierConfig({finalOwner: address(0)});
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: managerOwners, threshold: 1});
+        cfg.execRolesMod = KpkOivFactory.RolesModifierConfig({finalOwner: securityCouncil});
+        cfg.subRolesMod = KpkOivFactory.RolesModifierConfig({finalOwner: address(0)});
+        cfg.managerRolesMod = KpkOivFactory.RolesModifierConfig({finalOwner: address(0)});
         cfg.salt = 42;
     }
 
-    function _buildOivConfig() internal view returns (KpkSharesFactory.OivConfig memory cfg) {
+    function _buildOivConfig() internal view returns (KpkOivFactory.OivConfig memory cfg) {
         address[] memory managerOwners = new address[](1);
         managerOwners[0] = managerSigner;
 
-        cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1});
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: managerOwners, threshold: 1});
         cfg.salt = 42;
         cfg.admin = admin;
-        cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({
             asset: USDC,
             admin: address(0), // ignored — overridden by cfg.admin
@@ -470,8 +470,8 @@ contract KpkSharesFactoryTest is Test {
     }
 }
 
-/// @notice Exposes internal KpkSharesFactory functions for unit testing.
-contract KpkSharesFactoryHarness is KpkSharesFactory {
+/// @notice Exposes internal KpkOivFactory functions for unit testing.
+contract KpkOivFactoryHarness is KpkOivFactory {
     constructor(
         address owner,
         address safeProxyFactory,
@@ -482,7 +482,7 @@ contract KpkSharesFactoryHarness is KpkSharesFactory {
         address rolesModifierMastercopy,
         address kpkSharesDeployer
     )
-        KpkSharesFactory(
+        KpkOivFactory(
             owner,
             safeProxyFactory,
             safeSingleton,
@@ -503,13 +503,13 @@ contract KpkSharesFactoryHarness is KpkSharesFactory {
             .execTransactionFromModule(
                 avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(this))), 0
             );
-        require(moduleDisabled, "KpkSharesFactory: failed to disable module");
+        require(moduleDisabled, "KpkOivFactory: failed to disable module");
     }
 }
 
 /// @notice Pure unit tests for the execTransactionFromModule return-value checks.
 ///         No fork required — uses vm.mockCall to simulate Safe responses.
-contract KpkSharesFactoryUnitTest is Test {
+contract KpkOivFactoryUnitTest is Test {
     // Safe v1.4.1 — addresses kept so harness constructor is valid; not called in unit tests.
     address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
     address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
@@ -518,11 +518,11 @@ contract KpkSharesFactoryUnitTest is Test {
     address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
     address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
 
-    KpkSharesFactoryHarness harness;
+    KpkOivFactoryHarness harness;
 
     function setUp() public {
         KpkSharesDeployer deployer = new KpkSharesDeployer();
-        harness = new KpkSharesFactoryHarness(
+        harness = new KpkOivFactoryHarness(
             address(this),
             SAFE_PROXY_FACTORY,
             SAFE_SINGLETON,
@@ -548,7 +548,7 @@ contract KpkSharesFactoryUnitTest is Test {
             abi.encode(false)
         );
 
-        vm.expectRevert("KpkSharesFactory: approve module call failed");
+        vm.expectRevert("KpkOivFactory: approve module call failed");
         harness.exposed_execApprove(mockSafe, mockToken, spender);
     }
 
@@ -564,7 +564,7 @@ contract KpkSharesFactoryUnitTest is Test {
             abi.encode(false)
         );
 
-        vm.expectRevert("KpkSharesFactory: failed to disable module");
+        vm.expectRevert("KpkOivFactory: failed to disable module");
         harness.exposed_disableFactoryModule(mockSafe);
     }
 }
