@@ -152,13 +152,17 @@ contract KpkSharesFactory is Ownable {
 
     /// @notice Full configuration for a fund deployment (stack + KpkShares proxy).
     struct OivConfig {
-        /// @notice Operational stack configuration — see StackConfig.
-        StackConfig stack;
+        /// @notice Signer configuration for the Manager Safe.
+        SafeConfig managerSafe;
+        /// @notice Base salt that deterministically controls all five deployment addresses.
+        ///         The same salt on the same factory yields identical addresses on every chain.
+        uint256 salt;
+        /// @notice Address that receives ownership of the exec Roles Modifier and
+        ///         `DEFAULT_ADMIN_ROLE` on the KpkShares proxy. Must not be zero.
+        address admin;
         /// @notice KpkShares initialization parameters.
         ///         `sharesParams.safe` is overridden with the deployed Avatar Safe address.
-        ///         `sharesParams.admin` is temporarily overridden with `address(this)` so the
-        ///         factory can grant roles, after which the real admin is granted and the factory
-        ///         renounces.
+        ///         `sharesParams.admin` is ignored — the top-level `admin` field is used instead.
         KpkShares.ConstructorParams sharesParams;
         /// @notice Additional assets to register on the KpkShares proxy beyond the base asset.
         ///         The factory temporarily holds OPERATOR to call `updateAsset`, then revokes it.
@@ -391,16 +395,26 @@ contract KpkSharesFactory is Ownable {
     ///         itself (SENTINEL → factory → execMod) before returning.
     ///         Reverts if `config` fails validation (see `_validateOivConfig`).
     ///         The returned `OivInstance` is also stored in `instances[instanceCount - 1]`.
-    /// @param  config   Fund deployment parameters.
+    /// @param  config   Fund deployment parameters. `config.admin` is used as both the exec
+    ///                  Roles Modifier owner and the `DEFAULT_ADMIN_ROLE` holder on KpkShares.
     /// @return instance Addresses of the seven deployed contracts.
     function deployOiv(OivConfig calldata config) external returns (OivInstance memory instance) {
         _validateOivConfig(config);
 
-        // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
-        StackInstance memory stack = _deployAndWireStack(config.stack, true);
+        StackConfig memory stackConfig = StackConfig({
+            managerSafe: config.managerSafe,
+            execRolesMod: RolesModifierConfig({finalOwner: config.admin}),
+            subRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+            managerRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+            salt: config.salt
+        });
 
-        (address sharesImpl, address sharesProxy) =
-            _deploySharesProxy(config.sharesParams, stack.managerSafe, stack.avatarSafe, config.additionalAssets);
+        // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
+        StackInstance memory stack = _deployAndWireStack(stackConfig, true);
+
+        (address sharesImpl, address sharesProxy) = _deploySharesProxy(
+            config.sharesParams, stack.managerSafe, stack.avatarSafe, config.admin, config.additionalAssets
+        );
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
@@ -437,7 +451,7 @@ contract KpkSharesFactory is Ownable {
     /// @param config                    Stack deployment parameters.
     /// @param includeFactoryAsAvatarModule Whether to include the factory as a temporary module.
     /// @return inst                     Addresses of the five deployed contracts.
-    function _deployAndWireStack(StackConfig calldata config, bool includeFactoryAsAvatarModule)
+    function _deployAndWireStack(StackConfig memory config, bool includeFactoryAsAvatarModule)
         internal
         returns (StackInstance memory inst)
     {
@@ -619,6 +633,7 @@ contract KpkSharesFactory is Ownable {
     ///                         overridden by the factory before calling `initialize`).
     /// @param operator         Address that receives the OPERATOR role (Manager Safe).
     /// @param avatarSafe       Avatar Safe address — overrides `params.safe`.
+    /// @param finalAdmin       Address that receives DEFAULT_ADMIN_ROLE — overrides `params.admin`.
     /// @param additionalAssets Additional assets to register via `updateAsset`.
     /// @return impl  Address of the newly deployed KpkShares implementation.
     /// @return proxy Address of the ERC-1967 proxy (the fund's shares token).
@@ -626,10 +641,10 @@ contract KpkSharesFactory is Ownable {
         KpkShares.ConstructorParams memory params,
         address operator,
         address avatarSafe,
+        address finalAdmin,
         AssetConfig[] calldata additionalAssets
     ) internal returns (address impl, address proxy) {
         impl = IKpkSharesDeployer(kpkSharesDeployer).deploy();
-        address finalAdmin = params.admin;
         params.safe = avatarSafe;
         params.admin = address(this);
 
@@ -701,13 +716,17 @@ contract KpkSharesFactory is Ownable {
         if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
     }
 
-    /// @dev Validates a `OivConfig` before deployment.
-    ///      Runs all `StackConfig` checks first, then additionally reverts with `ZeroAddress`
-    ///      if `sharesParams.admin`, `sharesParams.asset`, or any `additionalAssets[i].asset`
-    ///      is zero.
+    /// @dev Validates an `OivConfig` before deployment.
+    ///      Reverts with `EmptyOwners`      if `managerSafe.owners` is empty.
+    ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
+    ///      Reverts with `ZeroAddress`      if `admin`, `sharesParams.asset`, or any
+    ///                                      `additionalAssets[i].asset` is zero.
     function _validateOivConfig(OivConfig calldata config) internal pure {
-        _validateStackConfig(config.stack);
-        if (config.sharesParams.admin == address(0)) revert ZeroAddress();
+        if (config.managerSafe.owners.length == 0) revert EmptyOwners();
+        if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
+            revert InvalidThreshold();
+        }
+        if (config.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
         for (uint256 i = 0; i < config.additionalAssets.length; i++) {
             if (config.additionalAssets[i].asset == address(0)) revert ZeroAddress();

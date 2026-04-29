@@ -53,8 +53,8 @@ Runs `deployStack` first, then deploys and wires a `KpkShares` UUPS proxy. Typic
 
 | Field | Description |
 |---|---|
+| `admin` | Receives ownership of the exec Roles Modifier **and** `DEFAULT_ADMIN_ROLE` on the shares proxy. Must not be zero |
 | `sharesParams.asset` | Base ERC-20 for subscriptions and redemptions. Must not be zero |
-| `sharesParams.admin` | Receives `DEFAULT_ADMIN_ROLE` on the shares proxy. Must not be zero |
 | `sharesParams.name` / `symbol` | ERC-20 name and symbol for the shares token |
 | `sharesParams.subscriptionRequestTtl` | Min seconds before an investor can cancel a pending subscription (max 7 days) |
 | `sharesParams.redemptionRequestTtl` | Min seconds before an investor can cancel a pending redemption (max 7 days) |
@@ -65,7 +65,7 @@ Runs `deployStack` first, then deploys and wires a `KpkShares` UUPS proxy. Typic
 | `sharesParams.performanceFeeRate` | Performance fee in basis points (max 2000 = 20%) |
 | `additionalAssets[]` | Extra ERC-20s to enable for deposits or redemptions (pass empty array if none) |
 
-`sharesParams.safe` is **ignored** — the factory overwrites it with the deployed Avatar Safe address.
+`sharesParams.admin` and `sharesParams.safe` are both **ignored** — overridden by `admin` and the deployed Avatar Safe address respectively.
 
 The following are **wired automatically** and require no input:
 - Manager Safe receives `OPERATOR` on the shares proxy
@@ -237,7 +237,15 @@ Single value that determines all five deployment addresses. See [Salt derivation
 
 ## `deployOiv` input: `OivConfig`
 
-`OivConfig` embeds a `StackConfig stack` (all fields above) plus the following shares-specific fields.
+`OivConfig` includes the same `managerSafe` and `salt` fields as `StackConfig`, plus the following.
+
+### `admin` — `address`
+
+Single address that receives **both**:
+- Ownership of the exec Roles Modifier (equivalent to `execRolesMod.finalOwner` in `deployStack`)
+- `DEFAULT_ADMIN_ROLE` on the KpkShares proxy
+
+Must not be zero.
 
 ### `sharesParams` — `KpkShares.ConstructorParams`
 
@@ -246,10 +254,10 @@ Initialization parameters for the `KpkShares` UUPS proxy.
 | Field                    | Description                                                          |
 |--------------------------|----------------------------------------------------------------------|
 | `asset`                  | Base ERC20 asset. Registered with deposit and redemption enabled. The Avatar Safe grants infinite allowance to the proxy for this asset |
-| `admin`                  | Address granted `DEFAULT_ADMIN_ROLE`. The factory holds it temporarily, then grants it here and renounces |
+| `admin`                  | **Ignored** — use the top-level `admin` field instead               |
 | `name`                   | ERC20 token name for the shares                                      |
 | `symbol`                 | ERC20 token symbol for the shares                                    |
-| `safe`                   | **Overridden by the factory** with the deployed `avatarSafe` address — any value supplied is ignored |
+| `safe`                   | **Ignored** — overridden with the deployed `avatarSafe` address     |
 | `subscriptionRequestTtl` | Minimum time (seconds) before an investor can cancel a pending subscription. Capped at 7 days |
 | `redemptionRequestTtl`   | Minimum time (seconds) before an investor can cancel a pending redemption. Capped at 7 days |
 | `feeReceiver`            | Address receiving management fees (minted shares), redemption fees (transferred shares), and performance fees (minted shares) |
@@ -350,6 +358,6 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 `deployOiv` additionally reverts if:
 
-- `sharesParams.admin` is `address(0)` (`ZeroAddress`)
+- `admin` is `address(0)` (`ZeroAddress`)
 - `sharesParams.asset` is `address(0)` (`ZeroAddress`)
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)

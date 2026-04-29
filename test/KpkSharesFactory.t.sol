@@ -31,7 +31,7 @@ contract KpkSharesFactoryTest is Test {
     address factoryOwner = makeAddr("factoryOwner");
     address securityCouncil = makeAddr("securityCouncil");
     address managerSigner = makeAddr("managerSigner");
-    address sharesAdmin = makeAddr("sharesAdmin");
+    address admin = makeAddr("admin");
     address feeReceiver = makeAddr("feeReceiver");
 
     // ── Contracts under test ────────────────────────────────────────────────────
@@ -155,7 +155,7 @@ contract KpkSharesFactoryTest is Test {
         // Scope USDC and allow approve() for the MANAGER role — approving 0 always succeeds.
         bytes4 selector = IERC20.approve.selector;
 
-        vm.startPrank(securityCouncil);
+        vm.startPrank(admin);
         IRoles(inst.execRolesModifier).scopeTarget(managerRole, USDC);
         IRoles(inst.execRolesModifier).allowFunction(managerRole, USDC, selector, 0);
         vm.stopPrank();
@@ -177,10 +177,10 @@ contract KpkSharesFactoryTest is Test {
         );
     }
 
-    function test_execModifier_ownerIsSecurityCouncil() public {
+    function test_execModifier_ownerIsAdmin() public {
         KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
-        assertEq(IRoles(inst.execRolesModifier).owner(), securityCouncil, "execMod owner is not securityCouncil");
+        assertEq(IRoles(inst.execRolesModifier).owner(), admin, "execMod owner is not admin");
     }
 
     function test_subModifier_ownerIsManagerSafe() public {
@@ -201,11 +201,11 @@ contract KpkSharesFactoryTest is Test {
         assertEq(KpkShares(inst.kpkSharesProxy).portfolioSafe(), inst.avatarSafe, "portfolioSafe mismatch");
     }
 
-    function test_sharesProxy_adminIsSharesAdmin() public {
+    function test_sharesProxy_adminHasDefaultAdminRole() public {
         KpkSharesFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
-        assertTrue(shares.hasRole(0x00, sharesAdmin), "sharesAdmin does not have DEFAULT_ADMIN_ROLE");
+        assertTrue(shares.hasRole(0x00, admin), "admin does not have DEFAULT_ADMIN_ROLE");
     }
 
     function test_sharesProxy_operatorIsManagerSafe() public {
@@ -247,29 +247,26 @@ contract KpkSharesFactoryTest is Test {
 
         // Deploy a second fund with a different salt to avoid CREATE2 collisions.
         KpkSharesFactory.OivConfig memory cfg2 = _buildOivConfig();
-        cfg2.stack.salt = 999;
+        cfg2.salt = 999;
 
         factory.deployOiv(cfg2);
         assertEq(factory.instanceCount(), 2);
     }
 
-    function test_deployOiv_revertsOnZeroExecModOwner() public {
-        oivConfig.stack.execRolesMod.finalOwner = address(0);
-        vm.prank(factoryOwner);
+    function test_deployOiv_revertsOnZeroAdmin() public {
+        oivConfig.admin = address(0);
         vm.expectRevert(KpkSharesFactory.ZeroAddress.selector);
         factory.deployOiv(oivConfig);
     }
 
     function test_deployOiv_revertsOnEmptyManagerOwners() public {
-        oivConfig.stack.managerSafe.owners = new address[](0);
-        vm.prank(factoryOwner);
+        oivConfig.managerSafe.owners = new address[](0);
         vm.expectRevert(KpkSharesFactory.EmptyOwners.selector);
         factory.deployOiv(oivConfig);
     }
 
     function test_deployOiv_revertsOnInvalidThreshold() public {
-        oivConfig.stack.managerSafe.threshold = 5; // more than 1 owner
-        vm.prank(factoryOwner);
+        oivConfig.managerSafe.threshold = 5; // more than 1 owner
         vm.expectRevert(KpkSharesFactory.InvalidThreshold.selector);
         factory.deployOiv(oivConfig);
     }
@@ -429,14 +426,19 @@ contract KpkSharesFactoryTest is Test {
     }
 
     function _buildOivConfig() internal view returns (KpkSharesFactory.OivConfig memory cfg) {
-        cfg.stack = _buildStackConfig();
+        address[] memory managerOwners = new address[](1);
+        managerOwners[0] = managerSigner;
+
+        cfg.managerSafe = KpkSharesFactory.SafeConfig({owners: managerOwners, threshold: 1});
+        cfg.salt = 42;
+        cfg.admin = admin;
         cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({
             asset: USDC,
-            admin: sharesAdmin,
+            admin: address(0), // ignored — overridden by cfg.admin
             name: "Test Fund Shares",
             symbol: "kTEST",
-            safe: address(0), // overridden by factory
+            safe: address(0), // ignored — overridden by factory
             subscriptionRequestTtl: 1 days,
             redemptionRequestTtl: 1 days,
             feeReceiver: feeReceiver,
