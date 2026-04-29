@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkShares} from "./kpkShares.sol";
@@ -43,7 +44,7 @@ interface IKpkSharesDeployer {
 ///         A single `salt` in `StackConfig` drives all five CREATE2 deployments, guaranteeing
 ///         identical contract addresses across chains when the factory is deployed at the same
 ///         address with the same constructor arguments.
-contract KpkOivFactory is Ownable {
+contract KpkOivFactory is Ownable, ReentrancyGuard {
     // ── Role keys ─────────────────────────────────────────────────────────────
 
     /// @dev keccak256("OPERATOR") — role key used by KpkShares to gate process/asset functions.
@@ -369,12 +370,19 @@ contract KpkOivFactory is Ownable {
     ///         The returned `StackInstance` is also stored in `stacks[stackCount - 1]`.
     /// @param  config   Stack deployment parameters.
     /// @return instance Addresses of the five deployed contracts.
-    function deployStack(StackConfig calldata config) external returns (StackInstance memory instance) {
+    function deployStack(StackConfig calldata config)
+        external
+        nonReentrant
+        returns (StackInstance memory instance)
+    {
         _validateStackConfig(config);
+
+        // Reserve the registry ID before any external calls (CEI) — defends against any
+        // future callback path that might re-enter the factory and shift indices.
+        uint256 id = stackCount++;
 
         instance = _deployAndWireStack(config, false);
 
-        uint256 id = stackCount++;
         stacks[id] = instance;
         emit StackDeployed(id, instance);
     }
@@ -398,8 +406,13 @@ contract KpkOivFactory is Ownable {
     /// @param  config   Fund deployment parameters. `config.admin` is used as both the exec
     ///                  Roles Modifier owner and the `DEFAULT_ADMIN_ROLE` holder on KpkShares.
     /// @return instance Addresses of the seven deployed contracts.
-    function deployOiv(OivConfig calldata config) external returns (OivInstance memory instance) {
+    function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         _validateOivConfig(config);
+
+        // Reserve the registry ID before any external calls (CEI). Combined with `nonReentrant`,
+        // this makes ID assignment immune to attacker-controlled ERC-20 callbacks that fire
+        // during `KpkShares.updateAsset` / `Avatar.execTransactionFromModule(approve)`.
+        uint256 id = instanceCount++;
 
         StackConfig memory stackConfig = StackConfig({
             managerSafe: config.managerSafe,
@@ -436,7 +449,6 @@ contract KpkOivFactory is Ownable {
             kpkSharesProxy: sharesProxy
         });
 
-        uint256 id = instanceCount++;
         instances[id] = instance;
         emit OivDeployed(id, instance);
     }
