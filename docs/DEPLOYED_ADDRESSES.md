@@ -37,7 +37,7 @@ The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches 
 | Ethereum Mainnet | 1 | ⏳ pending |
 | Optimism | 10 | ✅ deployed |
 | Gnosis | 100 | ✅ deployed |
-| Base | 8453 | ⏳ pending |
+| Base | 8453 | ✅ deployed |
 | Arbitrum | 42161 | ⏳ pending |
 
 Each per-chain entry below is filled in as the deploy lands on that chain.
@@ -92,7 +92,25 @@ Independent on-chain verification (post-deploy):
 
 ### Base (chainId `8453`)
 
-_pending_
+| Component | Address |
+|---|---|
+| `KpkOivFactory` | [`0x0d94255fdE65D302616b02A2F070CdB21190d420`](https://basescan.org/address/0x0d94255fdE65D302616b02A2F070CdB21190d420) |
+| `KpkSharesDeployer` | [`0xA4B485Efe30F2b1D277b7A2279310239B26775F0`](https://basescan.org/address/0xA4B485Efe30F2b1D277b7A2279310239B26775F0) |
+| Owner (final) | [`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`](https://basescan.org/address/0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537) (OIV Safe) |
+
+Deployed in block [`45358023`](https://basescan.org/block/45358023). Transactions:
+
+| Step | Tx hash |
+|---|---|
+| Factory CREATE2 deploy | [`0x21b9fd03ae9d8c2b1865464e615163e54c035e2a18cac7ad6e8891b962fc79bf`](https://basescan.org/tx/0x21b9fd03ae9d8c2b1865464e615163e54c035e2a18cac7ad6e8891b962fc79bf) |
+| Deployer CREATE2 deploy | [`0x1e6c9efd6c506fa19ecdba60458285059b71bcd150e94468fe7e6d8cff93c51a`](https://basescan.org/tx/0x1e6c9efd6c506fa19ecdba60458285059b71bcd150e94468fe7e6d8cff93c51a) |
+| `setKpkSharesDeployer` | [`0x1042824163532c1f44d1fcd9c09c0e24a9637ee599c0e8da486e2e510884849e`](https://basescan.org/tx/0x1042824163532c1f44d1fcd9c09c0e24a9637ee599c0e8da486e2e510884849e) |
+| `transferOwnership` → OIV Safe | [`0x7bf3e24f79be3f3b19733b8e82212143d692db63d470559db0dc2ef3a6e2e237`](https://basescan.org/tx/0x7bf3e24f79be3f3b19733b8e82212143d692db63d470559db0dc2ef3a6e2e237) |
+
+Independent on-chain verification (post-deploy):
+- `factory.owner()` = OIV Safe ✓
+- `factory.kpkSharesDeployer()` = `0xA4B485Ef...75F0` ✓
+- `KpkSharesDeployer.factory()` = `0x0d94255f...d420` ✓
 
 ### Arbitrum One (chainId `42161`)
 
