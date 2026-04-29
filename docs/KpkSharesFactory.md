@@ -5,7 +5,7 @@
 Two entry points:
 
 - **`deployStack`** — deploys the five-contract operational stack (two Safes + three Roles Modifiers). Intended for multichain deployments; the same `salt` on the same factory produces identical addresses on every chain.
-- **`deployFund`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Typically called on mainnet only.
+- **`deployOiv`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Typically called on mainnet only.
 
 ---
 
@@ -43,7 +43,7 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
                                → every additional asset with canRedeem = true
 12. Remove factory as module from Avatar Safe
 
-── deployFund stops here ───────────────────────────────────────────────────
+── deployOiv stops here ───────────────────────────────────────────────────
 ```
 
 ### Salt derivation
@@ -68,14 +68,14 @@ Fixed at factory deployment and apply to every stack deployed through it.
 
 | Parameter                  | Description                                              |
 |----------------------------|----------------------------------------------------------|
-| `owner`                    | Address allowed to call `deployStack` and `deployFund`  |
+| `owner`                    | Address allowed to call `deployStack` and `deployOiv`  |
 | `safeProxyFactory`         | Gnosis `SafeProxyFactory` — deploys Safe proxies         |
 | `safeSingleton`            | Gnosis Safe singleton (implementation)                   |
 | `safeModuleSetup`          | Gnosis `SafeModuleSetup` — delegatecalled during `setup()` to pre-enable modules |
 | `safeFallbackHandler`      | Safe fallback handler set on every deployed Safe         |
 | `moduleProxyFactory`       | Zodiac `ModuleProxyFactory` — deploys Roles Modifier proxies |
 | `rolesModifierMastercopy`  | Zodiac Roles Modifier mastercopy all modifiers point to  |
-| `kpkSharesDeployer`        | `KpkSharesDeployer` contract — called once per `deployFund` to produce a fresh, isolated `KpkShares` implementation |
+| `kpkSharesDeployer`        | `KpkSharesDeployer` contract — called once per `deployOiv` to produce a fresh, isolated `KpkShares` implementation |
 
 All infrastructure addresses are owner-updatable after deployment via the corresponding `setXxx` setter functions.
 
@@ -128,9 +128,9 @@ Single value that determines all five deployment addresses. See [Salt derivation
 
 ---
 
-## `deployFund` input: `FundConfig`
+## `deployOiv` input: `OivConfig`
 
-`FundConfig` embeds a `StackConfig stack` (all fields above) plus the following shares-specific fields.
+`OivConfig` embeds a `StackConfig stack` (all fields above) plus the following shares-specific fields.
 
 ### `sharesParams` — `KpkShares.ConstructorParams`
 
@@ -212,7 +212,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 | Target   | `managerSafe`  |
 | Owner    | `managerSafe`  |
 
-### KpkShares Proxy (`deployFund` only)
+### KpkShares Proxy (`deployOiv` only)
 
 | Property                    | Value                                                                  |
 |-----------------------------|------------------------------------------------------------------------|
@@ -235,13 +235,13 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 ## Validation rules
 
-`deployStack` and `deployFund` revert on invalid `StackConfig`:
+`deployStack` and `deployOiv` revert on invalid `StackConfig`:
 
 - `managerSafe.owners` is empty (`EmptyOwners`)
 - `managerSafe.threshold == 0` or `threshold > owners.length` (`InvalidThreshold`)
 - `execRolesMod.finalOwner` is `address(0)` (`ZeroAddress`)
 
-`deployFund` additionally reverts if:
+`deployOiv` additionally reverts if:
 
 - `sharesParams.admin` is `address(0)` (`ZeroAddress`)
 - `sharesParams.asset` is `address(0)` (`ZeroAddress`)

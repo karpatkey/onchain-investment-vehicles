@@ -8,7 +8,7 @@ import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 /// @notice Deploys KpkSharesDeployer and KpkSharesFactory with hardcoded Safe v1.4.1
 ///         and Zodiac infrastructure addresses.
 ///         Infrastructure addresses can be updated by the owner post-deployment via the setter functions.
-///         Each fund deployed via deployFund() gets a fresh KpkShares implementation from KpkSharesDeployer.
+///         Each fund deployed via deployOiv() gets a fresh KpkShares implementation from KpkSharesDeployer.
 ///
 /// Usage (import key first with `cast wallet import $MAINNET_DEPLOYER_NAME --interactive`):
 ///

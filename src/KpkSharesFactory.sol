@@ -33,7 +33,7 @@ interface IKpkSharesDeployer {
 ///         - `deployStack` deploys only the five-contract operational stack (two Safes + three
 ///           Roles Modifiers) and is intended for multichain deployments where the same addresses
 ///           must exist on every chain.
-///         - `deployFund` additionally deploys a KpkShares UUPS proxy, grants infinite asset
+///         - `deployOiv` additionally deploys a KpkShares UUPS proxy, grants infinite asset
 ///           allowances from the Avatar Safe to the shares proxy, and wires the Manager Safe as
 ///           the shares operator. Typically called on mainnet only.
 ///
@@ -148,7 +148,7 @@ contract KpkSharesFactory is Ownable {
     }
 
     /// @notice Full configuration for a fund deployment (stack + KpkShares proxy).
-    struct FundConfig {
+    struct OivConfig {
         /// @notice Operational stack configuration — see StackConfig.
         StackConfig stack;
         /// @notice KpkShares initialization parameters.
@@ -176,8 +176,8 @@ contract KpkSharesFactory is Ownable {
         address managerRolesModifier;
     }
 
-    /// @notice Addresses of all seven contracts deployed by `deployFund`.
-    struct FundInstance {
+    /// @notice Addresses of all seven contracts deployed by `deployOiv`.
+    struct OivInstance {
         /// @notice Avatar Safe — holds fund assets; execution via Roles Modifiers only.
         address avatarSafe;
         /// @notice Manager Safe — operational multisig; also holds OPERATOR on KpkShares.
@@ -203,11 +203,11 @@ contract KpkSharesFactory is Ownable {
     /// @notice Stack instances indexed by their deployment order (0-based).
     mapping(uint256 => StackInstance) public stacks;
 
-    /// @notice Number of full fund instances deployed via `deployFund`.
+    /// @notice Number of full fund instances deployed via `deployOiv`.
     uint256 public instanceCount;
 
     /// @notice Fund instances indexed by their deployment order (0-based).
-    mapping(uint256 => FundInstance) public instances;
+    mapping(uint256 => OivInstance) public instances;
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
@@ -216,10 +216,10 @@ contract KpkSharesFactory is Ownable {
     /// @param instance  Addresses of all five deployed contracts.
     event StackDeployed(uint256 indexed stackId, StackInstance instance);
 
-    /// @notice Emitted when `deployFund` successfully deploys a full fund.
+    /// @notice Emitted when `deployOiv` successfully deploys a full fund.
     /// @param instanceId  Zero-based index of this fund in the `instances` mapping.
     /// @param instance    Addresses of all seven deployed contracts.
-    event FundDeployed(uint256 indexed instanceId, FundInstance instance);
+    event OivDeployed(uint256 indexed instanceId, OivInstance instance);
 
     /// @notice Emitted when the owner updates the Safe proxy factory address.
     event SafeProxyFactoryUpdated(address indexed newAddress);
@@ -259,7 +259,7 @@ contract KpkSharesFactory is Ownable {
     /// @dev    All six infrastructure addresses are validated to be non-zero. They can be
     ///         updated post-deployment by the owner via the corresponding setter functions.
     /// @param _owner                   Address that will own this factory and may call
-    ///                                 `deployStack`, `deployFund`, and the setters.
+    ///                                 `deployStack`, `deployOiv`, and the setters.
     /// @param _safeProxyFactory        Gnosis Safe v1.4.1 proxy factory.
     /// @param _safeSingleton           Gnosis Safe v1.4.1 singleton.
     /// @param _safeModuleSetup         Gnosis SafeModuleSetup utility contract.
@@ -384,12 +384,12 @@ contract KpkSharesFactory is Ownable {
     /// @dev    The factory is temporarily enabled as an additional module on the Avatar Safe so
     ///         it can call `execTransactionFromModule` for the approve transactions. It removes
     ///         itself (SENTINEL → factory → execMod) before returning.
-    ///         Reverts if `config` fails validation (see `_validateFundConfig`).
-    ///         The returned `FundInstance` is also stored in `instances[instanceCount - 1]`.
+    ///         Reverts if `config` fails validation (see `_validateOivConfig`).
+    ///         The returned `OivInstance` is also stored in `instances[instanceCount - 1]`.
     /// @param  config   Fund deployment parameters.
     /// @return instance Addresses of the seven deployed contracts.
-    function deployFund(FundConfig calldata config) external onlyOwner returns (FundInstance memory instance) {
-        _validateFundConfig(config);
+    function deployOiv(OivConfig calldata config) external onlyOwner returns (OivInstance memory instance) {
+        _validateOivConfig(config);
 
         // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
         StackInstance memory stack = _deployAndWireStack(config.stack, true);
@@ -406,7 +406,7 @@ contract KpkSharesFactory is Ownable {
                 stack.avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
             );
 
-        instance = FundInstance({
+        instance = OivInstance({
             avatarSafe: stack.avatarSafe,
             managerSafe: stack.managerSafe,
             execRolesModifier: stack.execRolesModifier,
@@ -418,7 +418,7 @@ contract KpkSharesFactory is Ownable {
 
         uint256 id = instanceCount++;
         instances[id] = instance;
-        emit FundDeployed(id, instance);
+        emit OivDeployed(id, instance);
     }
 
     // ── Internal: stack deployment ──────────────────────────────────────────────
@@ -694,11 +694,11 @@ contract KpkSharesFactory is Ownable {
         if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
     }
 
-    /// @dev Validates a `FundConfig` before deployment.
+    /// @dev Validates a `OivConfig` before deployment.
     ///      Runs all `StackConfig` checks first, then additionally reverts with `ZeroAddress`
     ///      if `sharesParams.admin`, `sharesParams.asset`, or any `additionalAssets[i].asset`
     ///      is zero.
-    function _validateFundConfig(FundConfig calldata config) internal pure {
+    function _validateOivConfig(OivConfig calldata config) internal pure {
         _validateStackConfig(config.stack);
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
