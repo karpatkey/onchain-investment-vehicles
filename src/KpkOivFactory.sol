@@ -261,6 +261,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Thrown when `SafeConfig.threshold` is zero or exceeds the owners count.
     error InvalidThreshold();
 
+    /// @notice Thrown when `OivConfig.additionalAssets` contains a duplicate entry, or an
+    ///         entry equal to `OivConfig.sharesParams.asset`.
+    error DuplicateAsset();
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
@@ -749,6 +753,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
     ///      Reverts with `ZeroAddress`      if `admin`, `sharesParams.asset`, or any
     ///                                      `additionalAssets[i].asset` is zero.
+    ///      Reverts with `DuplicateAsset`   if `additionalAssets` contains duplicates or any
+    ///                                      entry equals `sharesParams.asset` (the latter would
+    ///                                      silently clear the base asset's `isFeeModuleAsset`
+    ///                                      flag, disabling performance fees).
     function _validateOivConfig(OivConfig calldata config) internal pure {
         if (config.managerSafe.owners.length == 0) revert EmptyOwners();
         if (config.managerSafe.threshold == 0 || config.managerSafe.threshold > config.managerSafe.owners.length) {
@@ -756,8 +764,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         }
         if (config.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
-        for (uint256 i = 0; i < config.additionalAssets.length; i++) {
-            if (config.additionalAssets[i].asset == address(0)) revert ZeroAddress();
+
+        uint256 len = config.additionalAssets.length;
+        for (uint256 i = 0; i < len; i++) {
+            address asset = config.additionalAssets[i].asset;
+            if (asset == address(0)) revert ZeroAddress();
+            // Reject if the entry matches the base deposit asset — registering the base asset
+            // again via `updateAsset(_, isFeeModuleAsset=false, …)` would clear the flag set
+            // during `initialize`, silently disabling performance fees for the fund's lifetime.
+            if (asset == config.sharesParams.asset) revert DuplicateAsset();
+            // Reject duplicates within `additionalAssets`. Without this, a duplicate entry
+            // with `canRedeem=true` causes a second `approve(spender, max)` call which reverts
+            // on USDT-like tokens (non-zero → non-zero allowance), DoS'ing the entire deployment.
+            for (uint256 j = i + 1; j < len; j++) {
+                if (asset == config.additionalAssets[j].asset) revert DuplicateAsset();
+            }
         }
     }
 }

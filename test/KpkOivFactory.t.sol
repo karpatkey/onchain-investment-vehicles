@@ -307,6 +307,31 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    /// @dev M-06 / L-03: `additionalAssets` cannot include the base deposit asset, otherwise
+    ///      the second `updateAsset` call would clear `isFeeModuleAsset`, silently disabling
+    ///      performance fees.
+    function test_deployOiv_revertsWhenAdditionalAssetEqualsBaseAsset() public {
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: USDC, canDeposit: true, canRedeem: true});
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @dev M-06: duplicate `additionalAssets` entries are rejected — without this guard a
+    ///      duplicate with `canRedeem=true` would cause a second `approve(MAX)` call which
+    ///      reverts on USDT-like tokens, DoS'ing the entire deployment.
+    function test_deployOiv_revertsOnDuplicateAdditionalAsset() public {
+        address dummy = makeAddr("dummyToken");
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](2);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: dummy, canDeposit: true, canRedeem: false});
+        oivConfig.additionalAssets[1] =
+            KpkOivFactory.AssetConfig({asset: dummy, canDeposit: false, canRedeem: true});
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        factory.deployOiv(oivConfig);
+    }
+
     /// @dev L-01: KpkSharesDeployer.deploy() rejects callers other than the factory.
     function test_kpkSharesDeployer_deploy_revertsForNonFactoryCaller() public {
         KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));
