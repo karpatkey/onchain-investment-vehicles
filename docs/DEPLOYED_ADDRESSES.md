@@ -38,7 +38,7 @@ The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches 
 | Optimism | 10 | ✅ deployed |
 | Gnosis | 100 | ✅ deployed |
 | Base | 8453 | ✅ deployed |
-| Arbitrum | 42161 | ⏳ pending |
+| Arbitrum | 42161 | ✅ deployed |
 
 Each per-chain entry below is filled in as the deploy lands on that chain.
 
@@ -114,4 +114,22 @@ Independent on-chain verification (post-deploy):
 
 ### Arbitrum One (chainId `42161`)
 
-_pending_
+| Component | Address |
+|---|---|
+| `KpkOivFactory` | [`0x0d94255fdE65D302616b02A2F070CdB21190d420`](https://arbiscan.io/address/0x0d94255fdE65D302616b02A2F070CdB21190d420) |
+| `KpkSharesDeployer` | [`0xA4B485Efe30F2b1D277b7A2279310239B26775F0`](https://arbiscan.io/address/0xA4B485Efe30F2b1D277b7A2279310239B26775F0) |
+| Owner (final) | [`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`](https://arbiscan.io/address/0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537) (OIV Safe) |
+
+Deployed in blocks `457733433`-`457733445` (Arbitrum sequencer split the 4 txs across 4 sequential blocks). Transactions:
+
+| Step | Tx hash |
+|---|---|
+| Factory CREATE2 deploy | [`0x355ca8d5c0f8bd7cb3fb28342be0f22f30af122ec67bdbdb3439de1912e306b0`](https://arbiscan.io/tx/0x355ca8d5c0f8bd7cb3fb28342be0f22f30af122ec67bdbdb3439de1912e306b0) |
+| Deployer CREATE2 deploy | [`0x8b994fbf5a133e0e8802ea5672de9e99f69bc2ea9ae6a5c6421f91ec96e83a2a`](https://arbiscan.io/tx/0x8b994fbf5a133e0e8802ea5672de9e99f69bc2ea9ae6a5c6421f91ec96e83a2a) |
+| `setKpkSharesDeployer` | [`0xec16b7d01b9dc30d853ea722446d4302665e43f1dbe9586af66f070a0dbd7b12`](https://arbiscan.io/tx/0xec16b7d01b9dc30d853ea722446d4302665e43f1dbe9586af66f070a0dbd7b12) |
+| `transferOwnership` → OIV Safe | [`0x36e17f7f6f5ad1aad344c5eef9c922cae400e8e0a54da3ae14a96935a0a1b5eb`](https://arbiscan.io/tx/0x36e17f7f6f5ad1aad344c5eef9c922cae400e8e0a54da3ae14a96935a0a1b5eb) |
+
+Independent on-chain verification (post-deploy):
+- `factory.owner()` = OIV Safe ✓
+- `factory.kpkSharesDeployer()` = `0xA4B485Ef...75F0` ✓
+- `KpkSharesDeployer.factory()` = `0x0d94255f...d420` ✓
