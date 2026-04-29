@@ -287,6 +287,68 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    /// @dev Deterministic-CREATE2 deploy pattern: the factory may be constructed with
+    ///      `_kpkSharesDeployer == address(0)` so its CREATE2 init-code is independent of the
+    ///      (chicken-and-egg) deployer address. Until `setKpkSharesDeployer` wires it,
+    ///      `deployOiv` must revert cleanly. `deployStack` is unaffected — it does not touch
+    ///      `kpkSharesDeployer`.
+    function test_deployOiv_revertsWhenKpkSharesDeployerNotSet() public {
+        // Deploy a second factory with kpkSharesDeployer == address(0). No predicted-factory
+        // dance needed since we never call `deployOiv` against this factory while wired.
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0)
+        );
+
+        assertEq(unwired.kpkSharesDeployer(), address(0), "expected unwired factory");
+
+        vm.expectRevert(KpkOivFactory.KpkSharesDeployerNotSet.selector);
+        unwired.deployOiv(oivConfig);
+    }
+
+    /// @dev Companion to the above: once the owner wires the deployer, `deployOiv` works
+    ///      without further intervention. Exercises the full deploy-time wiring flow used
+    ///      by `script/DeployKpkOivFactory.s.sol`.
+    function test_deployOiv_succeedsAfterSetKpkSharesDeployer() public {
+        // Pre-compute the unwired factory's address so we can lock the deployer to it before
+        // either is deployed (mirrors the on-chain CREATE2 prediction we'll do in the script).
+        uint256 nextNonce = vm.getNonce(address(this));
+        address predictedUnwired = vm.computeCreateAddress(address(this), nextNonce + 1);
+
+        KpkSharesDeployer freshDeployer = new KpkSharesDeployer(predictedUnwired);
+
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0)
+        );
+        require(address(unwired) == predictedUnwired, "unwired factory address mismatch");
+
+        // Pre-wire reverts.
+        vm.expectRevert(KpkOivFactory.KpkSharesDeployerNotSet.selector);
+        unwired.deployOiv(oivConfig);
+
+        // Owner wires the deployer.
+        vm.prank(factoryOwner);
+        unwired.setKpkSharesDeployer(address(freshDeployer));
+        assertEq(unwired.kpkSharesDeployer(), address(freshDeployer), "deployer not set");
+
+        // Post-wire succeeds.
+        KpkOivFactory.OivInstance memory inst = unwired.deployOiv(oivConfig);
+        assertTrue(inst.avatarSafe != address(0), "avatarSafe not deployed post-wire");
+    }
+
     function test_deployOiv_revertsOnEmptyManagerOwners() public {
         oivConfig.managerSafe.owners = new address[](0);
         vm.expectRevert(KpkOivFactory.EmptyOwners.selector);

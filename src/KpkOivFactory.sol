@@ -312,11 +312,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         the Roles-Modifier-only execution invariant.
     error EmptyContractMissing();
 
+    /// @notice Thrown when `deployOiv` is called before `setKpkSharesDeployer` has wired the
+    ///         deployer post-construction. This is only reachable in the brief window between
+    ///         factory deployment and the post-deploy `setKpkSharesDeployer` call (see the
+    ///         constructor NatSpec for the deterministic-CREATE2 deployment flow). `deployStack`
+    ///         is unaffected — it does not touch `kpkSharesDeployer` and remains callable
+    ///         regardless of wiring status.
+    error KpkSharesDeployerNotSet();
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
-    /// @dev    All seven infrastructure addresses are validated to be non-zero. They can be
-    ///         updated post-deployment by the owner via the corresponding setter functions.
+    /// @dev    All six Safe/Zodiac infrastructure addresses are validated to be non-zero.
+    ///         `_kpkSharesDeployer` may be passed as `address(0)` so the factory's CREATE2
+    ///         creation code is independent of the (chicken-and-egg) deployer address; the owner
+    ///         must then call `setKpkSharesDeployer` to wire it before `deployOiv` can be
+    ///         invoked. Once set, `setKpkSharesDeployer`'s non-zero check prevents resetting it
+    ///         back to zero. This is the deterministic-cross-chain deploy pattern used in
+    ///         `script/DeployKpkOivFactory.s.sol`. Infrastructure addresses can be updated
+    ///         post-deployment by the owner via the corresponding setter functions.
     /// @param _owner                   Address that will own this factory and may call
     ///                                 the infrastructure setters.
     /// @param _safeProxyFactory        Gnosis Safe v1.4.1 proxy factory.
@@ -325,7 +339,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _safeFallbackHandler     Fallback handler applied to every deployed Safe.
     /// @param _moduleProxyFactory      Zodiac ModuleProxyFactory.
     /// @param _rolesModifierMastercopy Zodiac Roles Modifier v2 mastercopy.
-    /// @param _kpkSharesDeployer       KpkSharesDeployer contract address.
+    /// @param _kpkSharesDeployer       KpkSharesDeployer contract address. May be `address(0)`
+    ///                                 at construction; must be set via `setKpkSharesDeployer`
+    ///                                 before `deployOiv` is callable.
     constructor(
         address _owner,
         address _safeProxyFactory,
@@ -339,7 +355,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         if (
             _safeProxyFactory == address(0) || _safeSingleton == address(0) || _safeModuleSetup == address(0)
                 || _safeFallbackHandler == address(0) || _moduleProxyFactory == address(0)
-                || _rolesModifierMastercopy == address(0) || _kpkSharesDeployer == address(0)
+                || _rolesModifierMastercopy == address(0)
         ) revert ZeroAddress();
 
         safeProxyFactory = _safeProxyFactory;
@@ -476,6 +492,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///                  Roles Modifier owner and the `DEFAULT_ADMIN_ROLE` holder on KpkShares.
     /// @return instance Addresses of the seven deployed contracts.
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
+        // Guard the brief deploy-time window where the factory is constructed with
+        // `kpkSharesDeployer == address(0)` so its CREATE2 address is independent of the deployer
+        // (see constructor NatSpec). Once `setKpkSharesDeployer` has wired the deployer the
+        // setter's non-zero check prevents this from ever reverting again.
+        if (kpkSharesDeployer == address(0)) revert KpkSharesDeployerNotSet();
+
         _validateOivConfig(config);
 
         // Reserve the registry ID before any external calls (CEI). Combined with `nonReentrant`,
