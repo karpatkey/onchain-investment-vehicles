@@ -468,7 +468,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         returns (StackInstance memory inst)
     {
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
-            _deriveSalts(config.salt);
+            _deriveSalts(config.salt, msg.sender);
 
         // Step 1 – Deploy all three roles modifiers with factory as temp owner/avatar/target.
         address execMod = _deployRolesModifier(execSalt);
@@ -516,27 +516,30 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     /// @dev Derives five independent CREATE2 salts/nonces from a single base salt by hashing
-    ///      the base salt together with a fixed component index (0–4). This ensures that a single
-    ///      user-supplied value fully determines all five deployment addresses while guaranteeing
-    ///      no two components share the same salt.
+    ///      the caller, the base salt, and a fixed component index (0–4). Mixing the caller's
+    ///      address binds deployment addresses to a single deployer, preventing salt-squat
+    ///      front-running while preserving cross-chain determinism for any single deployer.
     ///      Index mapping: 0 = execRolesModifier, 1 = subRolesModifier, 2 = managerRolesModifier,
     ///      3 = Avatar Safe nonce, 4 = Manager Safe nonce.
     /// @param baseSalt   The user-supplied base salt from `StackConfig.salt`.
+    /// @param caller     The address calling `deployStack` / `deployOiv`. The same caller using
+    ///                   the same `baseSalt` on a same-address factory yields identical addresses
+    ///                   on every EVM-compatible chain.
     /// @return execSalt   CREATE2 salt for the exec Roles Modifier.
     /// @return subSalt    CREATE2 salt for the sub Roles Modifier.
     /// @return mgrSalt    CREATE2 salt for the manager Roles Modifier.
     /// @return avatarNonce Safe nonce for the Avatar Safe.
     /// @return mgrNonce    Safe nonce for the Manager Safe.
-    function _deriveSalts(uint256 baseSalt)
+    function _deriveSalts(uint256 baseSalt, address caller)
         internal
         pure
         returns (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce)
     {
-        execSalt = uint256(keccak256(abi.encode(baseSalt, uint8(0))));
-        subSalt = uint256(keccak256(abi.encode(baseSalt, uint8(1))));
-        mgrSalt = uint256(keccak256(abi.encode(baseSalt, uint8(2))));
-        avatarNonce = uint256(keccak256(abi.encode(baseSalt, uint8(3))));
-        mgrNonce = uint256(keccak256(abi.encode(baseSalt, uint8(4))));
+        execSalt = uint256(keccak256(abi.encode(caller, baseSalt, uint8(0))));
+        subSalt = uint256(keccak256(abi.encode(caller, baseSalt, uint8(1))));
+        mgrSalt = uint256(keccak256(abi.encode(caller, baseSalt, uint8(2))));
+        avatarNonce = uint256(keccak256(abi.encode(caller, baseSalt, uint8(3))));
+        mgrNonce = uint256(keccak256(abi.encode(caller, baseSalt, uint8(4))));
     }
 
     // ── Internal: deployment helpers ────────────────────────────────────────────

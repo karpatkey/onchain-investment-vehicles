@@ -366,8 +366,7 @@ contract KpkOivFactoryTest is Test {
 
         KpkOivFactory.StackInstance memory inst1 = factory.deployStack(cfg);
 
-        // Deploying again with the same salt must revert (CREATE2 collision).
-        vm.prank(factoryOwner);
+        // The same caller using the same salt MUST collide (CREATE2 redeploy revert).
         vm.expectRevert();
         factory.deployStack(cfg);
 
@@ -377,6 +376,26 @@ contract KpkOivFactoryTest is Test {
 
         assertTrue(inst1.avatarSafe != inst2.avatarSafe, "same avatarSafe address with different salt");
         assertTrue(inst1.execRolesModifier != inst2.execRolesModifier, "same execMod address with different salt");
+    }
+
+    /// @dev M-01: a different caller using the same salt produces DIFFERENT addresses,
+    ///      preventing salt-squat front-running of deterministic deployment addresses.
+    function test_deployStack_differentCallerSameSaltProducesDifferentAddresses() public {
+        KpkOivFactory.StackConfig memory cfg = _buildStackConfig();
+
+        KpkOivFactory.StackInstance memory inst1 = factory.deployStack(cfg);
+
+        address otherCaller = makeAddr("otherCaller");
+        vm.prank(otherCaller);
+        KpkOivFactory.StackInstance memory inst2 = factory.deployStack(cfg);
+
+        assertTrue(inst1.avatarSafe != inst2.avatarSafe, "salt-squat: same avatarSafe across callers");
+        assertTrue(inst1.managerSafe != inst2.managerSafe, "salt-squat: same managerSafe across callers");
+        assertTrue(inst1.execRolesModifier != inst2.execRolesModifier, "salt-squat: same execMod across callers");
+        assertTrue(inst1.subRolesModifier != inst2.subRolesModifier, "salt-squat: same subMod across callers");
+        assertTrue(
+            inst1.managerRolesModifier != inst2.managerRolesModifier, "salt-squat: same managerMod across callers"
+        );
     }
 
     function test_stackCount_incrementsOnEachDeploy() public {
