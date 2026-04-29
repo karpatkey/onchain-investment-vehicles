@@ -34,7 +34,7 @@ The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches 
 
 | Chain | ID | Status |
 |---|---|---|
-| Ethereum Mainnet | 1 | ⏳ pending |
+| Ethereum Mainnet | 1 | ✅ deployed |
 | Optimism | 10 | ✅ deployed |
 | Gnosis | 100 | ✅ deployed |
 | Base | 8453 | ✅ deployed |
@@ -44,7 +44,25 @@ Each per-chain entry below is filled in as the deploy lands on that chain.
 
 ### Ethereum Mainnet (chainId `1`)
 
-_pending_
+| Component | Address |
+|---|---|
+| `KpkOivFactory` | [`0x0d94255fdE65D302616b02A2F070CdB21190d420`](https://etherscan.io/address/0x0d94255fdE65D302616b02A2F070CdB21190d420) |
+| `KpkSharesDeployer` | [`0xA4B485Efe30F2b1D277b7A2279310239B26775F0`](https://etherscan.io/address/0xA4B485Efe30F2b1D277b7A2279310239B26775F0) |
+| Owner (final) | [`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`](https://etherscan.io/address/0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537) (OIV Safe) |
+
+Deployed in block [`24989059`](https://etherscan.io/block/24989059). Transactions:
+
+| Step | Tx hash |
+|---|---|
+| Factory CREATE2 deploy | [`0x9fb4d24bea8f94c64e68ff32046c7e9f37584308fb15825cac43a4db5db76386`](https://etherscan.io/tx/0x9fb4d24bea8f94c64e68ff32046c7e9f37584308fb15825cac43a4db5db76386) |
+| Deployer CREATE2 deploy | [`0x1711067f4b9c24219767273caa303ac0506b18b06ac17b9d0dda6d1c77c4ee0b`](https://etherscan.io/tx/0x1711067f4b9c24219767273caa303ac0506b18b06ac17b9d0dda6d1c77c4ee0b) |
+| `setKpkSharesDeployer` | [`0x02c6c83007d362d099b70d95a04128770f77e06a615d46cf1a1cf87279ca695c`](https://etherscan.io/tx/0x02c6c83007d362d099b70d95a04128770f77e06a615d46cf1a1cf87279ca695c) |
+| `transferOwnership` → OIV Safe | [`0xdd69ec06df380d21af75192db643d38e3aac4372f5a4384cbffa878b59d6aaa4`](https://etherscan.io/tx/0xdd69ec06df380d21af75192db643d38e3aac4372f5a4384cbffa878b59d6aaa4) |
+
+Independent on-chain verification (post-deploy):
+- `factory.owner()` = OIV Safe ✓
+- `factory.kpkSharesDeployer()` = `0xA4B485Ef...75F0` ✓
+- `KpkSharesDeployer.factory()` = `0x0d94255f...d420` ✓
 
 ### Optimism (chainId `10`)
 
