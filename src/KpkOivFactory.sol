@@ -418,11 +418,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         The returned `StackInstance` is also stored in `stacks[stackCount - 1]`.
     /// @param  config   Stack deployment parameters.
     /// @return instance Addresses of the five deployed contracts.
-    function deployStack(StackConfig calldata config)
-        external
-        nonReentrant
-        returns (StackInstance memory instance)
-    {
+    function deployStack(StackConfig calldata config) external nonReentrant returns (StackInstance memory instance) {
         _validateStackConfig(config);
 
         // Reserve the registry ID before any external calls (CEI) — defends against any
@@ -492,8 +488,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // implementation. Catches any failure mode where the disableModule call returned
         // success without actually removing the factory.
         require(
-            !ISafe(stack.avatarSafe).isModuleEnabled(address(this)),
-            "KpkOivFactory: factory still enabled as module"
+            !ISafe(stack.avatarSafe).isModuleEnabled(address(this)), "KpkOivFactory: factory still enabled as module"
         );
 
         instance = OivInstance({
