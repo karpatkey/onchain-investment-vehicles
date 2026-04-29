@@ -1,6 +1,6 @@
 # KpkSharesFactory
 
-`KpkSharesFactory` deploys kpk fund infrastructure in a single transaction. Only the factory owner can call either entry point.
+`KpkSharesFactory` deploys kpk fund infrastructure in a single transaction. Both entry points are permissionless and may be called by any account.
 
 Two entry points:
 
@@ -68,7 +68,7 @@ Fixed at factory deployment and apply to every stack deployed through it.
 
 | Parameter                  | Description                                              |
 |----------------------------|----------------------------------------------------------|
-| `owner`                    | Address allowed to call `deployStack` and `deployOiv`  |
+| `owner`                    | Address that controls infrastructure setter functions (does not gate deployment entry points) |
 | `safeProxyFactory`         | Gnosis `SafeProxyFactory` — deploys Safe proxies         |
 | `safeSingleton`            | Gnosis Safe singleton (implementation)                   |
 | `safeModuleSetup`          | Gnosis `SafeModuleSetup` — delegatecalled during `setup()` to pre-enable modules |

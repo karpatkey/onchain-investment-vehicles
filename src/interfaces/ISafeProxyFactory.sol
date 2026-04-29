@@ -6,12 +6,12 @@ pragma solidity ^0.8.0;
 /// @notice Minimal interface for the Gnosis SafeProxyFactory (v1.4.1).
 /// @dev    Only the function used by KpkSharesFactory is included.
 interface ISafeProxyFactory {
-    /// @notice Deploys a new EIP-1167 minimal proxy pointing at `_singleton` and calls
-    ///         `_singleton.setup(initializer)` on the proxy immediately after creation.
+    /// @notice Deploys a new Safe proxy that delegates to `_singleton` and executes the
+    ///         provided `initializer` on the newly created proxy immediately after creation.
     /// @dev    CREATE2 salt = keccak256(abi.encodePacked(keccak256(initializer), saltNonce)).
     ///         The same `_singleton`, `initializer`, and `saltNonce` combination will always
     ///         produce the same proxy address on a given factory/chain.
-    /// @param _singleton  The Safe implementation (singleton) all proxies delegate to.
+    /// @param _singleton  The Safe implementation (singleton) the proxy delegates to.
     /// @param initializer ABI-encoded `ISafe.setup(...)` call executed on the new proxy.
     /// @param saltNonce   Unique nonce mixed into the CREATE2 salt for address derivation.
     /// @return proxy      Address of the newly deployed Safe proxy.

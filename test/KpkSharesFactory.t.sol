@@ -11,7 +11,7 @@ import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 
 /// @notice Fork tests for KpkSharesFactory against mainnet Safe and Zodiac contracts.
-///         Run with: forge test --match-contract KpkSharesFactoryTest --fork-url $ETH_RPC_URL -vvv
+///         Run with: forge test --match-contract KpkSharesFactoryTest --fork-url $MAINNET_URL -vvv
 contract KpkSharesFactoryTest is Test {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
