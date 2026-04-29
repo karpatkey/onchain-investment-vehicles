@@ -272,6 +272,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         (`feeReceiver`, `subscriptionRequestTtl`, or `redemptionRequestTtl`).
     error InvalidSharesParams();
 
+    /// @notice Thrown when `EMPTY_CONTRACT` has no deployed bytecode on the current chain.
+    ///         The Avatar Safe would otherwise be initialised with a bare-EOA owner, breaking
+    ///         the Roles-Modifier-only execution invariant.
+    error EmptyContractMissing();
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
@@ -487,6 +492,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         internal
         returns (StackInstance memory inst)
     {
+        // Defense against `EMPTY_CONTRACT` not being deployed on the current chain. If absent,
+        // the Avatar Safe's sole owner would be a bare-EOA address, breaking the
+        // Roles-Modifier-only execution invariant the entire fund stack depends on.
+        if (EMPTY_CONTRACT.code.length == 0) revert EmptyContractMissing();
+
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(config.salt, msg.sender);
 
