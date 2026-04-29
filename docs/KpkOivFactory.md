@@ -104,11 +104,11 @@ graph LR
     AS -->|"call"| T["any target"]
 ```
 
-For finer-grained permissions, the Manager Safe can route calls through the sub Roles Modifier instead:
+The sub Roles Modifier is intended for automations: specific roles with narrow permissions can be granted to EOAs or bots, allowing them to execute on behalf of the Manager Safe. These permissions are always a subset of the MANAGER role policy because every call is still routed through the exec Roles Modifier before reaching the Avatar Safe:
 
 ```mermaid
 graph LR
-    MS["Manager Safe"] -->|"execTransactionWithRole"| SM["subRolesModifier"]
+    EOA["EOA / bot"] -->|"execTransactionWithRole"| SM["subRolesModifier"]
     SM -->|"execTransactionWithRole(MANAGER)"| EM["execRolesModifier"]
     EM -->|"execTransactionFromModule"| AS["Avatar Safe"]
     AS -->|"call"| T["any target"]
