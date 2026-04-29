@@ -505,6 +505,134 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         emit OivDeployed(id, instance);
     }
 
+    // ── Read-only: address prediction ───────────────────────────────────────────
+
+    /// @notice Predicts the five-contract operational stack addresses that `deployStack(config)`
+    ///         would produce when called by `caller`.
+    /// @dev    All five contracts use CREATE2; their addresses are fully determined by
+    ///         (factory address, infrastructure addresses, `caller`, `config.salt`, and the
+    ///         Manager Safe's owners/threshold). The prediction does NOT validate `config` —
+    ///         pass a config that would actually succeed (see `_validateStackConfig`).
+    ///         Note that `predictStackAddresses` and `predictOivAddresses` produce DIFFERENT
+    ///         Avatar Safe addresses for the same salt: `deployOiv` enables the factory as a
+    ///         second module on the Avatar Safe during setup, which changes the setup() data
+    ///         and therefore the CREATE2 salt.
+    /// @param  config  Stack deployment parameters.
+    /// @param  caller  Address that would call `deployStack`. Pass `msg.sender` if you intend
+    ///                 to be the deployer.
+    /// @return inst    Predicted addresses of the five contracts.
+    function predictStackAddresses(StackConfig calldata config, address caller)
+        external
+        view
+        returns (StackInstance memory inst)
+    {
+        return _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller, false);
+    }
+
+    /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
+    ///         by `caller`. The KpkShares implementation and proxy fields are returned as
+    ///         `address(0)` because they are NOT deterministic — both are deployed via plain
+    ///         CREATE (the implementation by `KpkSharesDeployer` and the proxy by this factory),
+    ///         so their addresses depend on the deployer's nonce at the time of execution.
+    /// @dev    Inherits the caveats of `predictStackAddresses`. The Avatar Safe address differs
+    ///         from `predictStackAddresses` because `deployOiv` enables the factory as an
+    ///         additional Avatar Safe module during setup (see `_deployAndWireStack`).
+    /// @param  config  Fund deployment parameters.
+    /// @param  caller  Address that would call `deployOiv`.
+    /// @return inst    Predicted addresses; `kpkSharesImpl` and `kpkSharesProxy` are zero.
+    function predictOivAddresses(OivConfig calldata config, address caller)
+        external
+        view
+        returns (OivInstance memory inst)
+    {
+        StackInstance memory stack =
+            _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller, true);
+        inst = OivInstance({
+            avatarSafe: stack.avatarSafe,
+            managerSafe: stack.managerSafe,
+            execRolesModifier: stack.execRolesModifier,
+            subRolesModifier: stack.subRolesModifier,
+            managerRolesModifier: stack.managerRolesModifier,
+            kpkSharesImpl: address(0),
+            kpkSharesProxy: address(0)
+        });
+    }
+
+    /// @dev Predicts the operational stack addresses. Mirrors the deployment paths in
+    ///      `_deployAndWireStack` exactly — any change to the deployment flow that affects
+    ///      addresses MUST be mirrored here.
+    function _predictStack(
+        address[] memory managerOwners,
+        uint256 managerThreshold,
+        uint256 baseSalt,
+        address caller,
+        bool includeFactoryAsAvatarModule
+    ) internal view returns (StackInstance memory inst) {
+        (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
+            _deriveSalts(baseSalt, caller);
+
+        inst.execRolesModifier = _predictRolesModifier(execSalt);
+        inst.subRolesModifier = _predictRolesModifier(subSalt);
+        inst.managerRolesModifier = _predictRolesModifier(mgrSalt);
+
+        address[] memory avatarOwners = new address[](1);
+        avatarOwners[0] = EMPTY_CONTRACT;
+
+        address[] memory avatarModules;
+        if (includeFactoryAsAvatarModule) {
+            avatarModules = new address[](2);
+            avatarModules[0] = inst.execRolesModifier;
+            avatarModules[1] = address(this);
+        } else {
+            avatarModules = new address[](1);
+            avatarModules[0] = inst.execRolesModifier;
+        }
+        inst.avatarSafe = _predictSafe(avatarOwners, 1, avatarModules, avatarNonce);
+
+        address[] memory managerModules = new address[](1);
+        managerModules[0] = inst.managerRolesModifier;
+        inst.managerSafe = _predictSafe(managerOwners, managerThreshold, managerModules, mgrNonce);
+    }
+
+    /// @dev Computes the CREATE2 address of a Roles Modifier proxy. Mirrors exactly the
+    ///      initializer used by `_deployRolesModifier` and the EIP-1167 deployment bytecode
+    ///      used by Zodiac's `ModuleProxyFactory.deployModule`.
+    function _predictRolesModifier(uint256 saltNonce) internal view returns (address) {
+        bytes memory initParams = abi.encode(address(this), address(this), address(this));
+        bytes memory initializer = abi.encodeCall(IRoles.setUp, (initParams));
+        bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), saltNonce));
+        // Zodiac ModuleProxyFactory deployment bytecode: 9-byte init header + 10-byte EIP-1167
+        // runtime prefix + 20-byte mastercopy address + 15-byte runtime suffix = 54 bytes.
+        bytes memory deployment = abi.encodePacked(
+            hex"602d8060093d393df3363d3d373d3d3d363d73", rolesModifierMastercopy, hex"5af43d82803e903d91602b57fd5bf3"
+        );
+        return _create2Address(moduleProxyFactory, salt, keccak256(deployment));
+    }
+
+    /// @dev Computes the CREATE2 address of a Safe proxy. Mirrors the initializer used by
+    ///      `_deploySafe` and the deployment bytecode used by `SafeProxyFactory.createProxyWithNonce`
+    ///      (proxyCreationCode || abi.encode(singleton)).
+    function _predictSafe(address[] memory owners, uint256 threshold, address[] memory modulesToEnable, uint256 nonce)
+        internal
+        view
+        returns (address)
+    {
+        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
+        bytes memory initializer = abi.encodeCall(
+            ISafe.setup,
+            (owners, threshold, safeModuleSetup, setupData, safeFallbackHandler, address(0), 0, payable(address(0)))
+        );
+        bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), nonce));
+        bytes memory deployment =
+            abi.encodePacked(ISafeProxyFactory(safeProxyFactory).proxyCreationCode(), uint256(uint160(safeSingleton)));
+        return _create2Address(safeProxyFactory, salt, keccak256(deployment));
+    }
+
+    /// @dev Standard CREATE2 address derivation: keccak256(0xff || deployer || salt || codeHash).
+    function _create2Address(address deployer, bytes32 salt, bytes32 codeHash) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
+    }
+
     // ── Internal: stack deployment ──────────────────────────────────────────────
 
     /// @dev Deploys and fully wires the five-contract operational stack.

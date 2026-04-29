@@ -372,6 +372,65 @@ contract KpkOivFactoryTest is Test {
         factory.deployOiv(oivConfig);
     }
 
+    // ── Address prediction tests ──────────────────────────────────────────────
+
+    /// @dev `predictStackAddresses` must exactly match the addresses returned by `deployStack`.
+    function test_predictStackAddresses_matchesActualDeployment() public {
+        KpkOivFactory.StackConfig memory cfg = _buildStackConfig();
+
+        KpkOivFactory.StackInstance memory predicted = factory.predictStackAddresses(cfg, address(this));
+        KpkOivFactory.StackInstance memory actual = factory.deployStack(cfg);
+
+        assertEq(predicted.avatarSafe, actual.avatarSafe, "avatarSafe prediction mismatch");
+        assertEq(predicted.managerSafe, actual.managerSafe, "managerSafe prediction mismatch");
+        assertEq(predicted.execRolesModifier, actual.execRolesModifier, "execMod prediction mismatch");
+        assertEq(predicted.subRolesModifier, actual.subRolesModifier, "subMod prediction mismatch");
+        assertEq(predicted.managerRolesModifier, actual.managerRolesModifier, "managerMod prediction mismatch");
+    }
+
+    /// @dev `predictOivAddresses` must match `deployOiv` for the five deterministic contracts.
+    ///      `kpkSharesImpl` and `kpkSharesProxy` are explicitly NOT deterministic (CREATE, not
+    ///      CREATE2) so the prediction returns address(0) for them.
+    function test_predictOivAddresses_matchesActualDeployment() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        KpkOivFactory.OivInstance memory actual = factory.deployOiv(oivConfig);
+
+        assertEq(predicted.avatarSafe, actual.avatarSafe, "avatarSafe prediction mismatch");
+        assertEq(predicted.managerSafe, actual.managerSafe, "managerSafe prediction mismatch");
+        assertEq(predicted.execRolesModifier, actual.execRolesModifier, "execMod prediction mismatch");
+        assertEq(predicted.subRolesModifier, actual.subRolesModifier, "subMod prediction mismatch");
+        assertEq(predicted.managerRolesModifier, actual.managerRolesModifier, "managerMod prediction mismatch");
+        assertEq(predicted.kpkSharesImpl, address(0), "kpkSharesImpl should be unpredictable");
+        assertEq(predicted.kpkSharesProxy, address(0), "kpkSharesProxy should be unpredictable");
+    }
+
+    /// @dev predictStack and predictOiv produce DIFFERENT Avatar Safe addresses for the same
+    ///      salt because deployOiv enables the factory as an additional setup-time module on
+    ///      the Avatar Safe, changing the setup() data and therefore the CREATE2 salt.
+    ///      Manager Safe and Roles Modifiers remain identical.
+    function test_predict_avatarSafeDiffersBetweenStackAndOiv() public {
+        KpkOivFactory.StackInstance memory stackPred = factory.predictStackAddresses(_buildStackConfig(), address(this));
+        KpkOivFactory.OivInstance memory oivPred = factory.predictOivAddresses(oivConfig, address(this));
+
+        assertTrue(stackPred.avatarSafe != oivPred.avatarSafe, "avatarSafe should differ");
+        assertEq(stackPred.managerSafe, oivPred.managerSafe, "managerSafe should match");
+        assertEq(stackPred.execRolesModifier, oivPred.execRolesModifier, "execMod should match");
+        assertEq(stackPred.subRolesModifier, oivPred.subRolesModifier, "subMod should match");
+        assertEq(stackPred.managerRolesModifier, oivPred.managerRolesModifier, "managerMod should match");
+    }
+
+    /// @dev Different callers with the same salt must produce different predicted addresses
+    ///      (M-01 salt-squat protection visible from the read API).
+    function test_predict_differentCallerYieldsDifferentAddresses() public {
+        KpkOivFactory.StackInstance memory predA = factory.predictStackAddresses(_buildStackConfig(), address(this));
+        KpkOivFactory.StackInstance memory predB =
+            factory.predictStackAddresses(_buildStackConfig(), makeAddr("otherCaller"));
+
+        assertTrue(predA.avatarSafe != predB.avatarSafe, "avatarSafe should differ");
+        assertTrue(predA.managerSafe != predB.managerSafe, "managerSafe should differ");
+        assertTrue(predA.execRolesModifier != predB.execRolesModifier, "execMod should differ");
+    }
+
     /// @dev L-01: KpkSharesDeployer.deploy() rejects callers other than the factory.
     function test_kpkSharesDeployer_deploy_revertsForNonFactoryCaller() public {
         KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));

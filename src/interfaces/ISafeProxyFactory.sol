@@ -18,4 +18,9 @@ interface ISafeProxyFactory {
     function createProxyWithNonce(address _singleton, bytes memory initializer, uint256 saltNonce)
         external
         returns (address proxy);
+
+    /// @notice Returns the creation bytecode of the SafeProxy contract.
+    /// @dev    Used to compute deterministic CREATE2 addresses off-chain or via on-chain
+    ///         prediction helpers without re-implementing SafeProxy creation code.
+    function proxyCreationCode() external pure returns (bytes memory);
 }
