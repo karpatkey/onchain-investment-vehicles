@@ -4,8 +4,26 @@
 
 Two entry points:
 
-- **`deployStack`** — deploys the five-contract operational stack (two Safes + three Roles Modifiers). Intended for multichain deployments; the same `salt` on the same factory produces identical addresses on every chain.
+- **`deployStack`** — deploys the five-contract operational stack (two Safes + three Roles Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
 - **`deployOiv`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Typically called on mainnet only.
+
+**Cross-flow address invariant.** For the same `(caller, salt)`, `deployStack` and `deployOiv` produce **identical** Avatar Safe / Manager Safe / Roles Modifier addresses. This is the load-bearing property that lets you call `deployOiv` on mainnet and `deployStack` on every sidechain and end up with a fund whose Avatar Safe has the same address everywhere — so bridges and cross-chain configs can hard-code a single address.
+
+The factory address is mixed into the salt derivation alongside the caller, so cross-chain determinism requires:
+
+1. The factory deployed at the same address on every chain (same constructor args).
+2. All infrastructure addresses (`safeProxyFactory`, `safeSingleton`, `safeModuleSetup`, `safeFallbackHandler`, `moduleProxyFactory`, `rolesModifierMastercopy`) the same on every chain.
+3. The same `caller` calling the entry point on every chain (caller mixing prevents salt-squat front-running).
+4. The same `salt` and the same `managerSafe.owners` / `threshold` across chains (the Manager Safe initializer encodes these too).
+
+### Predict functions
+
+Two read-only helpers return the addresses a deployment would produce, without sending a transaction:
+
+- **`predictStackAddresses(StackConfig, address caller)`** → predicted `StackInstance` (5 addresses).
+- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance`. The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` and `kpkSharesProxy` are returned as `address(0)` because they use plain CREATE (not CREATE2) and depend on deployer nonce, not on the salt.
+
+Use them to look up the address of a fund's Avatar Safe ahead of deployment, e.g. when seeding a governance proposal or pre-configuring a frontend.
 
 ---
 
@@ -13,7 +31,7 @@ Two entry points:
 
 ### `deployStack`
 
-Deploys the five-contract operational stack. All five addresses are deterministic — the same `salt` on the same factory produces the same addresses on every chain.
+Deploys the five-contract operational stack. All five addresses are deterministic — the same `(caller, salt)` on the same factory produces the same addresses on every chain (and matches `deployOiv` for the same inputs — see the cross-flow invariant above).
 
 **Inputs that matter:**
 
@@ -120,6 +138,8 @@ graph LR
 
 The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifiers first (with itself as temporary owner/avatar/target), embedding the modifier addresses into the Safe `setup()` delegatecall data, and only then fixing up the final configuration.
 
+The factory is **always** included as a setup-time Avatar Safe module in both flows so the Safe `setup()` initializer is byte-identical across `deployStack` and `deployOiv`. The factory is disabled as a module before each entry point returns; in `deployStack` it is never used, in `deployOiv` it routes the token-allowance approvals.
+
 ```
 1. Deploy execRolesModifier    (factory = owner / avatar / target)
 2. Deploy subRolesModifier     (factory = owner / avatar / target)
@@ -137,7 +157,7 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
 8. Wire managerRolesModifier   → avatar = managerSafe, target = managerSafe
                                → transfer ownership to managerSafe
 
-── deployStack stops here ──────────────────────────────────────────────────
+── deployStack: remove factory as module from Avatar Safe and stop ────────
 
 9.  Deploy fresh KpkShares implementation via KpkSharesDeployer (one per fund)
 10. Deploy KpkShares UUPS proxy (factory temporarily holds DEFAULT_ADMIN_ROLE)
@@ -155,7 +175,7 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
 
 ### Salt derivation
 
-A single `uint256 salt` in `StackConfig` controls all five deployment addresses. The factory derives independent per-component values by hashing the base salt with a fixed index:
+A single `uint256 salt` in `StackConfig` (or `OivConfig`) controls all five deployment addresses. The factory derives independent per-component values by hashing `(caller, baseSalt, index)`:
 
 | Index | Component              |
 |-------|------------------------|
@@ -165,7 +185,9 @@ A single `uint256 salt` in `StackConfig` controls all five deployment addresses.
 | 3     | Avatar Safe nonce      |
 | 4     | Manager Safe nonce     |
 
-Providing the same `salt` on the same factory (same constructor arguments) on any chain produces identical addresses for all five contracts.
+`caller` is `msg.sender` of the entry-point call. Mixing it in prevents salt-squat front-running (an observer cannot occupy the deterministic addresses by submitting the same salt with attacker-controlled config). The trade-off: cross-chain determinism requires the same caller to invoke the entry point on every chain.
+
+Providing the same `caller` and `salt` on the same factory (same address, same constructor arguments) on any chain produces identical addresses for all five contracts — and the same Avatar Safe / Manager Safe / Roles Modifier addresses regardless of which entry point (`deployStack` or `deployOiv`) is used.
 
 ---
 
@@ -354,12 +376,23 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 - `managerSafe.owners` is empty (`EmptyOwners`)
 - `managerSafe.threshold == 0` or `threshold > owners.length` (`InvalidThreshold`)
+- Any `managerSafe.owners[i]` is `address(0)` (`ZeroAddress`)
+- `managerSafe.owners` contains a duplicate (`DuplicateOwner`)
 - `execRolesMod.finalOwner` is `address(0)` (`ZeroAddress`)
+- The chain has no contract deployed at `EMPTY_CONTRACT` (`EmptyContractMissing`)
 
-`deployOiv` reverts if:
+`deployOiv` reverts if any of the above for its `managerSafe`, plus:
 
-- `managerSafe.owners` is empty (`EmptyOwners`)
-- `managerSafe.threshold == 0` or `threshold > owners.length` (`InvalidThreshold`)
 - `admin` is `address(0)` (`ZeroAddress`)
 - `sharesParams.asset` is `address(0)` (`ZeroAddress`)
+- `sharesParams.feeReceiver`, `sharesParams.subscriptionRequestTtl`, or `sharesParams.redemptionRequestTtl` is unset (`InvalidSharesParams`)
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)
+- Any `additionalAssets[i].asset` equals `sharesParams.asset`, or two entries share the same asset (`DuplicateAsset`)
+
+`KpkSharesDeployer` is factory-locked (`L-01`): deploy it with `factory = predicted KpkOivFactory address` (e.g. via `vm.computeCreateAddress`), then deploy the factory at the predicted address. Any direct call to `KpkSharesDeployer.deploy()` from a non-factory caller reverts with `UnauthorizedCaller`.
+
+## Trust assumptions
+
+- The factory `owner` controls all infrastructure setters with immediate effect (no in-contract timelock). The owner **MUST** be a `TimelockController` or governance multisig — never an EOA — because a compromised owner can swap `kpkSharesDeployer`, `rolesModifierMastercopy`, or `safeSingleton` to backdoor every future deployment. Past deployments are unaffected (each fund references its own already-deployed implementation).
+- For `deployOiv`, the caller controls `config.managerSafe.owners`. The deployed Manager Safe receives ownership of both the sub and manager Roles Modifiers, so `managerSafe.owners` **MUST** be trusted at the same operational level as `config.admin`. The exec Roles Modifier (owned by `admin`) remains the authoritative gatekeeper of Avatar Safe execution, so direct fund drainage requires exec-modifier compromise — but the Manager Safe is **not** a purely operational signer set.
+- Both deployment entry points are permissionless. Caller mixing in salt derivation prevents address front-running, but anyone can still spend gas to deploy a fund with arbitrary parameters; consumers of the on-chain registry (`stacks` / `instances`) should not trust an entry without verifying its `admin` and `managerSafe.owners`.

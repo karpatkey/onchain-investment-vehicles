@@ -31,21 +31,33 @@ interface IKpkSharesDeployer {
 ///         all execution must flow through the Roles Modifiers.
 ///
 ///         Two entry points are provided:
-///         - `deployStack` deploys only the five-contract operational stack (two Safes + three
-///           Roles Modifiers) and is intended for multichain deployments where the same addresses
-///           must exist on every chain.
-///         - `deployOiv` additionally deploys a KpkShares UUPS proxy, grants infinite asset
-///           allowances from the Avatar Safe to the shares proxy, and wires the Manager Safe as
-///           the shares operator. Typically called on mainnet only.
+///         - `deployStack` deploys the five-contract operational stack (two Safes + three Roles
+///           Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
+///         - `deployOiv` deploys the same five-contract stack PLUS a KpkShares UUPS proxy,
+///           grants infinite asset allowances from the Avatar Safe to the shares proxy, and
+///           wires the Manager Safe as the shares operator. Typically called on mainnet only.
+///
+///         Cross-flow address invariant: for the same `(caller, salt)`, `deployStack` and
+///         `deployOiv` produce IDENTICAL Avatar Safe / Manager Safe / Roles Modifier addresses.
+///         The factory is unconditionally enabled as a setup-time Avatar Safe module in both
+///         flows (and disabled before each entry point returns) so the Safe `setup()` call
+///         is byte-identical across flows. This is the load-bearing property that lets
+///         `deployOiv` on mainnet and `deployStack` on every sidechain produce a fund with the
+///         same Avatar Safe address everywhere.
 ///
 ///         Both deployment entry points are permissionless — any caller may invoke them.
 ///         Only the infrastructure setter functions are restricted to the factory owner.
 ///
-///         A single `salt` in `StackConfig` drives all five CREATE2 deployments, guaranteeing
-///         identical contract addresses across chains when the factory is deployed at the same
-///         address with the same constructor arguments AND called by the same `msg.sender`.
-///         The caller's address is mixed into the salt derivation to prevent salt-squat
-///         front-running of deterministic deployment addresses.
+///         A single `salt` in `StackConfig` drives all five CREATE2 deployments. The caller's
+///         address is mixed into the salt derivation, so identical contract addresses across
+///         chains require the factory to be deployed at the same address with the same
+///         constructor arguments AND called by the same `msg.sender`. Caller mixing prevents
+///         salt-squat front-running of deterministic deployment addresses.
+///
+///         `predictStackAddresses` and `predictOivAddresses` are read-only helpers that return
+///         the addresses a deployment with a given `(config, caller)` tuple would produce.
+///         By the cross-flow invariant above, both predict functions return the same five
+///         operational-stack addresses for the same `(caller, salt)`.
 ///
 ///         Trust assumptions:
 ///         - The factory `owner` controls all infrastructure setters with immediate effect (no

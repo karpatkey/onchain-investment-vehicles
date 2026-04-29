@@ -447,6 +447,72 @@ contract KpkOivFactoryTest is Test {
         assertEq(stackActual.managerRolesModifier, oivPred.managerRolesModifier, "managerMod mismatch");
     }
 
+    /// @dev Symmetrical to the above — predictStack before deploying via deployOiv must agree
+    ///      on the Avatar Safe address that deployOiv actually produces.
+    function test_predictStack_avatarSafeMatchesDeployOivActualAddress() public {
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
+        stackCfg.salt = oivConfig.salt;
+        KpkOivFactory.StackInstance memory stackPred = factory.predictStackAddresses(stackCfg, address(this));
+
+        KpkOivFactory.OivInstance memory oivActual = factory.deployOiv(oivConfig);
+
+        assertEq(oivActual.avatarSafe, stackPred.avatarSafe, "deployOiv avatarSafe != deployStack prediction");
+        assertEq(oivActual.managerSafe, stackPred.managerSafe, "managerSafe mismatch");
+        assertEq(oivActual.execRolesModifier, stackPred.execRolesModifier, "execMod mismatch");
+        assertEq(oivActual.subRolesModifier, stackPred.subRolesModifier, "subMod mismatch");
+        assertEq(oivActual.managerRolesModifier, stackPred.managerRolesModifier, "managerMod mismatch");
+    }
+
+    /// @dev Cross-flow CREATE2-collision invariant: deployStack followed by deployOiv with the
+    ///      same `(caller, salt)` MUST revert. This is the operational consequence of the
+    ///      address invariant — both flows compete for the same Avatar Safe / Manager Safe /
+    ///      Roles Modifier addresses, so the second one always reverts. Same-address-everywhere
+    ///      also means same-CREATE2-collision when both run on the same chain.
+    function test_deployStackThenDeployOiv_revertsOnSameCallerAndSalt() public {
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
+        stackCfg.salt = oivConfig.salt;
+
+        factory.deployStack(stackCfg);
+
+        // Same salt, same caller — collides on the already-deployed Avatar Safe (or another
+        // CREATE2 contract; the Roles Modifiers actually deploy first and would collide first).
+        vm.expectRevert();
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @dev Symmetrical: deployOiv then deployStack with the same `(caller, salt)` MUST revert.
+    function test_deployOivThenDeployStack_revertsOnSameCallerAndSalt() public {
+        factory.deployOiv(oivConfig);
+
+        KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
+        stackCfg.salt = oivConfig.salt;
+
+        vm.expectRevert();
+        factory.deployStack(stackCfg);
+    }
+
+    /// @dev Sanity check: predicted addresses are uninhabited contracts before deployment, and
+    ///      contain code after. Catches any future regression where the predict math drifts
+    ///      from the deployment math without surfacing in the matches-actual-deployment tests.
+    function test_predictStack_addressesAreEmptyBeforeDeployAndPopulatedAfter() public {
+        KpkOivFactory.StackConfig memory cfg = _buildStackConfig();
+        KpkOivFactory.StackInstance memory predicted = factory.predictStackAddresses(cfg, address(this));
+
+        assertEq(predicted.avatarSafe.code.length, 0, "avatarSafe should be empty pre-deploy");
+        assertEq(predicted.managerSafe.code.length, 0, "managerSafe should be empty pre-deploy");
+        assertEq(predicted.execRolesModifier.code.length, 0, "execMod should be empty pre-deploy");
+        assertEq(predicted.subRolesModifier.code.length, 0, "subMod should be empty pre-deploy");
+        assertEq(predicted.managerRolesModifier.code.length, 0, "managerMod should be empty pre-deploy");
+
+        factory.deployStack(cfg);
+
+        assertGt(predicted.avatarSafe.code.length, 0, "avatarSafe should have code post-deploy");
+        assertGt(predicted.managerSafe.code.length, 0, "managerSafe should have code post-deploy");
+        assertGt(predicted.execRolesModifier.code.length, 0, "execMod should have code post-deploy");
+        assertGt(predicted.subRolesModifier.code.length, 0, "subMod should have code post-deploy");
+        assertGt(predicted.managerRolesModifier.code.length, 0, "managerMod should have code post-deploy");
+    }
+
     /// @dev Different callers with the same salt must produce different predicted addresses
     ///      (M-01 salt-squat protection visible from the read API).
     function test_predict_differentCallerYieldsDifferentAddresses() public {
