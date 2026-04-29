@@ -9,6 +9,113 @@ Two entry points:
 
 ---
 
+## How to use
+
+### `deployStack`
+
+Deploys the five-contract operational stack. All five addresses are deterministic — the same `salt` on the same factory produces the same addresses on every chain.
+
+**Inputs that matter:**
+
+| Field | Description |
+|---|---|
+| `managerSafe.owners` | Signer addresses of the Manager Safe |
+| `managerSafe.threshold` | Required signatures (must be > 0 and ≤ owners.length) |
+| `execRolesMod.finalOwner` | Receives ownership of the exec Roles Modifier — typically the Security Council multisig. Must not be zero |
+| `salt` | Controls all five deployment addresses |
+
+`subRolesMod.finalOwner` and `managerRolesMod.finalOwner` are ignored — ownership of those modifiers always transfers to the deployed Manager Safe.
+
+**Deployed architecture:**
+
+```mermaid
+graph LR
+    MS["Manager Safe\n(owners + threshold)"]
+    EM["execRolesModifier\n(owner: execRolesMod.finalOwner)"]
+    SM["subRolesModifier\n(owner: Manager Safe)"]
+    MM["managerRolesModifier\n(owner: Manager Safe)"]
+    AS["Avatar Safe\n(signer: EMPTY_CONTRACT)"]
+
+    EM -- "module of" --> AS
+    SM -- "module of" --> EM
+    MM -- "module of" --> MS
+    MS -- "MANAGER role" --> EM
+    SM -- "MANAGER role" --> EM
+```
+
+---
+
+### `deployOiv`
+
+Runs `deployStack` first, then deploys and wires a `KpkShares` UUPS proxy. Typically called on mainnet only.
+
+**Additional inputs beyond `deployStack`:**
+
+| Field | Description |
+|---|---|
+| `sharesParams.asset` | Base ERC-20 for subscriptions and redemptions. Must not be zero |
+| `sharesParams.admin` | Receives `DEFAULT_ADMIN_ROLE` on the shares proxy. Must not be zero |
+| `sharesParams.name` / `symbol` | ERC-20 name and symbol for the shares token |
+| `sharesParams.subscriptionRequestTtl` | Min seconds before an investor can cancel a pending subscription (max 7 days) |
+| `sharesParams.redemptionRequestTtl` | Min seconds before an investor can cancel a pending redemption (max 7 days) |
+| `sharesParams.feeReceiver` | Receives management fees (minted shares), redemption fees, and performance fees |
+| `sharesParams.managementFeeRate` | Annual management fee in basis points (max 2000 = 20%) |
+| `sharesParams.redemptionFeeRate` | Per-redemption fee in basis points (max 2000 = 20%) |
+| `sharesParams.performanceFeeModule` | Performance fee module address — `address(0)` to disable |
+| `sharesParams.performanceFeeRate` | Performance fee in basis points (max 2000 = 20%) |
+| `additionalAssets[]` | Extra ERC-20s to enable for deposits or redemptions (pass empty array if none) |
+
+`sharesParams.safe` is **ignored** — the factory overwrites it with the deployed Avatar Safe address.
+
+The following are **wired automatically** and require no input:
+- Manager Safe receives `OPERATOR` on the shares proxy
+- Avatar Safe is granted unlimited allowance on the shares proxy for every redeemable asset (base asset + any `additionalAssets` with `canRedeem = true`)
+
+**Full deployed architecture:**
+
+```mermaid
+graph LR
+    MS["Manager Safe\n(owners + threshold)"]
+    EM["execRolesModifier\n(owner: Security Council)"]
+    SM["subRolesModifier\n(owner: Manager Safe)"]
+    MM["managerRolesModifier\n(owner: Manager Safe)"]
+    AS["Avatar Safe\n(signer: EMPTY_CONTRACT)"]
+    KS["KpkShares Proxy\n(admin: sharesParams.admin)"]
+
+    EM -- "module of" --> AS
+    SM -- "module of" --> EM
+    MM -- "module of" --> MS
+    MS -- "MANAGER role" --> EM
+    SM -- "MANAGER role" --> EM
+    AS -- "max allowance\n(redeemable assets)" --> KS
+    MS -- "OPERATOR" --> KS
+```
+
+---
+
+### Execution flow after deployment
+
+The Avatar Safe cannot execute transactions directly — its sole signer is `EMPTY_CONTRACT`, a contract with no logic. All execution routes through the Roles Modifiers:
+
+```mermaid
+graph LR
+    MS["Manager Safe"] -->|"execTransactionWithRole(MANAGER)"| EM["execRolesModifier"]
+    EM -->|"execTransactionFromModule"| AS["Avatar Safe"]
+    AS -->|"call"| T["any target"]
+```
+
+For finer-grained permissions, the Manager Safe can route calls through the sub Roles Modifier instead:
+
+```mermaid
+graph LR
+    MS["Manager Safe"] -->|"execTransactionWithRole"| SM["subRolesModifier"]
+    SM -->|"execTransactionWithRole(MANAGER)"| EM["execRolesModifier"]
+    EM -->|"execTransactionFromModule"| AS["Avatar Safe"]
+    AS -->|"call"| T["any target"]
+```
+
+---
+
 ## Deployment flow
 
 The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifiers first (with itself as temporary owner/avatar/target), embedding the modifier addresses into the Safe `setup()` delegatecall data, and only then fixing up the final configuration.
