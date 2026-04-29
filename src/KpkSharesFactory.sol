@@ -37,6 +37,9 @@ interface IKpkSharesDeployer {
 ///           allowances from the Avatar Safe to the shares proxy, and wires the Manager Safe as
 ///           the shares operator. Typically called on mainnet only.
 ///
+///         Both deployment entry points are permissionless — any caller may invoke them.
+///         Only the infrastructure setter functions are restricted to the factory owner.
+///
 ///         A single `salt` in `StackConfig` drives all five CREATE2 deployments, guaranteeing
 ///         identical contract addresses across chains when the factory is deployed at the same
 ///         address with the same constructor arguments.
@@ -259,7 +262,7 @@ contract KpkSharesFactory is Ownable {
     /// @dev    All six infrastructure addresses are validated to be non-zero. They can be
     ///         updated post-deployment by the owner via the corresponding setter functions.
     /// @param _owner                   Address that will own this factory and may call
-    ///                                 `deployStack`, `deployOiv`, and the setters.
+    ///                                 the infrastructure setters.
     /// @param _safeProxyFactory        Gnosis Safe v1.4.1 proxy factory.
     /// @param _safeSingleton           Gnosis Safe v1.4.1 singleton.
     /// @param _safeModuleSetup         Gnosis SafeModuleSetup utility contract.
@@ -357,11 +360,12 @@ contract KpkSharesFactory is Ownable {
     ///         Intended for multichain deployments — the same `config.salt` on the same factory
     ///         (same constructor arguments, same address) produces identical addresses on every
     ///         EVM-compatible chain.
-    /// @dev    Reverts if `config` fails validation (see `_validateStackConfig`).
+    /// @dev    Permissionless — any caller may deploy a stack.
+    ///         Reverts if `config` fails validation (see `_validateStackConfig`).
     ///         The returned `StackInstance` is also stored in `stacks[stackCount - 1]`.
     /// @param  config   Stack deployment parameters.
     /// @return instance Addresses of the five deployed contracts.
-    function deployStack(StackConfig calldata config) external onlyOwner returns (StackInstance memory instance) {
+    function deployStack(StackConfig calldata config) external returns (StackInstance memory instance) {
         _validateStackConfig(config);
 
         instance = _deployAndWireStack(config, false);
@@ -381,14 +385,15 @@ contract KpkSharesFactory is Ownable {
     ///         - Wires the Manager Safe as the OPERATOR on the shares proxy.
     ///         - Removes itself as a module from the Avatar Safe before returning.
     ///         Typically called on mainnet only; use `deployStack` for sidechain deployments.
-    /// @dev    The factory is temporarily enabled as an additional module on the Avatar Safe so
+    /// @dev    Permissionless — any caller may deploy a fund.
+    ///         The factory is temporarily enabled as an additional module on the Avatar Safe so
     ///         it can call `execTransactionFromModule` for the approve transactions. It removes
     ///         itself (SENTINEL → factory → execMod) before returning.
     ///         Reverts if `config` fails validation (see `_validateOivConfig`).
     ///         The returned `OivInstance` is also stored in `instances[instanceCount - 1]`.
     /// @param  config   Fund deployment parameters.
     /// @return instance Addresses of the seven deployed contracts.
-    function deployOiv(OivConfig calldata config) external onlyOwner returns (OivInstance memory instance) {
+    function deployOiv(OivConfig calldata config) external returns (OivInstance memory instance) {
         _validateOivConfig(config);
 
         // Enable factory as an extra module on the Avatar Safe so it can grant approvals below.
