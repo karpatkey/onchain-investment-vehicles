@@ -126,6 +126,31 @@ contract KpkSharesFactoryTest is Test {
         assertEq(IRoles(inst.subRolesModifier).avatar(), inst.avatarSafe, "subMod avatar mismatch");
     }
 
+    /// @dev Proves MANAGER role is assigned to managerSafe on execRolesModifier by having
+    ///      managerSafe execute a real transaction through it. The Security Council (owner)
+    ///      first scopes a target and allows a function for the MANAGER role, then managerSafe
+    ///      calls execTransactionWithRole — which succeeds only if managerSafe holds MANAGER.
+    function test_execModifier_managerSafeHasManagerRole() public {
+        vm.prank(factoryOwner);
+        KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
+
+        bytes32 managerRole = bytes32("MANAGER");
+        // Scope USDC and allow approve() for the MANAGER role — approving 0 always succeeds.
+        bytes4 selector = IERC20.approve.selector;
+
+        vm.startPrank(securityCouncil);
+        IRoles(inst.execRolesModifier).scopeTarget(managerRole, USDC);
+        IRoles(inst.execRolesModifier).allowFunction(managerRole, USDC, selector, 0);
+        vm.stopPrank();
+
+        // Manager Safe calls execTransactionWithRole — reverts with NoMembership() if
+        // managerSafe does not hold the MANAGER role.
+        vm.prank(inst.managerSafe);
+        bool success = IRoles(inst.execRolesModifier)
+            .execTransactionWithRole(USDC, 0, abi.encodeWithSelector(selector, address(1), 0), 0, managerRole, true);
+        assertTrue(success, "managerSafe could not execute with MANAGER role on execRolesModifier");
+    }
+
     function test_execModifier_hasSubModifierAsNestedModule() public {
         vm.prank(factoryOwner);
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);

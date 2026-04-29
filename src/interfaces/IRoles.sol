@@ -26,4 +26,17 @@ interface IRoles {
     function enableModule(address module) external;
 
     function isModuleEnabled(address module) external view returns (bool);
+
+    function scopeTarget(bytes32 roleKey, address targetAddress) external;
+
+    function allowFunction(bytes32 roleKey, address targetAddress, bytes4 selector, uint8 options) external;
+
+    function execTransactionWithRole(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        bytes32 roleKey,
+        bool shouldRevert
+    ) external returns (bool success);
 }
