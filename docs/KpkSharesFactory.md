@@ -151,10 +151,6 @@ Initialization parameters for the `KpkShares` UUPS proxy.
 | `performanceFeeModule`   | Address of the performance fee module. `address(0)` to disable       |
 | `performanceFeeRate`     | Performance fee in basis points. Max 2000 (20%)                      |
 
-### `sharesOperator` — `address`
-
-Address granted the `OPERATOR` role on the `KpkShares` proxy. The operator calls `processRequests` and `updateAsset`. Must not be zero.
-
 ### `additionalAssets` — `AssetConfig[]`
 
 Optional list of assets to enable on the shares proxy beyond the base asset. The factory temporarily holds `OPERATOR` to register each asset, then revokes it before granting `OPERATOR` to `sharesOperator`.
@@ -223,7 +219,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 | Implementation              | Fresh `KpkShares` instance deployed by `KpkSharesDeployer` (one per fund — upgrades are isolated per fund) |
 | `portfolioSafe`             | `avatarSafe`                                                           |
 | `DEFAULT_ADMIN_ROLE`        | `sharesParams.admin`                                                   |
-| `OPERATOR`                  | `sharesOperator`                                                       |
+| `OPERATOR`                  | `managerSafe` (automatically wired — no separate input required)       |
 | Base asset                  | `sharesParams.asset` — deposit + redeem enabled                        |
 | Base asset allowance        | `type(uint256).max` from `avatarSafe`                                  |
 | Additional assets           | Each entry in `additionalAssets` registered via `updateAsset`; assets with `canRedeem = true` also receive `type(uint256).max` allowance from `avatarSafe` |
@@ -247,7 +243,6 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 `deployFund` additionally reverts if:
 
-- `sharesOperator` is `address(0)` (`ZeroAddress`)
 - `sharesParams.admin` is `address(0)` (`ZeroAddress`)
 - `sharesParams.asset` is `address(0)` (`ZeroAddress`)
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)

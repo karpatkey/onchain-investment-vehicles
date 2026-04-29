@@ -31,7 +31,6 @@ contract KpkSharesFactoryTest is Test {
     address securityCouncil = makeAddr("securityCouncil");
     address managerSigner = makeAddr("managerSigner");
     address sharesAdmin = makeAddr("sharesAdmin");
-    address sharesOperator = makeAddr("sharesOperator");
     address feeReceiver = makeAddr("feeReceiver");
 
     // ── Contracts under test ────────────────────────────────────────────────────
@@ -173,12 +172,12 @@ contract KpkSharesFactoryTest is Test {
         assertTrue(shares.hasRole(0x00, sharesAdmin), "sharesAdmin does not have DEFAULT_ADMIN_ROLE");
     }
 
-    function test_sharesProxy_operatorIsSharesOperator() public {
+    function test_sharesProxy_operatorIsManagerSafe() public {
         vm.prank(factoryOwner);
         KpkSharesFactory.FundInstance memory inst = factory.deployFund(fundConfig);
 
         KpkShares shares = KpkShares(inst.kpkSharesProxy);
-        assertTrue(shares.hasRole(keccak256("OPERATOR"), sharesOperator), "sharesOperator does not have OPERATOR role");
+        assertTrue(shares.hasRole(keccak256("OPERATOR"), inst.managerSafe), "managerSafe does not have OPERATOR role");
     }
 
     function test_sharesProxy_factoryHasNoAdminRole() public {
@@ -345,7 +344,6 @@ contract KpkSharesFactoryTest is Test {
 
     function _buildFundConfig() internal view returns (KpkSharesFactory.FundConfig memory cfg) {
         cfg.stack = _buildStackConfig();
-        cfg.sharesOperator = sharesOperator;
         cfg.additionalAssets = new KpkSharesFactory.AssetConfig[](0);
         cfg.sharesParams = KpkShares.ConstructorParams({
             asset: USDC,

@@ -103,8 +103,6 @@ contract KpkSharesFactory is Ownable {
         ///         during initialization so the factory can set up roles, then the real admin is
         ///         granted and the factory renounces.
         KpkShares.ConstructorParams sharesParams;
-        /// @notice Address that receives the OPERATOR role on the kpkShares proxy.
-        address sharesOperator;
         /// @notice Additional assets to enable on the shares proxy beyond the base asset.
         ///         The factory temporarily holds OPERATOR to register these, then revokes it.
         AssetConfig[] additionalAssets;
@@ -262,7 +260,7 @@ contract KpkSharesFactory is Ownable {
         StackInstance memory stack = _deployAndWireStack(config.stack, true);
 
         (address sharesImpl, address sharesProxy) =
-            _deploySharesProxy(config.sharesParams, config.sharesOperator, stack.avatarSafe, config.additionalAssets);
+            _deploySharesProxy(config.sharesParams, stack.managerSafe, stack.avatarSafe, config.additionalAssets);
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
         _grantApprovals(stack.avatarSafe, sharesProxy, config.sharesParams.asset, config.additionalAssets);
@@ -500,7 +498,6 @@ contract KpkSharesFactory is Ownable {
 
     function _validateFundConfig(FundConfig calldata config) internal pure {
         _validateStackConfig(config.stack);
-        if (config.sharesOperator == address(0)) revert ZeroAddress();
         if (config.sharesParams.admin == address(0)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
         for (uint256 i = 0; i < config.additionalAssets.length; i++) {
