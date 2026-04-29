@@ -263,7 +263,7 @@ contract KpkOivFactory is Ownable {
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
-    /// @dev    All six infrastructure addresses are validated to be non-zero. They can be
+    /// @dev    All seven infrastructure addresses are validated to be non-zero. They can be
     ///         updated post-deployment by the owner via the corresponding setter functions.
     /// @param _owner                   Address that will own this factory and may call
     ///                                 the infrastructure setters.
@@ -700,6 +700,10 @@ contract KpkOivFactory is Ownable {
         bool success = ISafe(avatarSafe)
             .execTransactionFromModule(asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0);
         require(success, "KpkOivFactory: approve module call failed");
+        require(
+            IERC20(asset).allowance(avatarSafe, spender) == type(uint256).max,
+            "KpkOivFactory: approve did not set allowance"
+        );
     }
 
     // ── Internal: validation ────────────────────────────────────────────────────

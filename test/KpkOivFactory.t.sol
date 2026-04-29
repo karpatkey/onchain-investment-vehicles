@@ -63,7 +63,7 @@ contract KpkOivFactoryTest is Test {
 
     // ── deployOiv tests ────────────────────────────────────────────────────────
 
-    function test_deployOiv_deploysAllSixContracts() public {
+    function test_deployOiv_deploysAllSevenContracts() public {
         KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
         assertTrue(inst.avatarSafe != address(0), "avatarSafe not deployed");
@@ -71,6 +71,7 @@ contract KpkOivFactoryTest is Test {
         assertTrue(inst.execRolesModifier != address(0), "execRolesModifier not deployed");
         assertTrue(inst.subRolesModifier != address(0), "subRolesModifier not deployed");
         assertTrue(inst.managerRolesModifier != address(0), "managerRolesModifier not deployed");
+        assertTrue(inst.kpkSharesImpl != address(0), "kpkSharesImpl not deployed");
         assertTrue(inst.kpkSharesProxy != address(0), "kpkSharesProxy not deployed");
     }
 
