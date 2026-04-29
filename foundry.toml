@@ -23,5 +23,13 @@ no_match_test = "upgrade"
 # Exclude script folder from coverage reports (regex pattern)
 no_match_coverage = "^script/"
 
+[rpc_endpoints]
+mainnet  = "${MAINNET_URL}"
+sepolia  = "${SEPOLIA_URL}"
+gnosis   = "${GNOSIS_URL}"
+arbitrum = "${ARBITRUM_URL}"
+base     = "${BASE_URL}"
+optimism = "${OP_URL}"
+
 [etherscan]
 sepolia = { key = "${ETHERSCAN_API_KEY}" }

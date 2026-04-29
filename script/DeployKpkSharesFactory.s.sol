@@ -10,9 +10,20 @@ import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 ///         Infrastructure addresses can be updated by the owner post-deployment via the setter functions.
 ///         Each fund deployed via deployFund() gets a fresh KpkShares implementation from KpkSharesDeployer.
 ///
-/// Usage:
-///   forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
-///     --rpc-url $ETH_RPC_URL \
+/// Usage (import key first with `cast wallet import $MAINNET_DEPLOYER_NAME --interactive`):
+///
+///   # Mainnet
+///   source .env && forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
+///     --rpc-url mainnet \
+///     --account $MAINNET_DEPLOYER_NAME \
+///     --broadcast \
+///     --verify \
+///     --sig "run(address)" <ownerAddress>
+///
+///   # Sepolia
+///   source .env && forge script script/DeployKpkSharesFactory.s.sol:DeployKpkSharesFactory \
+///     --rpc-url sepolia \
+///     --account $SEPOLIA_DEPLOYER_NAME \
 ///     --broadcast \
 ///     --verify \
 ///     --sig "run(address)" <ownerAddress>
