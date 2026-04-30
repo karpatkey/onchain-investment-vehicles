@@ -8,6 +8,12 @@ lcov.info
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
+# kUSD production deploy artifacts (kept local, not in remote)
+/broadcast/DeployKpkUsdProductionOiv.s.sol/
+/broadcast/DeployKpkUsdProductionStack.s.sol/
+/script/DeployKpkUsdProductionOiv.s.sol
+/script/DeployKpkUsdProductionStack.s.sol
+
 # Docs
 docs/
 

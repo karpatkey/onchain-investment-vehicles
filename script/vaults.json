@@ -27,7 +27,7 @@
           "vaultName": "kUSD",
           "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           "additionalAssets": ["0xdAC17F958D2ee523a2206206994597C13D831ec7"],
-          "admin": "0x9D73C053afcbF6CD5c8986C3f049fD2Ce005730C",
+          "admin": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
           "operator": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
           "name": "kpk USD Alpha Fund",
           "symbol": "kUSD",
