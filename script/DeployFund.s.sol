@@ -108,15 +108,12 @@ contract DeployFund is Script {
         config.sharesParams.asset = json.readAddress(".oiv.sharesParams.asset");
         config.sharesParams.name = json.readString(".oiv.sharesParams.name");
         config.sharesParams.symbol = json.readString(".oiv.sharesParams.symbol");
-        config.sharesParams.subscriptionRequestTtl =
-            uint64(json.readUint(".oiv.sharesParams.subscriptionRequestTtl"));
-        config.sharesParams.redemptionRequestTtl =
-            uint64(json.readUint(".oiv.sharesParams.redemptionRequestTtl"));
+        config.sharesParams.subscriptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.subscriptionRequestTtl"));
+        config.sharesParams.redemptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.redemptionRequestTtl"));
         config.sharesParams.feeReceiver = json.readAddress(".oiv.sharesParams.feeReceiver");
         config.sharesParams.managementFeeRate = json.readUint(".oiv.sharesParams.managementFeeRate");
         config.sharesParams.redemptionFeeRate = json.readUint(".oiv.sharesParams.redemptionFeeRate");
-        config.sharesParams.performanceFeeModule =
-            json.readAddress(".oiv.sharesParams.performanceFeeModule");
+        config.sharesParams.performanceFeeModule = json.readAddress(".oiv.sharesParams.performanceFeeModule");
         config.sharesParams.performanceFeeRate = json.readUint(".oiv.sharesParams.performanceFeeRate");
 
         config.additionalAssets = _readAdditionalAssets(json);
