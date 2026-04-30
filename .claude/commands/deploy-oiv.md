@@ -1,259 +1,259 @@
-# /deploy-oiv — Deployment guiado de un OIV
+# /deploy-oiv — Guided OIV fund deployment
 
-Este skill guia al usuario paso a paso para deployar un nuevo fondo OIV via `KpkOivFactory`.
-La factory ya está deployada en todas las chains. Este proceso deploya el fondo en sí.
+This skill walks the user through deploying a new OIV fund via `KpkOivFactory` step by step.
+The factory is already deployed on all supported chains. This process deploys the fund itself.
 
-Contexto técnico mínimo:
-- `deployOiv` (mainnet): deploya toda la infraestructura del fondo + el token de shares (ERC-20).
-- `deployStack` (sidechains): deploya solo la infraestructura operativa (sin token de shares).
-- Ambas funciones son permissionless. El deployer no retiene ningún rol privilegiado post-deployment.
-- El mismo `salt` + mismo `caller` (address del deployer) produce las mismas 5 direcciones de infraestructura en todas las chains. Esto es crítico para la coherencia cross-chain.
-
----
-
-## Instrucciones para Claude
-
-Seguí estos pasos en orden. Hacé **una pregunta a la vez**, esperá la respuesta del usuario y validá antes de continuar.
-Usá español en todas las interacciones. Si el usuario da una respuesta inválida, explicá el problema y pedí que lo corrija.
+Minimal technical context:
+- `deployOiv` (mainnet): deploys the full fund infrastructure + the shares token (ERC-20).
+- `deployStack` (sidechains): deploys only the operational backbone (no shares token).
+- Both functions are permissionless. The deployer retains no privileged role after deployment.
+- The same `salt` + same `caller` (deployer address) produces identical infrastructure addresses on every chain. This is critical for cross-chain consistency.
 
 ---
 
-### FASE 1 — Verificación del entorno
+## Instructions for Claude
 
-**Paso 1.1: Verificar Foundry**
-
-Corré `forge --version` y `cast --version`.
-
-- Si alguno falla: informale al usuario que Foundry no está instalado y preguntá si querés que lo instale ahora.
-  - Si acepta: corré `curl -L https://foundry.paradigm.xyz | bash` y luego `foundryup`. Avisale que puede que necesite reiniciar el terminal.
-  - Si rechaza: avisale que sin Foundry no se puede continuar y terminá el skill.
-- Si ambos están presentes: confirmá la versión y continuá.
-
-**Paso 1.2: Verificar dependencias del proyecto**
-
-Corré `forge build` para verificar que el proyecto compila.
-
-- Si falla con errores de dependencias: corré `forge install` y reintentá.
-- Si falla por otro motivo: mostrá el error y pedí ayuda manual.
-- Si compila: continuá.
-
-**Paso 1.3: Verificar el archivo `.env`**
-
-Revisá si existe un archivo `.env` en el directorio raíz del proyecto.
-
-Si no existe, crealo vacío y avisale al usuario. Luego verificá que `.env` esté en `.gitignore`:
-- Si no está: agregalo al `.gitignore` antes de continuar.
-
-**Paso 1.4: Configurar la private key del deployer**
-
-Preguntá:
-
-> "Para hacer el deployment necesitás una cuenta con ETH para pagar el gas.
-> Tenés ya una private key de deployer, o querés que generemos una nueva?"
-
-**Si ya tiene una:**
-- Pedile que la ingrese (solo para escribirla en `.env`, nunca la muestres en pantalla).
-- Escribila en `.env` como `PRIVATE_KEY=0x<la_key>`.
-- Mostrá la address pública: `cast wallet address --private-key $PRIVATE_KEY`.
-- Confirmá que esa es la cuenta que va a deployar.
-
-**Si quiere generar una nueva:**
-- Corré `cast wallet new` y capturá el output.
-- Escribí solo la private key en `.env` como `PRIVATE_KEY=0x<la_key>`.
-- Mostrá al usuario **solo la address pública** y el mensaje:
-  > "Wallet generada. Address del deployer: `<address>`
-  > Esta cuenta necesita ETH en cada chain donde vayas a deployar para pagar el gas.
-  > El deployer no retiene ningún rol privilegiado después del deployment — todas las
-  > responsabilidades quedan en el admin y el Manager Safe que configures a continuación.
-  > Fondeala antes de continuar."
-- Preguntá: "¿Ya fondeaste la cuenta, o necesitás tiempo para hacerlo?"
-  - Si necesita tiempo: avisale que puede retomar el proceso más tarde con `/deploy-oiv` y terminá.
-
-**Paso 1.5: Verificar RPC URLs**
-
-Preguntá qué chains va a deployar (mainnet, arbitrum, base, optimism, gnosis).
-Según la respuesta, chequeá si las variables de entorno correspondientes están seteadas en `.env`:
-
-| Chain     | Variable requerida    |
-|-----------|----------------------|
-| Mainnet   | `MAINNET_RPC_URL`    |
-| Arbitrum  | `ARBITRUM_RPC_URL`   |
-| Base      | `BASE_RPC_URL`       |
-| Optimism  | `OPTIMISM_RPC_URL`   |
-| Gnosis    | `GNOSIS_RPC_URL`     |
-
-Para cada chain seleccionada que no tenga RPC URL seteada, pedí al usuario que la agregue al `.env`.
-Podés sugerir que use Alchemy (alchemy.com) o Infura (infura.io) como proveedores gratuitos.
-No continúes hasta que todas las RPC URLs necesarias estén configuradas.
+Follow these steps in order. Ask **one question at a time**, wait for the user's answer, and validate before continuing.
+Use English in all interactions. If the user provides an invalid answer, explain the problem and ask them to correct it.
 
 ---
 
-### FASE 2 — Tipo de deployment
+### PHASE 1 — Environment setup
 
-Preguntá:
+**Step 1.1: Check Foundry**
 
-> "¿Qué tipo de deployment querés hacer?
-> 1. **OIV completo** — deploya la infraestructura del fondo + el token de shares en mainnet, y la infraestructura en las sidechains seleccionadas.
-> 2. **Solo infraestructura** — deploya solo el backbone operativo (sin token de shares) en las chains seleccionadas. Útil para agregar soporte de una nueva chain a un fondo existente."
+Run `forge --version` and `cast --version`.
 
-Guardá la respuesta como `deployment_type` (valores: `full_oiv` o `stack_only`).
+- If either fails: inform the user that Foundry is not installed and ask if they want to install it now.
+  - If yes: run `curl -L https://foundry.paradigm.xyz | bash` and then `foundryup`. Let them know they may need to restart their terminal.
+  - If no: let them know Foundry is required to continue and end the skill.
+- If both are present: confirm the version and continue.
 
-Si eligió `full_oiv`, preguntá qué sidechains además de mainnet (puede ser ninguna):
-> "Además de mainnet, ¿en qué sidechains querés deployar la infraestructura? (arbitrum, base, optimism, gnosis, o ninguna)"
+**Step 1.2: Check project dependencies**
 
-Si eligió `stack_only`, preguntá en qué chains:
-> "¿En qué chains querés deployar la infraestructura? (arbitrum, base, optimism, gnosis)"
+Run `forge build` to verify the project compiles.
+
+- If it fails with dependency errors: run `forge install` and retry.
+- If it fails for another reason: show the full error and ask for manual help.
+- If it compiles: continue.
+
+**Step 1.3: Check the `.env` file**
+
+Check if a `.env` file exists at the project root.
+
+If it does not exist, create it empty and inform the user. Then check that `.env` is in `.gitignore`:
+- If it is not: add it to `.gitignore` before continuing.
+
+**Step 1.4: Set up the deployer private key**
+
+Ask:
+
+> "To deploy, you need an account with ETH to pay for gas.
+> Do you already have a deployer private key, or would you like to generate a new wallet?"
+
+**If they already have one:**
+- Ask them to enter it (only to write it to `.env` — never display it).
+- Write it to `.env` as `PRIVATE_KEY=0x<the_key>`.
+- Show the public address: run `cast wallet address --private-key $PRIVATE_KEY`.
+- Confirm that is the account that will deploy.
+
+**If they want to generate a new one:**
+- Run `cast wallet new` and capture the output.
+- Write only the private key to `.env` as `PRIVATE_KEY=0x<the_key>`.
+- Show the user **only the public address** with this message:
+  > "Wallet generated. Deployer address: `<address>`
+  > This account needs ETH on each chain you deploy to in order to pay for gas.
+  > The deployer retains no privileged role after deployment — all authority transfers
+  > to the admin address and Manager Safe you configure below.
+  > Please fund it before continuing."
+- Ask: "Have you funded the account, or do you need time to do it?"
+  - If they need time: let them know they can resume later with `/deploy-oiv` and end the skill.
+
+**Step 1.5: Check RPC URLs**
+
+Ask which chains they plan to deploy to (mainnet, arbitrum, base, optimism, gnosis).
+Based on the answer, check whether the corresponding environment variables are set in `.env`:
+
+| Chain     | Required variable     |
+|-----------|-----------------------|
+| Mainnet   | `MAINNET_RPC_URL`     |
+| Arbitrum  | `ARBITRUM_RPC_URL`    |
+| Base      | `BASE_RPC_URL`        |
+| Optimism  | `OPTIMISM_RPC_URL`    |
+| Gnosis    | `GNOSIS_RPC_URL`      |
+
+For each selected chain missing an RPC URL, ask the user to add it to `.env`.
+You can suggest Alchemy (alchemy.com) or Infura (infura.io) as free providers.
+Do not continue until all required RPC URLs are configured.
 
 ---
 
-### FASE 3 — Identidad del fondo
+### PHASE 2 — Deployment type
 
-**Paso 3.1: Nombre del fondo**
+Ask:
 
-Preguntá:
-> "¿Cuál es el nombre del fondo? (ej: 'kpk USD Beta Fund')"
+> "What type of deployment do you want to do?
+> 1. **Full OIV** — deploys the fund infrastructure + shares token on mainnet, and the infrastructure on the selected sidechains.
+> 2. **Infrastructure only** — deploys the operational backbone (no shares token) on the selected chains. Useful for adding a new chain to an existing fund."
 
-Usá la respuesta para derivar un `slug` en minúsculas sin espacios (ej: `kpk-usd-beta-fund`).
-El slug se va a usar como nombre del archivo de configuración.
+Store the answer as `deployment_type` (values: `full_oiv` or `stack_only`).
 
-**Paso 3.2: Símbolo del token** (solo si `deployment_type == full_oiv`)
+If they chose `full_oiv`, ask which sidechains in addition to mainnet (can be none):
+> "Besides mainnet, which sidechains do you want to deploy the infrastructure to? (arbitrum, base, optimism, gnosis, or none)"
 
-Preguntá:
-> "¿Cuál va a ser el símbolo del token de shares? (ej: 'kUSDB' — máximo 8 caracteres, sin espacios)"
-
----
-
-### FASE 4 — Manager Safe
-
-Preguntá:
-> "¿Cuáles son las addresses de los firmantes del Manager Safe?
-> Ingresalas separadas por coma. (ej: 0xAbc..., 0xDef...)"
-
-Validá cada address: debe ser un string hexadecimal de 42 caracteres que empiece con `0x`.
-Si alguna es inválida, indicá cuál y pedí que la corrija.
-No pueden haber addresses duplicadas.
-
-Luego preguntá:
-> "¿Cuántas firmas se requieren para aprobar una transacción? (debe ser mayor a 0 y menor o igual a la cantidad de firmantes)"
-
-Validá que el threshold sea `> 0` y `<= cantidad de owners`.
+If they chose `stack_only`, ask which chains:
+> "Which chains do you want to deploy the infrastructure to? (arbitrum, base, optimism, gnosis)"
 
 ---
 
-### FASE 5 — Admin y autoridad
+### PHASE 3 — Fund identity
 
-**Para `full_oiv`:**
+**Step 3.1: Fund name**
 
-Preguntá:
-> "¿Cuál es la address del admin del fondo? El admin recibe control sobre el módulo de ejecución (exec Roles Modifier) y el rol DEFAULT_ADMIN_ROLE en el token de shares.
+Ask:
+> "What is the name of the fund? (e.g. 'kpk USD Beta Fund')"
+
+Derive a lowercase `slug` without spaces from the answer (e.g. `kpk-usd-beta-fund`).
+The slug will be used as the config file name.
+
+**Step 3.2: Token symbol** (only if `deployment_type == full_oiv`)
+
+Ask:
+> "What will the shares token symbol be? (e.g. 'kUSDB' — max 8 characters, no spaces)"
+
+---
+
+### PHASE 4 — Manager Safe
+
+Ask:
+> "What are the signer addresses for the Manager Safe?
+> Enter them separated by commas. (e.g. 0xAbc..., 0xDef...)"
+
+Validate each address: must be a 42-character hex string starting with `0x`.
+If any is invalid, indicate which one and ask the user to correct it.
+Duplicate addresses are not allowed.
+
+Then ask:
+> "How many signatures are required to approve a transaction? (must be greater than 0 and no more than the number of signers)"
+
+Validate that threshold is `> 0` and `<= number of owners`.
+
+---
+
+### PHASE 5 — Admin and authority
+
+**For `full_oiv`:**
+
+Ask:
+> "What is the admin address for the fund? The admin receives control over the exec Roles Modifier and the DEFAULT_ADMIN_ROLE on the shares token.
 > Default: Security Council Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`
-> (Presioná Enter para usar el default, o ingresá otra address)"
+> (Press Enter to use the default, or enter a different address)"
 
-Si el usuario presiona Enter o deja vacío, usá `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`.
-Validá que la address no sea `0x0000000000000000000000000000000000000000`.
+If the user presses Enter or leaves it blank, use `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`.
+Validate that the address is not `0x0000000000000000000000000000000000000000`.
 
-**Para `stack_only`:**
+**For `stack_only`:**
 
-Preguntá:
-> "¿Cuál es la address que recibirá ownership del exec Roles Modifier? Típicamente el Security Council Safe.
+Ask:
+> "What address will receive ownership of the exec Roles Modifier? Typically the Security Council Safe.
 > Default: `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`
-> (Presioná Enter para usar el default, o ingresá otra address)"
+> (Press Enter to use the default, or enter a different address)"
 
 ---
 
-### FASE 6 — Parámetros del token de shares (solo `full_oiv`)
+### PHASE 6 — Shares token parameters (only for `full_oiv`)
 
-**Paso 6.1: Asset base**
+**Step 6.1: Base asset**
 
-Preguntá:
-> "¿Cuál es el asset base del fondo? Es el token principal para subscripciones y redenciones.
-> Opciones comunes (mainnet):
+Ask:
+> "What is the fund's base asset? This is the primary token for subscriptions and redemptions.
+> Common options (mainnet):
 >   1. USDC  — `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
 >   2. USDT  — `0xdAC17F958D2ee523a2206206994597C13D831ec7`
 >   3. WETH  — `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`
->   4. Otra address (ingresala directamente)"
+>   4. Other (enter the address directly)"
 
-Guardá la address del asset base.
+Store the base asset address.
 
-**Paso 6.2: Assets adicionales**
+**Step 6.2: Additional assets**
 
-Preguntá:
-> "¿Querés habilitar assets adicionales para subscripciones o redenciones además del asset base? (sí/no)"
+Ask:
+> "Do you want to enable additional assets for subscriptions or redemptions beyond the base asset? (yes/no)"
 
-Si dice sí, pedí por cada asset:
-> "Ingresá la address del asset adicional:"
-> "¿Se puede usar para **subscripciones** (depósitos)? (sí/no)"
-> "¿Se puede usar para **redenciones** (retiros)? (sí/no)"
+If yes, for each asset ask:
+> "Enter the address of the additional asset:"
+> "Can it be used for **subscriptions** (deposits)? (yes/no)"
+> "Can it be used for **redemptions** (withdrawals)? (yes/no)"
 
-Seguí preguntando hasta que diga que no quiere agregar más. Máximo 20 assets adicionales.
-Validá que no se repita el asset base ni addresses duplicadas.
+Keep asking until the user says no more. Maximum 20 additional assets.
+Validate that no asset is the same as the base asset and that there are no duplicates.
 
-**Paso 6.3: Fees**
+**Step 6.3: Fees**
 
-Presentá este bloque de preguntas con contexto:
-> "Ahora configuramos las comisiones del fondo. Todas se expresan en porcentaje (%) y el máximo es 20%."
+Introduce this section with:
+> "Now let's configure the fund's fees. All fees are expressed as percentages (%) and the maximum is 20%."
 
-Preguntá cada una por separado:
+Ask each one separately:
 
-- **Management fee** (comisión anual de gestión):
-  > "¿Cuál es la management fee anual? (ej: 1.5 para 1.5%, o 0 para no cobrar)"
+- **Management fee** (annual management fee):
+  > "What is the annual management fee? (e.g. 1.5 for 1.5%, or 0 for none)"
 
-- **Redemption fee** (comisión por retiro):
-  > "¿Cuál es la redemption fee por cada retiro? (ej: 0.5 para 0.5%, o 0 para no cobrar)"
+- **Redemption fee** (fee per withdrawal):
+  > "What is the redemption fee per withdrawal? (e.g. 0.5 for 0.5%, or 0 for none)"
 
-- **Performance fee** (comisión sobre ganancias):
-  > "¿Hay performance fee? (sí/no)"
-  - Si dice sí: preguntá el porcentaje y la address del módulo de performance fee.
-    > "¿Cuánto es la performance fee? (ej: 10 para 10%)"
-    > "¿Cuál es la address del módulo de performance fee?"
-  - Si dice no: usá `0x0000000000000000000000000000000000000000` y 0%.
+- **Performance fee** (fee on gains):
+  > "Is there a performance fee? (yes/no)"
+  - If yes: ask for the percentage and the performance fee module address.
+    > "What is the performance fee percentage? (e.g. 10 for 10%)"
+    > "What is the address of the performance fee module?"
+  - If no: use `0x0000000000000000000000000000000000000000` and 0%.
 
-Convertí todos los porcentajes a basis points internamente: `bps = porcentaje * 100`.
-Validá que ningún fee supere 2000 bps (20%).
+Convert all percentages to basis points internally: `bps = percentage * 100`.
+Validate that no fee exceeds 2000 bps (20%).
 
-**Paso 6.4: Fee receiver**
+**Step 6.4: Fee receiver**
 
-Preguntá:
-> "¿A qué address se envían las comisiones (management fee, redemption fee, performance fee)?"
+Ask:
+> "What address should receive the fees (management fee, redemption fee, performance fee)?"
 
-Validá que no sea address cero.
+Validate that it is not the zero address.
 
-**Paso 6.5: TTLs (períodos de cancelación)**
+**Step 6.5: TTLs (cancellation periods)**
 
-Explicá y preguntá:
-> "Los TTLs definen el tiempo mínimo que un inversor debe esperar antes de poder cancelar una solicitud pendiente."
+Introduce with:
+> "TTLs define the minimum time an investor must wait before they can cancel a pending request."
 
-- **TTL de subscripción:**
-  > "¿Cuántos días debe esperar un inversor para cancelar una solicitud de subscripción? (mínimo 1, máximo 7)"
+- **Subscription TTL:**
+  > "How many days must an investor wait to cancel a subscription request? (min 1, max 7)"
 
-- **TTL de redención:**
-  > "¿Cuántos días debe esperar un inversor para cancelar una solicitud de redención? (mínimo 1, máximo 7)"
+- **Redemption TTL:**
+  > "How many days must an investor wait to cancel a redemption request? (min 1, max 7)"
 
-Convertí a segundos internamente: `segundos = días * 86400`.
-
----
-
-### FASE 7 — Salt
-
-Preguntá:
-> "El salt es un número que determina las direcciones del fondo en todas las chains.
-> El mismo salt + la misma cuenta deployer produce las mismas direcciones en mainnet, Arbitrum, Base, etc.
-> ¿Querés usar salt 0 (recomendado para el primer deployment de este fondo), o ingresás un número específico?"
-
-Si el usuario presiona Enter o dice "0" o "default", usá `0`.
-Si ingresa un número, validá que sea un entero no negativo.
+Convert to seconds internally: `seconds = days * 86400`.
 
 ---
 
-### FASE 8 — Generación del archivo de configuración
+### PHASE 7 — Salt
 
-Construí el JSON de configuración con los datos recopilados.
+Ask:
+> "The salt is a number that determines the fund's contract addresses on all chains.
+> The same salt + same deployer account produces the same addresses on mainnet, Arbitrum, Base, etc.
+> Do you want to use salt 0 (recommended for the first deployment of this fund), or specify a different number?"
 
-Para `full_oiv`, el archivo tiene esta estructura:
+If the user presses Enter, says "0", or "default", use `0`.
+If they enter a number, validate that it is a non-negative integer.
+
+---
+
+### PHASE 8 — Generate the config file
+
+Build the configuration JSON from the collected data.
+
+For `full_oiv`, the file has this structure:
 
 ```json
 {
-  "fundName": "<nombre del fondo>",
+  "fundName": "<fund name>",
   "managerSafe": {
     "owners": ["<owner1>", "<owner2>", "..."],
     "threshold": <threshold>
@@ -264,10 +264,10 @@ Para `full_oiv`, el archivo tiene esta estructura:
     "admin": "<admin_address>",
     "sharesParams": {
       "asset": "<asset_address>",
-      "name": "<nombre del fondo>",
-      "symbol": "<simbolo>",
-      "subscriptionRequestTtl": <ttl_en_segundos>,
-      "redemptionRequestTtl": <ttl_en_segundos>,
+      "name": "<fund name>",
+      "symbol": "<symbol>",
+      "subscriptionRequestTtl": <ttl_in_seconds>,
+      "redemptionRequestTtl": <ttl_in_seconds>,
       "feeReceiver": "<fee_receiver_address>",
       "managementFeeRate": <management_fee_bps>,
       "redemptionFeeRate": <redemption_fee_bps>,
@@ -286,48 +286,48 @@ Para `full_oiv`, el archivo tiene esta estructura:
 }
 ```
 
-Para `stack_only`, omití el objeto `"oiv"` y usá solo las keys comunes.
+For `stack_only`, omit the `"oiv"` object and use only the common keys.
 
-Guardá el archivo en `script/<slug>-config.json`.
+Save the file to `script/<slug>-config.json`.
 
-Luego mostrá un resumen formateado de todos los parámetros al usuario:
-> "Antes de deployar, revisá la configuración del fondo:
-> [mostrar resumen en lenguaje no técnico, convirtiendo bps a % y segundos a días]"
+Then show the user a formatted summary of all parameters:
+> "Before deploying, please review the fund configuration:
+> [show a human-readable summary, converting bps to % and seconds to days]"
 
-Pedí confirmación:
-> "¿Todo está correcto? (sí para continuar, no para corregir algún parámetro)"
+Ask for confirmation:
+> "Does everything look correct? (yes to continue, no to correct a parameter)"
 
-Si dice no: preguntá qué quiere corregir y volvé al paso correspondiente.
+If no: ask what they want to correct and go back to the corresponding step.
 
 ---
 
-### FASE 9 — Preview de direcciones (solo `full_oiv`)
+### PHASE 9 — Address preview (only for `full_oiv`)
 
-Antes del deployment, mostrá las direcciones predichas:
+Before deployment, show the predicted addresses:
 
-Corré:
+Run:
 ```
 source .env && forge script script/DeployFund.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
 ```
 
-Explicale al usuario:
-> "Estas son las direcciones que va a tener el fondo en **todas** las chains (son deterministas).
-> Las direcciones del token de shares (kpkShares) no se pueden predecir de antemano."
+Explain to the user:
+> "These are the addresses the fund will have on **all** chains (they are deterministic).
+> The shares token addresses (kpkShares) cannot be predicted in advance."
 
 ---
 
-### FASE 10 — Ejecución del deployment
+### PHASE 10 — Execute deployment
 
-Preguntá:
-> "¿Querés ejecutar el deployment ahora, o preferís que te genere los comandos para correrlos manualmente después?"
+Ask:
+> "Do you want to execute the deployment now, or would you prefer that I generate the commands for you to run manually later?"
 
-**Si quiere ejecutar ahora:**
+**If they want to execute now:**
 
-Ejecutá los comandos en este orden:
+Run the commands in this order:
 
-1. **Mainnet** (si `full_oiv`):
+1. **Mainnet** (if `full_oiv`):
 ```
 source .env && forge script script/DeployFund.s.sol \
   --sig "deployOiv(string)" "script/<slug>-config.json" \
@@ -335,7 +335,7 @@ source .env && forge script script/DeployFund.s.sol \
   --broadcast
 ```
 
-2. **Cada sidechain** (en orden: arbitrum, base, optimism, gnosis):
+2. **Each sidechain** (in order: arbitrum, base, optimism, gnosis):
 ```
 source .env && forge script script/DeployFund.s.sol \
   --sig "deployStack(string)" "script/<slug>-config.json" \
@@ -343,64 +343,64 @@ source .env && forge script script/DeployFund.s.sol \
   --broadcast
 ```
 
-Después de cada deployment exitoso:
-- Mostrá las direcciones desplegadas.
-- Confirmá con el usuario antes de continuar con la siguiente chain.
-- Si un deployment falla: mostrá el error completo, no continúes con las chains restantes, y pedile al usuario que lo reporte.
+After each successful deployment:
+- Show the deployed addresses.
+- Confirm with the user before continuing to the next chain.
+- If a deployment fails: show the full error, do not continue with remaining chains, and ask the user to report it.
 
-**Si prefiere hacerlo manualmente:**
+**If they prefer to run manually:**
 
-Generá un archivo `script/<slug>-deploy-commands.sh` con todos los comandos listos:
+Generate a file `script/<slug>-deploy-commands.sh` with all commands ready:
 
 ```bash
 #!/bin/bash
-# Deployment del fondo: <nombre>
-# Ejecutá este script desde la raíz del repositorio.
-# Asegurate de tener el archivo .env configurado con PRIVATE_KEY y las RPC URLs.
+# Fund deployment: <name>
+# Run this script from the repository root.
+# Make sure your .env file has PRIVATE_KEY and all required RPC URLs configured.
 
 source .env
 
-echo "=== Predicción de direcciones (sin deployment) ==="
+echo "=== Address prediction (no deployment) ==="
 forge script script/DeployFund.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
 
-# Descomentá las líneas de abajo para ejecutar el deployment:
+# Uncomment the lines below to execute the deployment:
 
-# echo "=== Deployment en Mainnet (deployOiv) ==="
+# echo "=== Mainnet deployment (deployOiv) ==="
 # forge script script/DeployFund.s.sol \
 #   --sig "deployOiv(string)" "script/<slug>-config.json" \
 #   --rpc-url $MAINNET_RPC_URL \
 #   --broadcast
 
-# echo "=== Deployment en Arbitrum (deployStack) ==="
+# echo "=== Arbitrum deployment (deployStack) ==="
 # forge script script/DeployFund.s.sol \
 #   --sig "deployStack(string)" "script/<slug>-config.json" \
 #   --rpc-url $ARBITRUM_RPC_URL \
 #   --broadcast
 
-# [resto de chains...]
+# [remaining chains...]
 ```
 
-Mostrá un mensaje final:
-> "Los archivos están listos:
-> - `script/<slug>-config.json` — configuración del fondo
-> - `script/<slug>-deploy-commands.sh` — comandos de deployment
+Show a final message:
+> "Your files are ready:
+> - `script/<slug>-config.json` — fund configuration
+> - `script/<slug>-deploy-commands.sh` — deployment commands
 >
-> Cuando estés listo para deployar, ejecutá `bash script/<slug>-deploy-commands.sh`
-> o descomentá los comandos de deployment en ese archivo."
+> When you are ready to deploy, run `bash script/<slug>-deploy-commands.sh`
+> or uncomment the deployment commands in that file."
 
 ---
 
-## Notas para Claude
+## Notes for Claude
 
-- Nunca muestres la private key en pantalla. Solo escribila en `.env`.
-- El deployer EOA no retiene ningún rol post-deployment. Toda la autoridad queda en `admin` y `managerSafe`.
-- El mismo `PRIVATE_KEY` debe usarse para todas las chains para garantizar determinismo de addresses.
-- Si el usuario interrumpe el proceso, el archivo de config guardado hasta ese punto se puede retomar.
-- Los campos `sharesParams.admin` y `sharesParams.safe` los ignora la factory (los sobreescribe internamente). No los incluyas en el JSON ni los preguntes al usuario.
-- Los campos `subRolesMod.finalOwner` y `managerRolesMod.finalOwner` siempre quedan en el Manager Safe (la factory los ignora). No los preguntes al usuario.
-- Addresses conocidas en mainnet para referencia rápida:
+- Never display the private key. Only write it to `.env`.
+- The deployer EOA retains no role after deployment. All authority stays with `admin` and `managerSafe`.
+- The same `PRIVATE_KEY` must be used across all chains to guarantee address determinism.
+- If the user interrupts the process, the config file saved so far can be resumed later.
+- `sharesParams.admin` and `sharesParams.safe` are ignored by the factory (overridden internally). Do not include them in the JSON or ask the user for them.
+- `subRolesMod.finalOwner` and `managerRolesMod.finalOwner` always go to the Manager Safe (the factory ignores them). Do not ask the user for them.
+- Known mainnet addresses for quick reference:
   - USDC: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
   - USDT: `0xdAC17F958D2ee523a2206206994597C13D831ec7`
   - WETH: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`
