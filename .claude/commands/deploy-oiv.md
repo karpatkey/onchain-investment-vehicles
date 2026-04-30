@@ -307,7 +307,7 @@ Before deployment, show the predicted addresses:
 
 Run:
 ```
-source .env && forge script script/DeployFund.s.sol \
+source .env && forge script script/DeployOiv.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
 ```
@@ -329,7 +329,7 @@ Run the commands in this order:
 
 1. **Mainnet** (if `full_oiv`):
 ```
-source .env && forge script script/DeployFund.s.sol \
+source .env && forge script script/DeployOiv.s.sol \
   --sig "deployOiv(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL \
   --broadcast
@@ -337,7 +337,7 @@ source .env && forge script script/DeployFund.s.sol \
 
 2. **Each sidechain** (in order: arbitrum, base, optimism, gnosis):
 ```
-source .env && forge script script/DeployFund.s.sol \
+source .env && forge script script/DeployOiv.s.sol \
   --sig "deployStack(string)" "script/<slug>-config.json" \
   --rpc-url $<CHAIN>_RPC_URL \
   --broadcast
@@ -361,20 +361,20 @@ Generate a file `script/<slug>-deploy-commands.sh` with all commands ready:
 source .env
 
 echo "=== Address prediction (no deployment) ==="
-forge script script/DeployFund.s.sol \
+forge script script/DeployOiv.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
 
 # Uncomment the lines below to execute the deployment:
 
 # echo "=== Mainnet deployment (deployOiv) ==="
-# forge script script/DeployFund.s.sol \
+# forge script script/DeployOiv.s.sol \
 #   --sig "deployOiv(string)" "script/<slug>-config.json" \
 #   --rpc-url $MAINNET_RPC_URL \
 #   --broadcast
 
 # echo "=== Arbitrum deployment (deployStack) ==="
-# forge script script/DeployFund.s.sol \
+# forge script script/DeployOiv.s.sol \
 #   --sig "deployStack(string)" "script/<slug>-config.json" \
 #   --rpc-url $ARBITRUM_RPC_URL \
 #   --broadcast

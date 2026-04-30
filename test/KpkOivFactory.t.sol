@@ -635,7 +635,7 @@ contract KpkOivFactoryTest is Test {
         );
     }
 
-    function test_deployStack_wiringMatchesDeployFund() public {
+    function test_deployStack_wiringMatchesDeployOiv() public {
         KpkOivFactory.StackConfig memory stackCfg = _buildStackConfig();
 
         KpkOivFactory.StackInstance memory inst = factory.deployStack(stackCfg);

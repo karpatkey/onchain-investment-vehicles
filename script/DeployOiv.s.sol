@@ -23,7 +23,7 @@ import {KpkShares} from "../src/kpkShares.sol";
  *   - predict() must be called with --rpc-url pointing to a chain where the factory is deployed.
  *   - Additional assets array is capped at 20 entries.
  */
-contract DeployFund is Script {
+contract DeployOiv is Script {
     using stdJson for string;
 
     address constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
