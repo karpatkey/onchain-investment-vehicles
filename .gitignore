@@ -16,3 +16,6 @@ docs/
 
 # IDEs
 .idea
+
+# Local Claude Code state
+.claude/

@@ -2,6 +2,9 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# Pinned to match the solc version baked into the deployed KpkSharesDeployer bytecode.
+# Don't bump without redeploying KpkSharesDeployer + KpkOivFactory.
+solc_version = "0.8.34"
 fs_permissions = [
   { access = "read-write", path = "script" },
   { access = "read-write", path = "out" },
@@ -32,4 +35,10 @@ base     = "${BASE_URL}"
 optimism = "${OP_URL}"
 
 [etherscan]
-sepolia = { key = "${ETHERSCAN_API_KEY}" }
+# Etherscan v2 multichain API key — one key covers mainnet, optimism, base, arbitrum, gnosis, sepolia.
+mainnet  = { key = "${ETHERSCAN_API_KEY}" }
+optimism = { key = "${ETHERSCAN_API_KEY}" }
+arbitrum = { key = "${ETHERSCAN_API_KEY}" }
+base     = { key = "${ETHERSCAN_API_KEY}" }
+gnosis   = { key = "${ETHERSCAN_API_KEY}" }
+sepolia  = { key = "${ETHERSCAN_API_KEY}" }
