@@ -76,8 +76,11 @@ contract DeployKpkUsdProductionOiv is Script {
         require(FACTORY.code.length > 0, "DeployKpkUsdProductionOiv: factory not deployed at expected address");
 
         // 1. Read shares params + admin from vaults.json.
-        (KpkShares.ConstructorParams memory sharesParams, KpkOivFactory.AssetConfig[] memory additionalAssets, address admin) =
-            _loadFromJson();
+        (
+            KpkShares.ConstructorParams memory sharesParams,
+            KpkOivFactory.AssetConfig[] memory additionalAssets,
+            address admin
+        ) = _loadFromJson();
 
         // 2. Build OivConfig with feeReceiver = address(0) initially. We'll fill it in after
         //    we predict the Manager Safe. feeReceiver does not enter the Manager/Avatar Safe
