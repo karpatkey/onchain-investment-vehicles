@@ -22,23 +22,23 @@
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
           "performanceFeeRate": 0
         },
-        {          
+        {
           "environment": "production",
           "vaultName": "kUSD",
           "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           "additionalAssets": ["0xdAC17F958D2ee523a2206206994597C13D831ec7"],
           "admin": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
-          "operator": "0x0Efb42C55F73ce180D3Ce00fef87f453a2BD7683",
+          "operator": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
           "name": "kpk USD Alpha Fund",
           "symbol": "kUSD",
-          "safe": "0x0000000000000000000000000000000000000000",
-          "subscriptionRequestTtl": 86400,
-          "redemptionRequestTtl": 86400,
-          "feeReceiver": "0x0Efb42C55F73ce180D3Ce00fef87f453a2BD7683",
+          "safe": "0x38F6a1B46144fAEe6a6D9F79D8dE264C18e23848",
+          "subscriptionRequestTtl": 259200,
+          "redemptionRequestTtl": 259200,
+          "feeReceiver": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
           "managementFeeRate": 300,
           "redemptionFeeRate": 150,
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
-          "performanceFeeRate": 2000
+          "performanceFeeRate": 0
         },
         {
           "environment": "staging",
