@@ -35,8 +35,8 @@
           "subscriptionRequestTtl": 259200,
           "redemptionRequestTtl": 259200,
           "feeReceiver": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
-          "managementFeeRate": 300,
-          "redemptionFeeRate": 150,
+          "managementFeeRate": 0,
+          "redemptionFeeRate": 0,
           "performanceFeeModule": "0x0000000000000000000000000000000000000000",
           "performanceFeeRate": 0
         },
