@@ -306,15 +306,16 @@ If no: ask what they want to correct and go back to the corresponding step.
 Before deployment, show the predicted addresses:
 
 Run:
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
 ```
 
 Explain to the user:
-> "These are the addresses the fund will have on **all** chains (they are deterministic).
-> The shares token addresses (kpkShares) cannot be predicted in advance."
+> "These are the addresses the fund will have on **all** chains (they are deterministic) —
+> including the kpkShares implementation and proxy, which `predict` now also shows
+> (both are CREATE2-derived)."
 
 ---
 
@@ -328,7 +329,7 @@ Ask:
 Run the commands in this order:
 
 1. **Mainnet** (if `full_oiv`):
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "deployOiv(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL \
@@ -336,7 +337,7 @@ source .env && forge script script/DeployOiv.s.sol \
 ```
 
 2. **Each sidechain** (in order: arbitrum, base, optimism, gnosis):
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "deployStack(string)" "script/<slug>-config.json" \
   --rpc-url $<CHAIN>_RPC_URL \

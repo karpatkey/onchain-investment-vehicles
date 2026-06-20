@@ -8,11 +8,11 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`kpkShares.TestBase.sol`** - Shared test infrastructure, helper functions, and common setup
   - Contains all common setup logic, mock deployments, and helper functions
   - Provides constants and utility functions for all test domains
-  - Inherits from `SuperTest` to provide common testing utilities
+  - Inherits from Forge's `Test` to provide common testing utilities
 
 ### Domain-Specific Test Files
 - **`kpkShares.Initialization.sol`** - Contract initialization and constructor tests
-- **`kpkShares.Deposits.sol`** - Subscription request functionality and processing
+- **`kpkShares.Subscriptions.sol`** - Subscription request functionality and processing
 - **`kpkShares.Redemptions.sol`** - Redemption request functionality and processing
 - **`kpkShares.Fees.sol`** - Fee calculation, management, and performance fees
 - **`kpkShares.Assets.sol`** - Asset approval, management, and validation
@@ -21,47 +21,58 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`kpkShares.Upgrade.sol`** - Contract upgrade functionality and UUPS proxy
 
 ### Main Entry Point
-- **`kpkShares.Main.sol`** - Main test contract that runs all domain tests together
-  - Inherits from all domain-specific test contracts
+- **`kpkShares.Main.sol`** - Main test contract that runs the core domain tests together
+  - Inherits from the Initialization, Subscriptions, Redemptions, Fees, Assets, Admin, Integration, and Upgrade test contracts
   - Provides cross-domain integration tests
-  - Serves as the single entry point for running all tests
+  - Serves as the entry point for running the core domain tests
 
-### Coverage Analysis Tools
-- **`analyze_kpkShares_coverage.py`** - Python script for detailed coverage analysis
-- **`coverage_analysis.sh`** - Shell script wrapper for coverage analysis commands
-- **`kpkShares_coverage_report.txt`** - Generated coverage analysis report
+### Additional Test Files
+- **`kpkShares.ETHSubscription.sol`** - Native-ETH subscription flows (`kpkSharesETHSubscriptionTest`)
+- **`kpkShares.Precision.sol`** - Rounding and precision edge cases (`kpkSharesPrecisionTest`)
+- **`kpkShares.GasTest.sol`** - Gas measurement tests (`kpkSharesGasTest`)
+- **`kpkShares.ParameterizedExample.sol`** - Example of parameterized/table-driven tests (`kpkSharesParameterizedExampleTest`)
+- **`CcipOivDeployer.t.sol`** - Tests for the CCIP OIV deployer (`CcipOivDeployerTest`)
+- **`KpkOivFactory.t.sol`** - Tests for the OIV factory (`KpkOivFactoryTest`, `KpkOivFactoryUnitTest`)
+
+These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones) or directly from Forge's `Test`, and are run by `forge test` independently of `kpkShares.Main.sol`.
+
+### Support Files
+- **`constants.sol`** - Shared test constants
+- **`errors.sol`** - Shared custom error definitions used in tests
+- **`mocks/tokens.sol`** - `Mock_ERC20` token used across the suite
+- **`mocks/MockCcipRouter.sol`** - Mock CCIP router used by deployer/factory tests
 
 ## 🚀 How to Use
 
 ### Running All Tests
 ```bash
 # Run all tests in the organized structure
-forge test --contracts test/fund/kpkShares.Main.sol
+forge test --match-path test/kpkShares.Main.sol
 
 # Run specific domain tests
-forge test --contracts test/fund/kpkShares.Deposits.sol
-forge test --contracts test/fund/kpkShares.Fees.sol
+forge test --match-path test/kpkShares.Subscriptions.sol
+forge test --match-path test/kpkShares.Fees.sol
 ```
 
 ### Running Individual Domain Tests
 ```bash
 # Test only initialization functionality
-forge test --contracts test/fund/kpkShares.Initialization.sol
+forge test --match-path test/kpkShares.Initialization.sol
 
 # Test only subscription functionality
-forge test --contracts test/fund/kpkShares.Deposits.sol
+forge test --match-path test/kpkShares.Subscriptions.sol
 
 # Test only upgrade functionality
-forge test --contracts test/fund/kpkShares.Upgrade.sol
+forge test --match-path test/kpkShares.Upgrade.sol
 ```
 
 ### Running Specific Test Functions
 ```bash
 # Run a specific test function
-forge test --contracts test/fund/kpkShares.Main.sol --match-test testCompleteSubscriptionToRedemptionWorkflow
+forge test --match-path test/kpkShares.Main.sol --match-test testCompleteDepositToRedeemWorkflow
 
-# Run tests matching a pattern
-forge test --contracts test/fund/kpkShares.Main.sol --match-test "testUpgrade*"
+# Run tests matching a pattern (--match-test takes a regex)
+forge test --match-path test/kpkShares.Main.sol --match-test "testUpgrade"
 ```
 
 ## 🔧 Test Organization Benefits
@@ -96,14 +107,14 @@ forge test --contracts test/fund/kpkShares.Main.sol --match-test "testUpgrade*"
 ### `kpkShares.TestBase.sol`
 - **Purpose**: Shared infrastructure and helper functions
 - **Contains**: Setup logic, mock deployments, utility functions, constants
-- **Inherits**: `SuperTest` for common testing utilities
+- **Inherits**: Forge's `Test` for common testing utilities
 
 ### `kpkShares.Initialization.sol`
 - **Purpose**: Contract initialization and constructor validation
 - **Tests**: Parameter validation, state initialization, role assignment
 - **Coverage**: Constructor branches, initialization logic
 
-### `kpkShares.Deposits.sol`
+### `kpkShares.Subscriptions.sol`
 - **Purpose**: Subscription request functionality
 - **Tests**: Request creation, processing, updates, cancellations
 - **Coverage**: Subscription-related functions and edge cases
@@ -139,29 +150,14 @@ forge test --contracts test/fund/kpkShares.Main.sol --match-test "testUpgrade*"
 - **Coverage**: Upgrade-related functions and security
 
 ### `kpkShares.Main.sol`
-- **Purpose**: Main entry point and cross-domain tests
-- **Tests**: Integration between all domains, helper function validation
-- **Coverage**: Ensures all domains work together correctly
-
-### Coverage Analysis Tools
-- **`analyze_kpkShares_coverage.py`** - Python script for detailed kpkShares coverage analysis
-  - **Purpose**: Generate comprehensive coverage reports for kpkShares contract
-  - **Features**: Function, line, and branch coverage analysis with detailed breakdowns
-  - **Output**: Generates `kpkShares_coverage_report.txt` with coverage metrics and recommendations
-
-- **`coverage_analysis.sh`** - Shell script wrapper for coverage analysis commands
-  - **Purpose**: Easy-to-use interface for running coverage analysis
-  - **Commands**: `full`, `kpk`, `summary`, `update`
-  - **Features**: Colored output, dependency checking, automated coverage generation
-
-- **`kpkShares_coverage_report.txt`** - Generated coverage analysis report
-  - **Content**: Detailed coverage statistics, function breakdowns, and improvement recommendations
-  - **Format**: Human-readable report with coverage metrics and actionable insights
+- **Purpose**: Entry point for the core domains and cross-domain tests
+- **Tests**: Integration between the core domains, helper function validation
+- **Coverage**: Ensures the core domains work together correctly
 
 ## 🧪 Adding New Tests
 
 ### To a Specific Domain
-1. Open the appropriate domain test file (e.g., `kpkShares.Deposits.sol`)
+1. Open the appropriate domain test file (e.g., `kpkShares.Subscriptions.sol`)
 2. Add your test function in the appropriate section
 3. Use the existing helper functions from the base contract
 4. Follow the existing naming convention (`testFunctionName`)
@@ -180,81 +176,37 @@ forge test --contracts test/fund/kpkShares.Main.sol --match-test "testUpgrade*"
 
 ## 📊 Coverage Analysis
 
-### Using Coverage Analysis Tools
+Coverage is produced with Foundry's built-in `forge coverage`.
 
-**Important**: The scripts use paths relative to the root directory.
-
-#### Quick Coverage Summary
+### Generate a Coverage Report
 ```bash
-# From the contracts directory
-./test/fund/coverage_analysis.sh summary
+# Summary table in the terminal, for the whole suite
+forge coverage
 
-# This provides a quick overview of coverage metrics
-# Note: The script automatically looks for lcov.info in the current contracts directory
-```
-
-#### Generate kpkShares Coverage Report
-```bash
-# Generate detailed kpkShares coverage report
-./test/fund/coverage_analysis.sh kpk
-
-# This creates kpkShares_coverage_report.txt with detailed analysis
-```
-
-#### Update Coverage Data
-```bash
-# Update coverage data by running tests
-./test/fund/coverage_analysis.sh update
-
-# This runs forge coverage and generates lcov.info in the current contracts directory
-```
-
-#### Full Coverage Report
-```bash
-# Generate full coverage report for all files
-./test/fund/coverage_analysis.sh full
-
-# This analyzes all coverage data and provides comprehensive report
-```
-
-#### Manual Coverage Analysis
-```bash
-# Run the Python script directly from the contracts directory
-python3 test/fund/analyze_kpkShares_coverage.py lcov.info
-
-# This generates the same report as the shell script
-# Note: Use lcov.info to reference the file in the current contracts directory
+# Generate an lcov report
+forge coverage --report lcov
 ```
 
 ### Coverage Metrics Explained
 
-The coverage analysis provides three key metrics:
+`forge coverage` reports the following metrics:
 
-1. **Function Coverage**: Percentage of functions that have been called during testing
-2. **Line Coverage**: Percentage of code lines that have been executed
+1. **Line Coverage**: Percentage of code lines that have been executed
+2. **Statement Coverage**: Percentage of statements that have been executed
 3. **Branch Coverage**: Percentage of conditional branches that have been tested
-
-### Coverage Report Contents
-
-The generated `kpkShares_coverage_report.txt` includes:
-
-- **Overall Statistics**: Summary of all coverage metrics
-- **Function Breakdown**: Coverage by functional category (Core Operations, Fees, Assets, etc.)
-- **Most Called Functions**: Functions with highest execution counts
-- **Uncovered Functions**: Functions that need test coverage
-- **Improvement Recommendations**: Actionable suggestions for improving coverage
+4. **Function Coverage**: Percentage of functions that have been called during testing
 
 ### By Domain
 ```bash
 # Check coverage for specific domains
-forge coverage --contracts test/fund/kpkShares.Deposits.sol
-forge coverage --contracts test/fund/kpkShares.Fees.sol
+forge coverage --match-path test/kpkShares.Subscriptions.sol
+forge coverage --match-path test/kpkShares.Fees.sol
 ```
 
 ### Overall Coverage
 ```bash
 # Check coverage for the entire test suite
-forge coverage --contracts test/fund/kpkShares.Main.sol
+forge coverage --match-path test/kpkShares.Main.sol
 ```
 
 ### Coverage Reports
@@ -270,22 +222,21 @@ forge coverage --contracts test/fund/kpkShares.Main.sol
 3. **Setup Issues**: Verify that the base contract setup is working correctly
 
 ### Coverage Analysis Issues
-1. **Missing lcov.info**: Run `./test/fund/coverage_analysis.sh update` to generate coverage data
-2. **Python Dependencies**: Ensure Python 3 is installed and accessible
-3. **Permission Issues**: Make sure the shell script is executable (`chmod +x test/fund/coverage_analysis.sh`)
-4. **Working Directory**: Ensure you're running commands from the contracts directory
+1. **Missing lcov.info**: Run `forge coverage --report lcov` to generate coverage data
+2. **Stack-too-deep errors**: Run `forge coverage --ir-minimum` if the build fails during instrumentation
+3. **Working Directory**: Ensure you're running commands from the project root directory
 
 ### Debugging
 1. Run individual domain tests to isolate issues
 2. Check the base contract for common setup problems
-3. Use `forge test --verbosity 4` for detailed output
+3. Use `forge test -vvvv` for detailed output
 
 ## 📈 Future Improvements
 
 ### Potential Enhancements
 1. **Test Categories**: Add more granular categorization within domains
 2. **Performance Tests**: Add dedicated performance testing domain
-3. **Gas Tests**: Add gas optimization testing
+3. **Gas Tests**: Expand the existing gas tests in `kpkShares.GasTest.sol`
 4. **Fuzzing**: Integrate fuzzing tests into the domain structure
 
 ### Coverage Analysis Enhancements
@@ -301,4 +252,4 @@ forge coverage --contracts test/fund/kpkShares.Main.sol
 
 ---
 
-This organization provides a clean, maintainable, and scalable test structure that makes it easy to add new tests, maintain existing ones, and understand the overall test coverage for the `kpkShares` contract. The included coverage analysis tools provide comprehensive insights into test coverage and help identify areas for improvement.
+This organization provides a clean, maintainable, and scalable test structure that makes it easy to add new tests, maintain existing ones, and understand the overall test coverage for the `kpkShares` contract. Foundry's built-in `forge coverage` provides insights into test coverage and helps identify areas for improvement.

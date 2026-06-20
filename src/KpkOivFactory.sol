@@ -509,13 +509,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // during `KpkShares.updateAsset` / `Avatar.execTransactionFromModule(approve)`.
         uint256 id = instanceCount++;
 
-        StackConfig memory stackConfig = StackConfig({
-            managerSafe: config.managerSafe,
-            execRolesMod: RolesModifierConfig({finalOwner: config.admin}),
-            subRolesMod: RolesModifierConfig({finalOwner: address(0)}),
-            managerRolesMod: RolesModifierConfig({finalOwner: address(0)}),
-            salt: config.salt
-        });
+        StackConfig memory stackConfig = oivToStackConfig(config);
 
         // The factory is always enabled as a setup-time Avatar Safe module by `_deployAndWireStack`
         // (see that helper for the cross-chain rationale). It is used here to grant the approvals
@@ -551,6 +545,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         instances[id] = instance;
         emit OivDeployed(id, instance);
+    }
+
+    /// @notice Derives the operational `StackConfig` that `deployOiv` builds for a given `OivConfig`.
+    /// @dev    Single source of truth for the OivConfig → StackConfig mapping: `deployOiv` calls this
+    ///         internally, and off-chain orchestrators (e.g. a cross-chain CCIP deployer that runs
+    ///         `deployStack` on sidechains) MUST call this — rather than re-deriving the mapping —
+    ///         so the operational-stack addresses they produce match `deployOiv` on every chain.
+    ///         `subRolesMod` / `managerRolesMod` finalOwners are always `address(0)` (ownership goes
+    ///         to the Manager Safe during wiring); the exec modifier's finalOwner is `config.admin`.
+    /// @param  config Fund deployment parameters.
+    /// @return The operational-stack configuration.
+    function oivToStackConfig(OivConfig calldata config) public pure returns (StackConfig memory) {
+        return StackConfig({
+            managerSafe: config.managerSafe,
+            execRolesMod: RolesModifierConfig({finalOwner: config.admin}),
+            subRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+            managerRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+            salt: config.salt
+        });
     }
 
     // ── Read-only: address prediction ───────────────────────────────────────────

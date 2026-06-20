@@ -458,17 +458,22 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Set up time elapsed for performance fees BEFORE creating request
         skip(365 days);
 
+        // Seed the watermark at SHARES_PRICE; the corrected module only charges on later increases.
+        _seedPerformanceWatermark(kpkSharesWithFees, bob);
+        skip(7 hours); // satisfy MIN_TIME_ELAPSED before the fee-bearing settlement
+
         uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
         // Approve contract to spend shares
         vm.prank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
 
-        // Create and process a redeem request to trigger performance fee charging
+        // Settle at a price above the watermark so a (min-rate) performance fee is realized.
+        uint256 increasedPrice = SHARES_PRICE + (SHARES_PRICE / 50); // +2%
         vm.startPrank(alice);
-        // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
+        // minAssetsOut computed at SHARES_PRICE is a valid floor when settling at the higher price.
         uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 365 days
+            kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 7 hours
         );
         uint256 requestId = kpkSharesWithFees.requestRedemption(_sharesAmount(100), minAssetsOut, address(usdc), alice);
         vm.stopPrank();
@@ -478,10 +483,10 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         uint256[] memory approveRequests = new uint256[](1);
         approveRequests[0] = requestId;
         uint256[] memory rejectRequests = new uint256[](0);
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), increasedPrice);
 
         uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        // With minimum rate, some fees should still be charged
+        // With a minimum rate AND a real gain above the watermark, some fee is still charged.
         assertGt(finalBalance, initialBalance);
     }
 
@@ -1318,9 +1323,13 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Wait enough time for fees to accrue
         skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
 
+        // Seed the watermark at SHARES_PRICE so the later USD settlement charges on a real increase.
+        _seedPerformanceWatermark(kpkSharesWithFees, bob);
+        skip(7 hours);
+
         uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
-        // First, process a non-USD batch (ETH redemption)
+        // First, process a non-USD batch (ETH redemption) at the flat price.
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
         uint256 ethRequestId = kpkSharesWithFees.requestRedemption(
@@ -1335,7 +1344,8 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         uint256[] memory rejectRequests = new uint256[](0);
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(eth), SHARES_PRICE);
 
-        // Immediately after, process a USD batch (should still charge performance fees)
+        // Immediately after, process a USD batch above the watermark (should still charge perf fees).
+        uint256 increasedPrice = SHARES_PRICE + (SHARES_PRICE / 50); // +2%
         vm.startPrank(alice);
         uint256 usdcRequestId = kpkSharesWithFees.requestRedemption(
             shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
@@ -1345,7 +1355,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Process USD batch - should charge performance fees based on asset-specific clock
         vm.prank(ops);
         approveRequests[0] = usdcRequestId;
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), increasedPrice);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
@@ -1405,7 +1415,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
 
         uint256 feeBalanceAfterUsdc = kpkSharesWithFees.balanceOf(feeRecipient);
-        assertGt(feeBalanceAfterUsdc, initialFeeBalance, "USDC batch should charge performance fees");
+        // First USD settlement at SHARES_PRICE seeds the watermark and charges no performance fee
+        // (the module only charges on increases above the seeded baseline — see its NatSpec below).
+        assertEq(feeBalanceAfterUsdc, initialFeeBalance, "First USD batch seeds the watermark, charges no fee");
 
         // Wait enough time (more than MIN_TIME_ELAPSED) for performance fees to accrue again
         // Note: Performance fee clock is SHARED across all USD assets (single _performanceFeeLastUpdate),
@@ -1451,9 +1463,14 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Wait enough time for fees to accrue
         skip(7 days); // More than MIN_TIME_ELAPSED (6 hours)
 
+        // Seed the watermark at SHARES_PRICE so the first real batch charges on a genuine increase.
+        _seedPerformanceWatermark(kpkSharesWithFees, bob);
+        skip(7 hours);
+
         uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
-        // Process first USD batch
+        // Process first USD batch above the watermark → charges a performance fee.
+        uint256 price1 = SHARES_PRICE + (SHARES_PRICE / 50); // +2%
         vm.startPrank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares / 2);
         uint256 requestId1 = kpkSharesWithFees.requestRedemption(
@@ -1465,7 +1482,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         uint256[] memory approveRequests = new uint256[](1);
         approveRequests[0] = requestId1;
         uint256[] memory rejectRequests = new uint256[](0);
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), price1);
 
         uint256 feeBalanceAfterFirst = kpkSharesWithFees.balanceOf(feeRecipient);
         assertGt(feeBalanceAfterFirst, initialFeeBalance, "First batch should charge performance fees");
@@ -1473,7 +1490,9 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         // Wait a very short time (less than MIN_TIME_ELAPSED)
         skip(1 hours); // Less than 6 hours
 
-        // Process second USD batch immediately after
+        // Process second USD batch at an even higher price; despite the further price increase it must
+        // NOT charge, because the shared performance-fee clock gates on MIN_TIME_ELAPSED.
+        uint256 price2 = price1 + (price1 / 50);
         vm.startPrank(alice);
         uint256 requestId2 = kpkSharesWithFees.requestRedemption(
             shares / 2, kpkSharesWithFees.sharesToAssets(shares / 2, SHARES_PRICE, address(usdc)), address(usdc), alice
@@ -1482,7 +1501,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
 
         vm.prank(ops);
         approveRequests[0] = requestId2;
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), price2);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 

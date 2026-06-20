@@ -74,7 +74,7 @@ Deployed 2026-04-30 from caller `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` via
 
 Salt: `uint256(keccak256("kpk-USD-Alpha-Fund-prod-v1"))`. Caller is mixed into salt derivation, so re-running this deploy from any other EOA would produce different addresses.
 
-Scripts: [`script/DeployKpkUsdProductionOiv.s.sol`](../script/DeployKpkUsdProductionOiv.s.sol) (mainnet), [`script/DeployKpkUsdProductionStack.s.sol`](../script/DeployKpkUsdProductionStack.s.sol) (sidechains).
+Script: [`script/DeployOiv.s.sol`](../script/DeployOiv.s.sol) — its `deployOiv` entry point was used on mainnet and its `deployStack` entry point on each sidechain.
 
 ## Common (CREATE2 — same address on every chain)
 

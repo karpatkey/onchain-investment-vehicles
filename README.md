@@ -27,7 +27,7 @@ KpkShares
 ## Dependencies
 
 ### External Libraries
-- **OpenZeppelin Contracts Upgradeable** (`5.4.0` - pinned version)
+- **OpenZeppelin Contracts Upgradeable** (`5.0.2` - pinned version)
   - `ERC20Upgradeable`: Standard ERC20 token functionality
   - `AccessControlUpgradeable`: Role-based access control
   - `UUPSUpgradeable`: Upgradeable proxy pattern
@@ -62,7 +62,7 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 
 | Function | DEFAULT_ADMIN_ROLE | OPERATOR | INVESTOR | Public |
 |----------|-------------------|----------|----------|---------|
-| `initialize` | ❌ | ❌ | ❌ | ✅ (reinitializer) |
+| `initialize` | ❌ | ❌ | ❌ | ✅ (initializer, one-time) |
 | `_authorizeUpgrade` | ✅ | ❌ | ❌ | ❌ |
 | `setSubscriptionRequestTtl` | ✅ | ❌ | ❌ | ❌ |
 | `setRedemptionRequestTtl` | ✅ | ❌ | ❌ | ❌ |
@@ -231,7 +231,7 @@ The kpkShares contract manages a tokenized fund with asynchronous subscription a
 ### 6. Upgrade Safety
 - **UUPS Pattern**: Upgradeable proxy with admin-only upgrade authorization
 - **Storage Gaps**: Proper storage layout management for upgrades
-- **Initialization Protection**: Reinitializer pattern prevents double initialization
+- **Initialization Protection**: Initializer pattern prevents double initialization
 
 ### 7. Price Deviation Protection
 - **Automatic Validation**: Price changes validated during `processRequests()`
@@ -360,7 +360,10 @@ struct ConstructorParams {
 
 ## Security Audits
 
-Security audit reports will be published in the `audit-reports/` folder. This folder is reserved for future security audit documentation from third-party auditors.
+Security audit reports are published in the `audit-reports/` folder:
+
+- `cantina-kpk-oivs-oct-2025.pdf` — Cantina audit (October 2025)
+- `team-omega-kpk-oivs-oct-2025.pdf` — Team Omega audit (October 2025)
 
 ## Gas Optimization
 

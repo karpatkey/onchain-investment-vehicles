@@ -239,6 +239,9 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
         uint256 shares = _sharesAmount(1000);
         _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
 
+        // Seed the watermark at SHARES_PRICE; the corrected module only charges on later increases.
+        _seedPerformanceWatermark(kpkSharesWithFees, bob);
+
         vm.prank(alice);
         kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
 
@@ -256,16 +259,18 @@ contract kpkSharesPrecisionTest is kpkSharesTestBase {
 
         uint256 initialFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
 
+        // Settle above the seeded watermark so a (min-rate) performance fee is realized.
+        uint256 increasedPrice = SHARES_PRICE + (SHARES_PRICE / 50); // +2%
         vm.prank(ops);
         uint256[] memory approveRequests = new uint256[](1);
         approveRequests[0] = requestId;
         uint256[] memory rejectRequests = new uint256[](0);
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), increasedPrice);
 
         uint256 finalFeeBalance = kpkSharesWithFees.balanceOf(feeRecipient);
         uint256 actualFee = finalFeeBalance - initialFeeBalance;
 
-        // With minimum rate, fees should still be calculated precisely
+        // With minimum rate AND a real gain above the watermark, fees are still calculated precisely.
         assertGt(actualFee, 0);
     }
 
