@@ -23,17 +23,13 @@ import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 ///              pre-verified per-chain values.
 ///           4. `transferOwnership(finalOwner)`.
 ///
-///         CCIP reference values (VERIFY against https://docs.chain.link/ccip/directory/mainnet
-///         immediately before broadcasting — addresses are passed as args precisely so this script
-///         never hard-codes unverified infra):
-///
-///         | Chain     | Router                                       | LINK                                         | Selector              |
-///         |-----------|----------------------------------------------|----------------------------------------------|-----------------------|
-///         | Ethereum  | 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D   | 0x514910771AF9Ca656af840dff83E8264EcF986CA   | 5009297550715157269   |
-///         | Arbitrum  | 0x141fa059441E0ca23ce184B6A78bafD2A517DdE8   | 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4   | 4949039107694359620   |
-///         | Base      | 0x881e3A65B4d4a04dD529061dd0071cf975F58bCD   | 0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196   | 15971525489660198786  |
-///         | Optimism  | 0x3206695CaE29952f4b0c22a169725a865bc8Ce0f   | 0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6   | 3734403246176062136   |
-///         | Gnosis    | 0x4aAD6071085df840abD9Baf1697d5D5992bDadce   | 0xE2e73A1c69ecF83F464EFCE6A5be353a37cA09b2   | 465200170687744372    |
+///         CCIP router / LINK / chain-selector values per chain live in `script/ccip-networks.json`
+///         (the operator reference — 23 READY mainnets). They are passed to this script as args
+///         precisely so no unverified infra is hard-coded in Solidity. VERIFY the values you pass
+///         against https://docs.chain.link/ccip/directory/mainnet immediately before broadcasting;
+///         entries flagged `linkVerified: false` in the registry MUST be confirmed first.
+///         See `docs/CCIP_CROSS_CHAIN_DEPLOY.md` for the full network table and the checklist for
+///         onboarding a new chain.
 ///
 ///         `mainnetSelector` is the SAME on every chain (the trusted source = Ethereum mainnet =
 ///         5009297550715157269), regardless of which chain you are deploying to.

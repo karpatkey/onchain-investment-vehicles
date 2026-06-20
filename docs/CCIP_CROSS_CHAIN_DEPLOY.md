@@ -75,6 +75,46 @@ Avatar Safe execution.
   an EOA cannot be retro-extended through this path; every fund using it must enter via the
   orchestrator from the start.
 
+## Supported networks
+
+A chain qualifies only when **all four** prerequisites exist at canonical (same-on-every-chain)
+addresses: Safe v1.4.1 stack, Zodiac ModuleProxyFactory + Roles v2 mastercopy, the canonical
+CREATE2 deployer (`0x4e59b448…`), and a live CCIP arbitrary-messaging lane **from Ethereum
+mainnet**. Modifying `KpkOivFactory` does **not** widen this set — the limiter is external infra,
+and same-address determinism only holds where that infra is canonical.
+
+The machine-readable registry is **`script/ccip-networks.json`** (router / LINK / selector per
+chain). **23 READY mainnets** (on-chain verified):
+
+Ethereum, Optimism, BNB Smart Chain, Gnosis, Unichain, Polygon PoS, World Chain, HyperEVM, Sei,
+Sonic, Mantle, Base, Plasma, Mode, Arbitrum One, Celo, Avalanche, Ink, Linea, Bob, Berachain,
+Scroll, Katana.
+
+Near-misses and exclusions:
+
+| Verdict | Chains | Why |
+|---|---|---|
+| **NEEDS-ZODIAC** | Metis, Soneium | Full Safe + CCIP, but Zodiac Roles v2 / ModuleProxyFactory absent. Deploy Zodiac (CREATE2 via the zodiac-core singleton factory → same `0x9646fDAD…` address) to promote to READY, then confirm a live CCIP lane from Ethereum. |
+| **NO-CCIP** | Blast, Polygon zkEVM, Flare | Safe/Zodiac present but no live CCIP lane from Ethereum (Polygon zkEVM also lacks SafeModuleSetup). |
+| **EXCLUDED** | zkSync Era | Non-EVM-bytecode-equivalent: different Safe addresses, no canonical CREATE2 deployer → same-address determinism impossible. |
+
+> **Verify before broadcast.** Registry entries flagged `linkVerified: false` (Unichain, World
+> Chain, HyperEVM, Sei, Mantle, Plasma, Mode, Ink, Bob, Berachain, Katana) have a CCIP **router**
+> confirmed but their **LINK** address unconfirmed — pull it from the CCIP directory first. Also
+> confirm the repo's `SAFE_PROXY_FACTORY` (`0xa6B71E26…`, the widely-deployed Safe v1.3.0 factory)
+> and the Zodiac mastercopy are actually present on any chain before its first deployment.
+
+### Onboarding a new chain
+
+1. Confirm all four prerequisites at canonical addresses (Safe stack, Zodiac, CREATE2 deployer, CCIP
+   lane). If `verdict` is NEEDS-ZODIAC, deploy Zodiac there first.
+2. Predeploy the `Empty` contract (`0xA470…4652`) via the canonical CREATE2 deployer.
+3. Deploy `KpkSharesDeployer` + `KpkOivFactory` (`script/DeployKpkOivFactory.s.sol`) — same address
+   as every other chain.
+4. Deploy + `configure` the orchestrator (`script/DeployCcipOivDeployer.s.sol`) with the chain's
+   verified CCIP router / LINK.
+5. Add the chain's verified row to `script/ccip-networks.json`.
+
 ## Deploying the orchestrator
 
 Deploy at the same address on every chain via `script/DeployCcipOivDeployer.s.sol`, then wire each
