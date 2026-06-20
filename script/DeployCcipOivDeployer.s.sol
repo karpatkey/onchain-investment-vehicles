@@ -100,7 +100,10 @@ contract DeployCcipOivDeployer is Script {
 
         // ── 2. Wire per-chain CCIP config (while EOA still owns it) ──
         if (orchestrator.owner() == eoaOwner) {
-            if (orchestrator.router() != ccipRouter || orchestrator.linkToken() != linkToken) {
+            if (
+                orchestrator.router() != ccipRouter || orchestrator.linkToken() != linkToken
+                    || orchestrator.mainnetChainSelector() != mainnetSelector
+            ) {
                 orchestrator.configure(ccipRouter, linkToken, mainnetSelector);
                 console.log("[OK]   configure() done");
             } else {

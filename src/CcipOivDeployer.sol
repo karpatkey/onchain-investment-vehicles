@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IRouterClient} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {
@@ -51,6 +52,8 @@ import {KpkOivFactory} from "./KpkOivFactory.sol";
 ///           gatekeeper of Avatar Safe execution. This contract never gains a privileged role on
 ///           any deployed fund — it is purely a deployment conduit.
 contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
+    using SafeERC20 for IERC20;
+
     // ── Immutable config (identical on every chain) ────────────────────────────
 
     /// @notice The `KpkOivFactory` this orchestrator drives. Deployed at the same address on every
@@ -175,7 +178,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
             uint256 balance = link.balanceOf(address(this));
             if (balance < fee) revert InsufficientLinkBalance(fee, balance);
 
-            link.approve(router, fee);
+            link.forceApprove(router, fee);
             bytes32 messageId = ccipRouter.ccipSend(destSelectors[i], message);
             messageIds[i] = messageId;
             emit StackDispatched(destSelectors[i], messageId, fee);
@@ -229,7 +232,8 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     /// @notice Withdraws LINK from the orchestrator to `to`. Owner-only.
     function withdrawLink(address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
-        IERC20(linkToken).transfer(to, amount);
+        if (linkToken == address(0)) revert NotConfigured();
+        IERC20(linkToken).safeTransfer(to, amount);
     }
 
     // ── ERC165 ─────────────────────────────────────────────────────────────────

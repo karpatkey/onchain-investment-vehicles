@@ -42,6 +42,7 @@
 
     { "name": "Blast",         "chainId": 81457,  "role": "destination", "ccipChainSelector": "4411394078118774322",  "ccipRouter": null, "linkToken": null, "routerVerified": false, "linkVerified": false, "verdict": "NO-CCIP", "note": "Full Safe/Zodiac stack but no live CCIP router/lane from Ethereum in the active mainnet directory." },
     { "name": "Polygon zkEVM", "chainId": 1101,   "role": "destination", "ccipChainSelector": "4348158687435793198",  "ccipRouter": null, "linkToken": null, "routerVerified": false, "linkVerified": false, "verdict": "NO-CCIP", "note": "Not in active CCIP directory; SafeModuleSetup also absent on-chain." },
+    { "name": "Flare",         "chainId": 14,     "role": "destination", "ccipChainSelector": null,                   "ccipRouter": null, "linkToken": null, "routerVerified": false, "linkVerified": false, "verdict": "NO-CCIP", "note": "Full Safe/Zodiac stack on-chain but no CCIP chain selector / lane at all." },
     { "name": "zkSync Era",    "chainId": 324,    "role": "destination", "ccipChainSelector": "1562403441176082196",  "ccipRouter": null, "linkToken": null, "routerVerified": false, "linkVerified": false, "verdict": "EXCLUDED", "note": "Non-EVM-bytecode-equivalent: Safe uses the zksync deployment variant (different addresses) and the canonical CREATE2 deployer is absent, so same-address determinism is impossible." }
   ]
 }

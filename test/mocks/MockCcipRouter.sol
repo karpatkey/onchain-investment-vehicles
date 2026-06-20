@@ -43,7 +43,10 @@ contract MockCcipRouter {
         returns (bytes32)
     {
         if (message.feeToken != address(0)) {
-            IERC20(message.feeToken).transferFrom(msg.sender, address(this), feePerMessage);
+            require(
+                IERC20(message.feeToken).transferFrom(msg.sender, address(this), feePerMessage),
+                "fee transferFrom failed"
+            );
         }
         bytes32 messageId = keccak256(abi.encode(destChainSelector, sent.length, message.data));
         sent.push(
