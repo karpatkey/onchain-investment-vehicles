@@ -52,7 +52,14 @@ between the two and fragment a fund's addresses. **This requires a factory build
 `0x0d94255fdE65D302616b02A2F070CdB21190d420` predates it, so this changes the factory's creation
 code and therefore its CREATE2 address: the factory must be **redeployed** (new address). The
 orchestrator deploy script takes that factory address as a `run` argument (pass the SAME address on
-every chain), and the `docs/DEPLOYED_ADDRESSES.md` address table should be updated to match.
+every chain), so it needs no edit — but the following operator-facing references to the old
+`0x0d94…` factory MUST be updated to the redeployed address before use, or deployments will target
+the deprecated factory:
+
+- `script/DeployOiv.s.sol` — the `FACTORY` constant.
+- `script/DeployKpkOivFactory.s.sol` — bump `SALT_FACTORY`/`SALT_DEPLOYER` if redeploying at a fresh
+  address (the script logs the address it produces).
+- `DEPLOYMENT.md` and `docs/DEPLOYED_ADDRESSES.md` — the deployed-address tables.
 
 ## Security model
 

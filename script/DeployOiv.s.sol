@@ -16,7 +16,10 @@ import {KpkShares} from "../src/kpkShares.sol";
  *   - deployStack(configPath): calls factory.deployStack — infra only. Use on sidechains.
  * Assumptions:
  *   - PRIVATE_KEY env var holds the deployer's hex private key (with or without 0x prefix).
- *   - The KpkOivFactory is deployed at FACTORY on every supported chain.
+ *   - The KpkOivFactory is deployed at FACTORY on every supported chain. NOTE: `FACTORY` is the
+ *     factory's CREATE2 address, which is a function of its bytecode — update this constant whenever
+ *     the factory is redeployed after a bytecode change (e.g. the `oivToStackConfig` addition lands
+ *     the factory at a new address).
  *   - Cross-chain determinism: the same PRIVATE_KEY must broadcast deployStack on every sidechain.
  * Known limitations:
  *   - predict() must be called with --rpc-url pointing to a chain where the factory is deployed.
@@ -25,6 +28,7 @@ import {KpkShares} from "../src/kpkShares.sol";
 contract DeployOiv is Script {
     using stdJson for string;
 
+    // Update this when the factory is redeployed (its CREATE2 address changes with its bytecode).
     address constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
 
     // ── Entry points ───────────────────────────────────────────────────────────
