@@ -374,6 +374,26 @@ contract kpkSharesTestBase is Test {
         return requestId;
     }
 
+    /// @dev Seeds the WatermarkFee module at SHARES_PRICE. The corrected module charges nothing on
+    ///      the first price it observes (it only charges on later increases above that baseline), so
+    ///      tests that assert a real performance fee must seed first, then settle at a higher price.
+    ///      Processes one small USDC subscription after a >MIN_TIME_ELAPSED skip so the perf module is
+    ///      actually invoked and the watermark is set to SHARES_PRICE.
+    function _seedPerformanceWatermark(KpkShares c, address investor) internal {
+        uint256 seedShares = _sharesAmount(10);
+        uint256 assets = _calculateAssetsForSubscriptionWithFeeDilution(c, seedShares, SHARES_PRICE, address(usdc));
+        usdc.mint(investor, assets);
+        vm.startPrank(investor);
+        usdc.approve(address(c), type(uint256).max);
+        uint256 rid = c.requestSubscription(assets, seedShares, address(usdc), investor);
+        vm.stopPrank();
+        skip(7 hours); // > MIN_TIME_ELAPSED so the perf module runs and seeds the watermark
+        uint256[] memory ap = new uint256[](1);
+        ap[0] = rid;
+        vm.prank(ops);
+        c.processRequests(ap, new uint256[](0), address(usdc), SHARES_PRICE);
+    }
+
     /// @notice Helper function to create shares for testing on a specific contract instance
     function _createSharesForTestingWithContract(KpkShares contractInstance, address investor, uint256 sharesAmount)
         internal
