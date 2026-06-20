@@ -151,7 +151,8 @@ contract CcipOivDeployerTest is Test {
     function test_deployEverywhere_revertsOnInsufficientLink() public {
         orchestrator.withdrawLink(address(this), link.balanceOf(address(orchestrator)));
         uint64[] memory dests = _dests();
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientLinkBalance.selector, FEE, 0));
+        // Aggregate fee across both destinations is checked up front.
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientLinkBalance.selector, 2 * FEE, 0));
         orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
@@ -176,9 +177,12 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_ccipReceive_revertsForWrongRouter() public {
+        // Build the message first — it makes an external call (factory.oivToStackConfig) that would
+        // otherwise consume the prank/expectRevert.
+        Client.Any2EVMMessage memory m = _validMessage();
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InvalidRouter.selector, stranger));
-        orchestrator.ccipReceive(_validMessage());
+        orchestrator.ccipReceive(m);
     }
 
     function test_ccipReceive_revertsForWrongSourceChain() public {
@@ -210,6 +214,11 @@ contract CcipOivDeployerTest is Test {
         orchestrator.configure(address(0), address(link), MAINNET_SELECTOR);
     }
 
+    function test_configure_revertsOnZeroSelector() public {
+        vm.expectRevert(CcipOivDeployer.ZeroChainSelector.selector);
+        orchestrator.configure(address(router), address(link), 0);
+    }
+
     function test_constructor_revertsOnZeroFactory() public {
         vm.expectRevert(CcipOivDeployer.ZeroAddress.selector);
         new CcipOivDeployer(address(this), address(0));
@@ -221,6 +230,66 @@ contract CcipOivDeployerTest is Test {
         assertEq(total, 2 * FEE, "total fee");
         assertEq(per[0], FEE, "per[0]");
         assertEq(per[1], FEE, "per[1]");
+    }
+
+    // ── dispatchTo (recovery / add-a-chain path) ──────────────────────────────────
+
+    function test_dispatchTo_sendsWithoutLocalDeployOiv() public {
+        uint256 instancesBefore = factory.instanceCount();
+        uint64[] memory dests = _dests();
+
+        bytes32[] memory ids = orchestrator.dispatchTo(oivConfig, dests, GAS_LIMIT);
+
+        // No local OIV was deployed — only CCIP messages went out.
+        assertEq(factory.instanceCount(), instancesBefore, "dispatchTo must not deploy a local OIV");
+        assertEq(ids.length, 2, "two message ids");
+        assertEq(router.sentCount(), 2, "two ccipSend calls");
+        assertEq(link.balanceOf(address(router)), 2 * FEE, "router did not receive fees");
+        // Payload is the same factory-derived StackConfig as the deploy path.
+        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        assertEq(sent.salt, oivConfig.salt, "salt mismatch");
+        assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner mismatch");
+    }
+
+    function test_dispatchTo_onlyOwner() public {
+        uint64[] memory dests = _dests();
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        orchestrator.dispatchTo(oivConfig, dests, GAS_LIMIT);
+    }
+
+    function test_dispatchTo_revertsWhenNotConfigured() public {
+        CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
+        uint64[] memory dests = _dests();
+        vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
+        fresh.dispatchTo(oivConfig, dests, GAS_LIMIT);
+    }
+
+    /// @dev The recovery / add-a-chain path: after deployEverywhere has run, dispatchTo can fan the
+    ///      same fund out to an additional sidechain — without re-running the local deployOiv (which
+    ///      would revert on the mainnet CREATE2 collision). (Actual delivery → matching addresses is
+    ///      covered by test_ccipReceive_deploysStackMatchingMainnetOivPrediction.)
+    function test_dispatchTo_addsNewChainAfterDeployEverywhere() public {
+        orchestrator.deployEverywhere(oivConfig, _dests(), GAS_LIMIT); // Arbitrum + Base
+        uint256 sentAfterDeploy = router.sentCount();
+
+        uint64[] memory more = new uint64[](1);
+        more[0] = 3734403246176062136; // Optimism selector
+        bytes32[] memory ids = orchestrator.dispatchTo(oivConfig, more, GAS_LIMIT);
+
+        assertEq(ids.length, 1, "one new message");
+        assertEq(router.sentCount(), sentAfterDeploy + 1, "dispatchTo adds exactly one more message");
+        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        assertEq(sent.salt, oivConfig.salt, "same fund salt");
+    }
+
+    /// @dev The orchestrator's dispatched StackConfig must equal the factory's own deployOiv mapping,
+    ///      enforced by both calling factory.oivToStackConfig (single source of truth, finding #3).
+    function test_oivToStackConfig_matchesDispatchedPayload() public {
+        orchestrator.dispatchTo(oivConfig, _dests(), GAS_LIMIT);
+        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        KpkOivFactory.StackConfig memory expected = factory.oivToStackConfig(oivConfig);
+        assertEq(abi.encode(sent), abi.encode(expected), "dispatched payload must equal factory mapping");
     }
 
     function test_withdrawLink_onlyOwner() public {
@@ -244,13 +313,9 @@ contract CcipOivDeployerTest is Test {
     }
 
     function _validMessage() internal view returns (Client.Any2EVMMessage memory) {
-        KpkOivFactory.StackConfig memory stackCfg = KpkOivFactory.StackConfig({
-            managerSafe: oivConfig.managerSafe,
-            execRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: oivConfig.admin}),
-            subRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: address(0)}),
-            managerRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: address(0)}),
-            salt: oivConfig.salt
-        });
+        // Source the StackConfig from the factory's own mapping — the same single source of truth
+        // the orchestrator uses on the send side.
+        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(oivConfig);
         return Client.Any2EVMMessage({
             messageId: keccak256("msg"),
             sourceChainSelector: MAINNET_SELECTOR,

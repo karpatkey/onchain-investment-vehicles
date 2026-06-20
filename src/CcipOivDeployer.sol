@@ -96,6 +96,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     // ── Errors ─────────────────────────────────────────────────────────────────
 
     error ZeroAddress();
+    error ZeroChainSelector();
     error NotConfigured();
     error InvalidRouter(address caller);
     error InvalidSourceChain(uint64 sourceChainSelector);
@@ -126,7 +127,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     /// @param _mainnetChainSelector CCIP selector of Ethereum mainnet (the trusted source).
     function configure(address _router, address _linkToken, uint64 _mainnetChainSelector) external onlyOwner {
         if (_router == address(0) || _linkToken == address(0)) revert ZeroAddress();
-        if (_mainnetChainSelector == 0) revert ZeroAddress();
+        if (_mainnetChainSelector == 0) revert ZeroChainSelector();
         router = _router;
         linkToken = _linkToken;
         mainnetChainSelector = _mainnetChainSelector;
@@ -143,9 +144,10 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     ///         each sidechain stack materialises later (after source finality) when CCIP delivers
     ///         to `ccipReceive`. A destination message can fail (e.g. gas underestimate, missing
     ///         `EMPTY_CONTRACT`) and then be manually re-executed via CCIP within its retry window.
-    /// @param config         Full OIV config — passed verbatim to `factory.deployOiv`. The derived
-    ///                       `StackConfig` (sent to each sidechain) mirrors `deployOiv`'s internal
-    ///                       mapping exactly, so the five operational-stack addresses match.
+    /// @param config         Full OIV config — passed verbatim to `factory.deployOiv`. The
+    ///                       `StackConfig` sent to each sidechain is derived via
+    ///                       `factory.oivToStackConfig` (the factory's own mapping), so the five
+    ///                       operational-stack addresses match the local OIV.
     /// @param destSelectors  CCIP chain selectors of the sidechains to fan out to.
     /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.45M
     ///                       measured; a 1.8M–2.0M value is recommended). Capped at 3M by CCIP.
@@ -156,6 +158,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         uint64[] calldata destSelectors,
         uint256 gasLimit
     ) external onlyOwner returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
+        // Fail before the local deployOiv if we could not dispatch afterwards.
         if (router == address(0)) revert NotConfigured();
         if (destSelectors.length == 0) revert NoDestinations();
 
@@ -165,44 +168,83 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         emit LocalOivDeployed(instance);
 
         // 2. Fan out the operational stack to each destination chain.
-        bytes memory payload = abi.encode(_toStackConfig(config));
-        messageIds = new bytes32[](destSelectors.length);
-
-        IERC20 link = IERC20(linkToken);
-        IRouterClient ccipRouter = IRouterClient(router);
-
-        for (uint256 i = 0; i < destSelectors.length; i++) {
-            Client.EVM2AnyMessage memory message = _buildMessage(payload, gasLimit);
-            uint256 fee = ccipRouter.getFee(destSelectors[i], message);
-
-            uint256 balance = link.balanceOf(address(this));
-            if (balance < fee) revert InsufficientLinkBalance(fee, balance);
-
-            link.forceApprove(router, fee);
-            bytes32 messageId = ccipRouter.ccipSend(destSelectors[i], message);
-            messageIds[i] = messageId;
-            emit StackDispatched(destSelectors[i], messageId, fee);
-        }
+        messageIds = _dispatch(config, destSelectors, gasLimit);
     }
 
-    /// @notice Returns the total LINK fee `deployEverywhere(config, destSelectors, gasLimit)` would
-    ///         charge. Useful for pre-funding the orchestrator and surfacing cost before
-    ///         broadcasting. Uses the exact derived `StackConfig` payload so the fee — which scales
-    ///         with calldata length and gas limit — is accurate.
+    /// @notice Dispatch-only: CCIP-send the operational stack to `destSelectors` WITHOUT deploying a
+    ///         local OIV. Use after `deployEverywhere` has already run for this `config` — to extend
+    ///         the fund to a sidechain that was not in the original set, or to re-dispatch to one
+    ///         whose prior message permanently failed (CCIP manual re-execution can replay an
+    ///         existing message; a fresh message needs this). Owner-only; pays LINK from balance.
+    /// @dev    `config` MUST be the SAME config (notably the same `salt`, manager owners/threshold,
+    ///         and `admin`) used in the original `deployEverywhere`, so the dispatched stack lands
+    ///         at the fund's existing operational addresses. A destination that already has the
+    ///         stack will revert on the CREATE2 collision when its message executes — do not
+    ///         re-dispatch to an already-deployed chain.
+    /// @param config         OIV config — identical to the original deployment's.
+    /// @param destSelectors  CCIP chain selectors to dispatch to.
+    /// @param gasLimit       Destination `ccipReceive` gas limit (see `deployEverywhere`).
+    /// @return messageIds    CCIP message id per destination, in `destSelectors` order.
+    function dispatchTo(KpkOivFactory.OivConfig calldata config, uint64[] calldata destSelectors, uint256 gasLimit)
+        external
+        onlyOwner
+        returns (bytes32[] memory messageIds)
+    {
+        if (destSelectors.length == 0) revert NoDestinations();
+        messageIds = _dispatch(config, destSelectors, gasLimit);
+    }
+
+    /// @notice Returns the total LINK fee a `deployEverywhere`/`dispatchTo` for `destSelectors` would
+    ///         charge, plus the per-destination breakdown. Useful for pre-funding the orchestrator
+    ///         and surfacing cost before broadcasting. Uses the exact derived `StackConfig` payload
+    ///         so the fee — which scales with calldata length and gas limit — is accurate.
     function quoteDeployEverywhere(
         KpkOivFactory.OivConfig calldata config,
         uint64[] calldata destSelectors,
         uint256 gasLimit
     ) external view returns (uint256 totalFee, uint256[] memory feePerDestination) {
         if (router == address(0)) revert NotConfigured();
-        bytes memory payload = abi.encode(_toStackConfig(config));
-        Client.EVM2AnyMessage memory message = _buildMessage(payload, gasLimit);
+        Client.EVM2AnyMessage memory message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
         IRouterClient ccipRouter = IRouterClient(router);
         feePerDestination = new uint256[](destSelectors.length);
         for (uint256 i = 0; i < destSelectors.length; i++) {
             uint256 fee = ccipRouter.getFee(destSelectors[i], message);
             feePerDestination[i] = fee;
             totalFee += fee;
+        }
+    }
+
+    /// @dev Shared CCIP fan-out: builds the (loop-invariant) message once, sums the per-destination
+    ///      fees, checks the aggregate against the LINK balance once, approves the router once for
+    ///      the total, then sends. The `StackConfig` payload comes from `factory.oivToStackConfig`
+    ///      so it cannot drift from `deployOiv`'s mapping.
+    function _dispatch(KpkOivFactory.OivConfig calldata config, uint64[] calldata destSelectors, uint256 gasLimit)
+        internal
+        returns (bytes32[] memory messageIds)
+    {
+        if (router == address(0)) revert NotConfigured();
+
+        Client.EVM2AnyMessage memory message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
+        IRouterClient ccipRouter = IRouterClient(router);
+        IERC20 link = IERC20(linkToken);
+
+        uint256 n = destSelectors.length;
+        messageIds = new bytes32[](n);
+        uint256[] memory fees = new uint256[](n);
+        uint256 totalFee;
+        for (uint256 i = 0; i < n; i++) {
+            fees[i] = ccipRouter.getFee(destSelectors[i], message);
+            totalFee += fees[i];
+        }
+
+        uint256 balance = link.balanceOf(address(this));
+        if (balance < totalFee) revert InsufficientLinkBalance(totalFee, balance);
+        link.forceApprove(router, totalFee);
+
+        for (uint256 i = 0; i < n; i++) {
+            bytes32 messageId = ccipRouter.ccipSend(destSelectors[i], message);
+            messageIds[i] = messageId;
+            emit StackDispatched(destSelectors[i], messageId, fees[i]);
         }
     }
 
@@ -245,22 +287,6 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────────
-
-    /// @dev Mirrors `KpkOivFactory.deployOiv`'s internal `OivConfig` → `StackConfig` mapping exactly.
-    ///      Any divergence here would make sidechain stack addresses differ from the mainnet OIV.
-    function _toStackConfig(KpkOivFactory.OivConfig calldata config)
-        internal
-        pure
-        returns (KpkOivFactory.StackConfig memory)
-    {
-        return KpkOivFactory.StackConfig({
-            managerSafe: config.managerSafe,
-            execRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: config.admin}),
-            subRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: address(0)}),
-            managerRolesMod: KpkOivFactory.RolesModifierConfig({finalOwner: address(0)}),
-            salt: config.salt
-        });
-    }
 
     /// @dev Builds the CCIP message: receiver is this contract's sibling on the destination chain
     ///      (same address), no token transfer, LINK fee token, EVMExtraArgsV2 with the given gas

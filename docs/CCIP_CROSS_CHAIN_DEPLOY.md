@@ -43,6 +43,15 @@ in mutable storage set post-deploy via `configure(...)`. Only `_owner` and the `
 address (identical everywhere) are constructor arguments. The `onlyRouter` / source-chain /
 source-sender checks are re-implemented against that storage router.
 
+The orchestrator derives each sidechain's `StackConfig` by calling **`factory.oivToStackConfig(config)`
+at runtime** — the same `pure` helper `deployOiv` uses internally — so the mapping can never drift
+between the two and fragment a fund's addresses. **This requires a factory build that exposes
+`oivToStackConfig`** (added in this change). The previously-published factory at
+`0x0d94255fdE65D302616b02A2F070CdB21190d420` predates it, so this changes the factory's creation
+code and therefore its CREATE2 address: the factory must be **redeployed** (new address) and the
+`FACTORY` constant in `script/DeployCcipOivDeployer.s.sol` plus the address table in `DEPLOYMENT.md`
+updated to match before this orchestrator is used.
+
 ## Security model
 
 `ccipReceive` accepts a message only when all three hold:
@@ -65,6 +74,13 @@ Avatar Safe execution.
 - **Partial failure is possible.** A destination message can fail (e.g. gas underestimate, missing
   `EMPTY_CONTRACT` on that chain). It then enters CCIP's FAILED state and can be **manually
   re-executed** within its retry window. Monitor delivery on the [CCIP Explorer](https://ccip.chain.link).
+- **Recovery / add-a-chain.** `deployEverywhere` is for the first, atomic fan-out and cannot be
+  re-run with the same config (the local `deployOiv` would collide on its CREATE2 addresses). To
+  extend a fund to a sidechain that was not in the original set — or to send a fresh message to one
+  whose prior delivery permanently failed — use **`dispatchTo(config, destSelectors, gasLimit)`**,
+  which performs the CCIP fan-out only (no local OIV). Pass the SAME `config` (notably the same
+  `salt`) so the stack lands at the fund's existing addresses; never re-dispatch to a chain that
+  already has the stack (its message would revert on the CREATE2 collision).
 - **Pre-fund LINK.** CCIP fees are paid in LINK from the orchestrator's balance. Use
   `quoteDeployEverywhere(config, destSelectors, gasLimit)` to size funding before broadcasting.
 - **Gas limit.** `deployStack` measures at ~1.45M gas; pass `gasLimit` of ~1.8M–2.0M. CCIP caps

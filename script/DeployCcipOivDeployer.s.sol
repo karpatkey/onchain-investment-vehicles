@@ -49,7 +49,11 @@ contract DeployCcipOivDeployer is Script {
 
     /// @notice `KpkOivFactory` — deployed at the same address on every chain, so it is safe to bake
     ///         into the orchestrator's creation code without breaking address determinism.
-    ///         (Bump this and `SALT` together if the factory is ever redeployed at a new address.)
+    ///         WARNING: the orchestrator calls `factory.oivToStackConfig` at runtime, which the
+    ///         factory build at this published address does NOT expose. That helper changes the
+    ///         factory's creation code and therefore its CREATE2 address, so the factory must be
+    ///         redeployed and THIS constant updated to the new address before deploying the
+    ///         orchestrator. (Bump this and `SALT` together if the factory address changes.)
     address internal constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
 
     /// @dev Bump the version uint to redeploy at a fresh address.
@@ -125,12 +129,25 @@ contract DeployCcipOivDeployer is Script {
 
         // ── 4. Post-flight verification ──
         require(address(orchestrator.factory()) == FACTORY, "post-flight: factory mismatch");
-        require(orchestrator.router() == ccipRouter, "post-flight: router mismatch");
-        require(orchestrator.linkToken() == linkToken, "post-flight: linkToken mismatch");
-        require(orchestrator.mainnetChainSelector() == mainnetSelector, "post-flight: selector mismatch");
+
+        bool configured = orchestrator.router() == ccipRouter && orchestrator.linkToken() == linkToken
+            && orchestrator.mainnetChainSelector() == mainnetSelector;
 
         console.log("==========================================");
-        console.log("[OK] CcipOivDeployer ready at:", predicted);
+        if (configured) {
+            console.log("[OK] CcipOivDeployer ready at:", predicted);
+        } else if (orchestrator.owner() == finalOwner) {
+            // Ownership was already handed to finalOwner (e.g. a prior partial run) but the config is
+            // incomplete. This script can no longer call configure() — finalOwner must do it. Don't
+            // revert: the deploy itself succeeded; surface the remaining step instead.
+            console.log("[WARN] deployed but NOT fully configured; finalOwner must call configure() with:");
+            console.log("  router:  ", ccipRouter);
+            console.log("  link:    ", linkToken);
+            console.log("  selector:", mainnetSelector);
+        } else {
+            // EOA still owns it, so step 2 should have configured it — a mismatch here is a real bug.
+            revert("post-flight: orchestrator not configured as expected");
+        }
         console.log("==========================================");
     }
 
