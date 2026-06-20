@@ -19,7 +19,6 @@ import {KpkShares} from "../src/kpkShares.sol";
  *   - The KpkOivFactory is deployed at FACTORY on every supported chain.
  *   - Cross-chain determinism: the same PRIVATE_KEY must broadcast deployStack on every sidechain.
  * Known limitations:
- *   - kpkSharesImpl and kpkSharesProxy addresses cannot be predicted (they use plain CREATE).
  *   - predict() must be called with --rpc-url pointing to a chain where the factory is deployed.
  *   - Additional assets array is capped at 20 entries.
  */
@@ -39,19 +38,19 @@ contract DeployOiv is Script {
         KpkOivFactory.OivInstance memory predicted = KpkOivFactory(FACTORY).predictOivAddresses(config, caller);
 
         console.log("============================================================");
-        console.log("  Direcciones predichas (sin deployment)");
+        console.log("  Predicted addresses (no deployment)");
         console.log("============================================================");
         console.log("  Avatar Safe:          ", predicted.avatarSafe);
         console.log("  Manager Safe:         ", predicted.managerSafe);
         console.log("  execRolesModifier:    ", predicted.execRolesModifier);
         console.log("  subRolesModifier:     ", predicted.subRolesModifier);
         console.log("  managerRolesModifier: ", predicted.managerRolesModifier);
-        console.log("  kpkShares impl:        (no predecible: usa CREATE, depende de nonce)");
-        console.log("  kpkShares proxy:       (no predecible: usa CREATE, depende de nonce)");
+        console.log("  kpkShares impl:       ", predicted.kpkSharesImpl);
+        console.log("  kpkShares proxy:      ", predicted.kpkSharesProxy);
         console.log("------------------------------------------------------------");
         console.log("  Caller (deployer):    ", caller);
-        console.log("  NOTA: estas direcciones son identicas en todas las chains");
-        console.log("        si se usa el mismo caller y el mismo salt.");
+        console.log("  NOTE: these addresses are identical across all chains");
+        console.log("        when the same caller and the same salt are used.");
         console.log("============================================================");
     }
 

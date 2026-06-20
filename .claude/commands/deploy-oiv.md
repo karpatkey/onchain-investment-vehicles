@@ -313,8 +313,9 @@ source .env && forge script script/DeployOiv.s.sol \
 ```
 
 Explain to the user:
-> "These are the addresses the fund will have on **all** chains (they are deterministic).
-> The shares token addresses (kpkShares) cannot be predicted in advance."
+> "These are the addresses the fund will have on **all** chains (they are deterministic) —
+> including the kpkShares implementation and proxy, which `predict` now also shows
+> (both are CREATE2-derived)."
 
 ---
 
