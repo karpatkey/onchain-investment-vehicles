@@ -40,21 +40,12 @@ import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 ///     --rpc-url base \
 ///     --account $DEPLOYER_NAME \
 ///     --broadcast \
-///     --sig "run(address,address,address,address,uint64)" \
-///     <eoaOwner> <finalOwner> <ccipRouter> <linkToken> 5009297550715157269
+///     --sig "run(address,address,address,address,address,uint64)" \
+///     <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken> 5009297550715157269
 contract DeployCcipOivDeployer is Script {
     /// @notice Arachnid-style canonical CREATE2 deployer, present at the same address on every
     ///         major EVM chain. Calldata: `salt (32 bytes) || init_code (N bytes)`.
     address internal constant CANONICAL_CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-
-    /// @notice `KpkOivFactory` — deployed at the same address on every chain, so it is safe to bake
-    ///         into the orchestrator's creation code without breaking address determinism.
-    ///         WARNING: the orchestrator calls `factory.oivToStackConfig` at runtime, which the
-    ///         factory build at this published address does NOT expose. That helper changes the
-    ///         factory's creation code and therefore its CREATE2 address, so the factory must be
-    ///         redeployed and THIS constant updated to the new address before deploying the
-    ///         orchestrator. (Bump this and `SALT` together if the factory address changes.)
-    address internal constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
 
     /// @dev Bump the version uint to redeploy at a fresh address.
     bytes32 internal constant SALT = keccak256(abi.encodePacked("CcipOivDeployer", uint256(1)));
@@ -63,25 +54,37 @@ contract DeployCcipOivDeployer is Script {
     ///                        and `transferOwnership`). Baked into the creation code, so the same
     ///                        EOA must be used on every chain for an identical orchestrator address.
     /// @param finalOwner      Address that receives ownership after wiring (a governance multisig).
+    /// @param factory         `KpkOivFactory` address — the build that exposes `oivToStackConfig`
+    ///                        (the orchestrator calls it at runtime). It is baked into the
+    ///                        orchestrator's creation code, so you MUST pass the SAME factory address
+    ///                        on every chain or the orchestrator's CREATE2 address will diverge. The
+    ///                        deterministic factory deploy produces one identical address everywhere;
+    ///                        take it from the `DeployKpkOivFactory` run that precedes this one.
     /// @param ccipRouter      CCIP Router on THIS chain (verify against the CCIP directory).
     /// @param linkToken       LINK token used for CCIP fees on THIS chain.
     /// @param mainnetSelector CCIP chain selector of Ethereum mainnet (same value on every chain).
-    function run(address eoaOwner, address finalOwner, address ccipRouter, address linkToken, uint64 mainnetSelector)
-        external
-    {
+    function run(
+        address eoaOwner,
+        address finalOwner,
+        address factory,
+        address ccipRouter,
+        address linkToken,
+        uint64 mainnetSelector
+    ) external {
         require(eoaOwner != address(0), "eoaOwner is zero");
         require(finalOwner != address(0), "finalOwner is zero");
+        require(factory != address(0), "factory is zero");
         require(ccipRouter != address(0), "ccipRouter is zero");
         require(linkToken != address(0), "linkToken is zero");
         require(mainnetSelector != 0, "mainnetSelector is zero");
-        require(FACTORY.code.length > 0, "KpkOivFactory not deployed on this chain");
+        require(factory.code.length > 0, "KpkOivFactory not deployed on this chain");
 
-        bytes memory initCode = abi.encodePacked(type(CcipOivDeployer).creationCode, abi.encode(eoaOwner, FACTORY));
+        bytes memory initCode = abi.encodePacked(type(CcipOivDeployer).creationCode, abi.encode(eoaOwner, factory));
         address predicted = _computeCreate2(SALT, initCode);
 
         console.log("==========================================");
         console.log("Predicted CcipOivDeployer:", predicted);
-        console.log("KpkOivFactory:            ", FACTORY);
+        console.log("KpkOivFactory:            ", factory);
         console.log("EOA owner (during deploy):", eoaOwner);
         console.log("Final owner (post-deploy):", finalOwner);
         console.log("CCIP router:              ", ccipRouter);
@@ -128,7 +131,7 @@ contract DeployCcipOivDeployer is Script {
         vm.stopBroadcast();
 
         // ── 4. Post-flight verification ──
-        require(address(orchestrator.factory()) == FACTORY, "post-flight: factory mismatch");
+        require(address(orchestrator.factory()) == factory, "post-flight: factory mismatch");
 
         bool configured = orchestrator.router() == ccipRouter && orchestrator.linkToken() == linkToken
             && orchestrator.mainnetChainSelector() == mainnetSelector;

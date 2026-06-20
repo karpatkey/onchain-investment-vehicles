@@ -48,9 +48,9 @@ at runtime** — the same `pure` helper `deployOiv` uses internally — so the m
 between the two and fragment a fund's addresses. **This requires a factory build that exposes
 `oivToStackConfig`** (added in this change). The previously-published factory at
 `0x0d94255fdE65D302616b02A2F070CdB21190d420` predates it, so this changes the factory's creation
-code and therefore its CREATE2 address: the factory must be **redeployed** (new address) and the
-`FACTORY` constant in `script/DeployCcipOivDeployer.s.sol` plus the address table in `DEPLOYMENT.md`
-updated to match before this orchestrator is used.
+code and therefore its CREATE2 address: the factory must be **redeployed** (new address). The
+orchestrator deploy script takes that factory address as a `run` argument (pass the SAME address on
+every chain), and the `DEPLOYMENT.md` address table should be updated to match.
 
 ## Security model
 
@@ -144,8 +144,8 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
   --rpc-url base \
   --account $DEPLOYER_NAME \
   --broadcast \
-  --sig "run(address,address,address,address,uint64)" \
-  <eoaOwner> <finalOwner> <ccipRouter> <linkToken> 5009297550715157269
+  --sig "run(address,address,address,address,address,uint64)" \
+  <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken> 5009297550715157269
 ```
 
 `mainnetSelector` (`5009297550715157269`) is the same on every chain — it identifies the trusted
