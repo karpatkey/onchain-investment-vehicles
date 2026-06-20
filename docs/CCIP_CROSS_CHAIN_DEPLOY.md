@@ -4,9 +4,11 @@
 the matching operational stack to multiple sidechains over Chainlink CCIP — producing the **same**
 Avatar Safe / Manager Safe / Roles Modifier addresses on every chain.
 
-It is an external orchestrator: **`KpkOivFactory` is not modified.**
+It is an external orchestrator: **all CCIP, fee, and router logic lives outside `KpkOivFactory`.**
+The only factory change is exposing `oivToStackConfig` (a `pure` helper `deployOiv` already uses
+internally); the factory's deployment logic and invariants are otherwise untouched.
 
-## Why an orchestrator (and not a factory change)
+## Why an orchestrator (and not CCIP inside the factory)
 
 `KpkOivFactory` mixes `msg.sender` into every CREATE2 salt (`_deriveSalts`). Its cross-chain address
 invariant therefore holds only when the **same caller** invokes the factory on every chain. A raw
@@ -15,8 +17,8 @@ Router, not the original mainnet account.
 
 `CcipOivDeployer` solves it by being the single, uniform caller of the factory on every chain.
 Because it is deployed at the **same address on all chains** (deterministic CREATE2, identical
-creation code), the factory observes one identical `msg.sender` everywhere, and the address
-invariant is preserved with the audited factory left untouched.
+creation code), the factory observes one identical `msg.sender` everywhere, so the address invariant
+is preserved without putting any CCIP logic into the factory's deployment path.
 
 ```
                           mainnet
@@ -50,7 +52,7 @@ between the two and fragment a fund's addresses. **This requires a factory build
 `0x0d94255fdE65D302616b02A2F070CdB21190d420` predates it, so this changes the factory's creation
 code and therefore its CREATE2 address: the factory must be **redeployed** (new address). The
 orchestrator deploy script takes that factory address as a `run` argument (pass the SAME address on
-every chain), and the `DEPLOYMENT.md` address table should be updated to match.
+every chain), and the `docs/DEPLOYED_ADDRESSES.md` address table should be updated to match.
 
 ## Security model
 
@@ -136,8 +138,9 @@ Near-misses and exclusions:
 Deploy at the same address on every chain via `script/DeployCcipOivDeployer.s.sol`, then wire each
 chain's CCIP config. **Verify the router/LINK/selector values against the
 [CCIP directory](https://docs.chain.link/ccip/directory/mainnet) immediately before broadcasting** —
-the script takes them as arguments precisely so no unverified infra is hard-coded. A reference table
-of published values for Mainnet / Arbitrum / Base / Optimism / Gnosis is in the script's NatSpec.
+the script takes them as arguments precisely so no unverified infra is hard-coded. The
+machine-readable reference of published router / LINK / selector values per chain is
+`script/ccip-networks.json`.
 
 ```bash
 source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDeployer \

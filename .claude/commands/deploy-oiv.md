@@ -306,7 +306,7 @@ If no: ask what they want to correct and go back to the corresponding step.
 Before deployment, show the predicted addresses:
 
 Run:
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "predict(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL
@@ -328,7 +328,7 @@ Ask:
 Run the commands in this order:
 
 1. **Mainnet** (if `full_oiv`):
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "deployOiv(string)" "script/<slug>-config.json" \
   --rpc-url $MAINNET_RPC_URL \
@@ -336,7 +336,7 @@ source .env && forge script script/DeployOiv.s.sol \
 ```
 
 2. **Each sidechain** (in order: arbitrum, base, optimism, gnosis):
-```
+```bash
 source .env && forge script script/DeployOiv.s.sol \
   --sig "deployStack(string)" "script/<slug>-config.json" \
   --rpc-url $<CHAIN>_RPC_URL \

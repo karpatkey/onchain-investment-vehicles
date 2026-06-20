@@ -16,12 +16,12 @@ The factory address is mixed into the salt derivation alongside the caller, so c
 3. The same `caller` calling the entry point on every chain (caller mixing prevents salt-squat front-running).
 4. The same `salt` and the same `managerSafe.owners` / `threshold` across chains (the Manager Safe initializer encodes these too).
 
-### Predict functions
+## Predict functions
 
 Two read-only helpers return the addresses a deployment would produce, without sending a transaction:
 
 - **`predictStackAddresses(StackConfig, address caller)`** → predicted `StackInstance` (5 addresses).
-- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance`. The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` and `kpkSharesProxy` are returned as `address(0)` because they use plain CREATE (not CREATE2) and depend on deployer nonce, not on the salt.
+- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` and `kpkSharesProxy` are also predicted via CREATE2: the implementation from `KpkSharesDeployer.predictImpl` (salt derived from `(caller, salt, 5)`) and the ERC-1967 proxy from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`).
 
 Use them to look up the address of a fund's Avatar Safe ahead of deployment, e.g. when seeding a governance proposal or pre-configuring a frontend.
 
@@ -48,11 +48,11 @@ Deploys the five-contract operational stack. All five addresses are deterministi
 
 ```mermaid
 graph LR
-    MS["Manager Safe\n(owners + threshold)"]
-    EM["execRolesModifier\n(owner: execRolesMod.finalOwner)"]
-    SM["subRolesModifier\n(owner: Manager Safe)"]
-    MM["managerRolesModifier\n(owner: Manager Safe)"]
-    AS["Avatar Safe\n(signer: EMPTY_CONTRACT)"]
+    MS["Manager Safe<br/>(owners + threshold)"]
+    EM["execRolesModifier<br/>(owner: execRolesMod.finalOwner)"]
+    SM["subRolesModifier<br/>(owner: Manager Safe)"]
+    MM["managerRolesModifier<br/>(owner: Manager Safe)"]
+    AS["Avatar Safe<br/>(signer: EMPTY_CONTRACT)"]
 
     EM -- "module of" --> AS
     SM -- "module of" --> EM
@@ -93,19 +93,19 @@ The following are **wired automatically** and require no input:
 
 ```mermaid
 graph LR
-    MS["Manager Safe\n(owners + threshold)"]
-    EM["execRolesModifier\n(owner: admin)"]
-    SM["subRolesModifier\n(owner: Manager Safe)"]
-    MM["managerRolesModifier\n(owner: Manager Safe)"]
-    AS["Avatar Safe\n(signer: EMPTY_CONTRACT)"]
-    KS["KpkShares Proxy\n(DEFAULT_ADMIN_ROLE: admin)"]
+    MS["Manager Safe<br/>(owners + threshold)"]
+    EM["execRolesModifier<br/>(owner: admin)"]
+    SM["subRolesModifier<br/>(owner: Manager Safe)"]
+    MM["managerRolesModifier<br/>(owner: Manager Safe)"]
+    AS["Avatar Safe<br/>(signer: EMPTY_CONTRACT)"]
+    KS["KpkShares Proxy<br/>(DEFAULT_ADMIN_ROLE: admin)"]
 
     EM -- "module of" --> AS
     SM -- "module of" --> EM
     MM -- "module of" --> MS
     MS -- "MANAGER role" --> EM
     SM -- "MANAGER role" --> EM
-    AS -- "max allowance\n(redeemable assets)" --> KS
+    AS -- "max allowance<br/>(redeemable assets)" --> KS
     MS -- "OPERATOR" --> KS
 ```
 
@@ -162,7 +162,7 @@ The factory is **always** included as a setup-time Avatar Safe module in both fl
 9.  Deploy fresh KpkShares implementation via KpkSharesDeployer (one per fund)
 10. Deploy KpkShares UUPS proxy (factory temporarily holds DEFAULT_ADMIN_ROLE)
                                → register additional assets (factory temporarily holds OPERATOR)
-                               → grant OPERATOR to sharesOperator
+                               → grant OPERATOR to the Manager Safe
                                → grant DEFAULT_ADMIN_ROLE to admin
                                → factory renounces DEFAULT_ADMIN_ROLE
 11. Grant infinite allowance from Avatar Safe to shares proxy for:
@@ -175,15 +175,19 @@ The factory is **always** included as a setup-time Avatar Safe module in both fl
 
 ### Salt derivation
 
-A single `uint256 salt` in `StackConfig` (or `OivConfig`) controls all five deployment addresses. The factory derives independent per-component values by hashing `(caller, baseSalt, index)`:
+A single `uint256 salt` in `StackConfig` (or `OivConfig`) controls all five operational-stack deployment addresses. The factory derives independent per-component values by hashing `(caller, baseSalt, index)`:
 
-| Index | Component              |
-|-------|------------------------|
-| 0     | `execRolesModifier`    |
-| 1     | `subRolesModifier`     |
-| 2     | `managerRolesModifier` |
-| 3     | Avatar Safe nonce      |
-| 4     | Manager Safe nonce     |
+| Index | Component                       |
+|-------|---------------------------------|
+| 0     | `execRolesModifier`             |
+| 1     | `subRolesModifier`              |
+| 2     | `managerRolesModifier`          |
+| 3     | Avatar Safe nonce               |
+| 4     | Manager Safe nonce              |
+| 5     | KpkShares implementation (`deployOiv`) |
+| 6     | KpkShares ERC-1967 proxy (`deployOiv`) |
+
+Indices 5 and 6 are used only by `deployOiv` (derived in `_deriveSharesSalts`) for the per-fund KpkShares implementation and its proxy.
 
 `caller` is `msg.sender` of the entry-point call. Mixing it in prevents salt-squat front-running (an observer cannot occupy the deterministic addresses by submitting the same salt with attacker-controlled config). The trade-off: cross-chain determinism requires the same caller to invoke the entry point on every chain.
 
@@ -290,7 +294,7 @@ Initialization parameters for the `KpkShares` UUPS proxy.
 
 ### `additionalAssets` — `AssetConfig[]`
 
-Optional list of assets to enable on the shares proxy beyond the base asset. The factory temporarily holds `OPERATOR` to register each asset, then revokes it before granting `OPERATOR` to `sharesOperator`.
+Optional list of assets to enable on the shares proxy beyond the base asset. The factory temporarily holds `OPERATOR` to register each asset, then revokes it before granting `OPERATOR` to the Manager Safe.
 
 | Field        | Description                                                         |
 |--------------|---------------------------------------------------------------------|
@@ -389,7 +393,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)
 - Any `additionalAssets[i].asset` equals `sharesParams.asset`, or two entries share the same asset (`DuplicateAsset`)
 
-`KpkSharesDeployer` is factory-locked (`L-01`): deploy it with `factory = predicted KpkOivFactory address` (e.g. via `vm.computeCreateAddress`), then deploy the factory at the predicted address. Any direct call to `KpkSharesDeployer.deploy()` from a non-factory caller reverts with `UnauthorizedCaller`.
+`KpkSharesDeployer` is factory-locked (`L-01`): deploy it with `factory = predicted KpkOivFactory address` (e.g. via `vm.computeCreateAddress`), then deploy the factory at the predicted address. Any direct call to `KpkSharesDeployer.deploy(salt)` from a non-factory caller reverts with `UnauthorizedCaller`.
 
 ## Trust assumptions
 

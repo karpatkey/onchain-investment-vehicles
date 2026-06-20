@@ -132,7 +132,7 @@ forge script script/DeployOiv.s.sol \
   --rpc-url $MAINNET_RPC_URL
 ```
 
-**Note:** `kpkShares` implementation and proxy addresses cannot be predicted because they use plain `CREATE` (not `CREATE2`) and depend on the deployer's nonce at execution time.
+**Note:** The `kpkShares` implementation and proxy are deployed via `CREATE2`, so their addresses are deterministic from the deployer, salt, and config. The `predict` entry point does not print them, but `KpkOivFactory.predictOivAddresses()` does return them (`kpkSharesImpl` and `kpkSharesProxy`).
 
 ### `deployOiv(configPath)`
 

@@ -28,10 +28,9 @@ Replace `"vault1"` with the name of the vault you want to deploy from `vaults.js
    export ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
    ```
 
-2. Configure your private key or use a hardware wallet:
+2. Configure your private key. The script reads it directly from the `PRIVATE_KEY` environment variable to derive the deployer/initial admin address:
    ```bash
    export PRIVATE_KEY=your_private_key
-   # OR use --ledger, --trezor, etc.
    ```
 
 3. Set up Etherscan API key for verification:
@@ -41,26 +40,42 @@ Replace `"vault1"` with the name of the vault you want to deploy from `vaults.js
 
 ### vaults.json Format
 
-The `vaults.json` file contains configuration for one or more vaults. Each vault entry should have the following structure:
+The `vaults.json` file groups vaults by network. Each network has a `chain` object with a `name`, an `id`, and a `vaults` array; the deployment script selects a vault from this array by matching its `vaultName`. `DeployKpkShares.s.sol` reads from `.mainnet.chain.vaults`, and `DeployKpkSharesSepolia.s.sol` reads from `.sepolia.chain.vaults`.
+
+Each vault entry has the following structure:
 
 ```json
 {
-  "vaultName": {
-    "asset": "0x...",                    // Base asset address (e.g., USDC on mainnet: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
-    "admin": "0x...",                    // Initial admin address (will have DEFAULT_ADMIN_ROLE)
-    "name": "Vault Name",                // ERC20 token name
-    "symbol": "SYMBOL",                  // ERC20 token symbol
-    "safe": "0x...",                     // Portfolio safe address
-    "subscriptionRequestTtl": 86400,     // Subscription request TTL in seconds (max 7 days)
-    "redemptionRequestTtl": 86400,       // Redemption request TTL in seconds (max 7 days)
-    "feeReceiver": "0x...",              // Address that receives fees
-    "managementFeeRate": 200,            // Management fee rate in basis points (200 = 2%, max 2000 = 20%)
-    "redemptionFeeRate": 100,            // Redemption fee rate in basis points (100 = 1%, max 2000 = 20%)
-    "performanceFeeModule": "0x...",     // Performance fee module address (optional, use 0x0000... to disable)
-    "performanceFeeRate": 2000           // Performance fee rate in basis points (2000 = 20%, max 2000 = 20%)
+  "mainnet": {
+    "chain": {
+      "name": "Ethereum Mainnet",
+      "id": 1,
+      "vaults": [
+        {
+          "environment": "production",        // Free-form label (e.g., "production", "staging")
+          "vaultName": "kUSD",                 // Name used to select this vault on the command line
+          "asset": "0x...",                    // Base asset address (e.g., USDC on mainnet: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+          "additionalAssets": [],              // Extra assets to whitelist after deployment (optional)
+          "admin": "0x...",                    // Address granted DEFAULT_ADMIN_ROLE after deployment
+          "operator": "0x...",                 // Address granted the OPERATOR role after deployment
+          "name": "Vault Name",                // ERC20 token name
+          "symbol": "SYMBOL",                  // ERC20 token symbol
+          "safe": "0x...",                     // Portfolio safe address
+          "subscriptionRequestTtl": 86400,     // Subscription request TTL in seconds (max 7 days)
+          "redemptionRequestTtl": 86400,       // Redemption request TTL in seconds (max 7 days)
+          "feeReceiver": "0x...",              // Address that receives fees
+          "managementFeeRate": 200,            // Management fee rate in basis points (200 = 2%, max 2000 = 20%)
+          "redemptionFeeRate": 100,            // Redemption fee rate in basis points (100 = 1%, max 2000 = 20%)
+          "performanceFeeModule": "0x...",     // Performance fee module address (optional, use 0x0000... to disable)
+          "performanceFeeRate": 2000           // Performance fee rate in basis points (2000 = 20%, max 2000 = 20%)
+        }
+      ]
+    }
   }
 }
 ```
+
+During deployment, the `PRIVATE_KEY` signer is set as the initial admin so it can grant roles. The script then grants `OPERATOR` to `operator`, grants `DEFAULT_ADMIN_ROLE` to `admin`, and revokes `DEFAULT_ADMIN_ROLE` from the deployer.
 
 ### Important Notes
 
@@ -74,7 +89,7 @@ The `vaults.json` file contains configuration for one or more vaults. Each vault
 
 5. **Performance Fee Module**: This is optional. If you want to disable performance fees, set `performanceFeeModule` to `0x0000000000000000000000000000000000000000` or omit the field.
 
-### Example: Mainnet USDC Addresses
+### Example: Mainnet Asset Addresses
 
 - USDC: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
 - USDT: `0xdAC17F958D2ee523a2206206994597C13D831ec7`
@@ -89,16 +104,13 @@ The `vaults.json` file contains configuration for one or more vaults. Each vault
    - Deploy the implementation contract
    - Deploy a UUPS proxy pointing to the implementation
    - Initialize the proxy with your configuration
+   - Assign the `OPERATOR` and `DEFAULT_ADMIN_ROLE` roles and whitelist any additional assets
    - Log all deployment details
 
 ### Post-Deployment
 
-After deployment, you should:
+The script already grants the `OPERATOR` role to the configured `operator`, transfers `DEFAULT_ADMIN_ROLE` to the configured `admin`, and whitelists any `additionalAssets`. After deployment, you should:
 1. Verify the contract on Etherscan (if using `--verify`)
-2. Grant OPERATOR role to the appropriate address:
-   ```solidity
-   kpkSharesContract.grantRole(OPERATOR, operatorAddress);
-   ```
+2. Confirm that the `OPERATOR` and `DEFAULT_ADMIN_ROLE` roles were assigned to the expected addresses
 3. Set up asset approvals for the portfolio safe
 4. Test the deployment with a small transaction
-
