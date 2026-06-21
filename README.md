@@ -98,6 +98,10 @@ You don't need to write Solidity. The **`/deploy-oiv`** Claude Code skill walks 
 
 Step-by-step guide, config format, and environment setup: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
+Visual walk-throughs of the deployment flow (with diagrams):
+**[docs/FUND_DEPLOYMENT_FLOW.md](docs/FUND_DEPLOYMENT_FLOW.md)** (direct, per-chain) and
+**[docs/CCIP_FUND_DEPLOYMENT_FLOW.md](docs/CCIP_FUND_DEPLOYMENT_FLOW.md)** (one transaction, multichain via CCIP).
+
 > **Note on deployed addresses.** Current production addresses are tracked in **[docs/DEPLOYED_ADDRESSES.md](docs/DEPLOYED_ADDRESSES.md)** and [DEPLOYMENT.md](DEPLOYMENT.md). The CCIP work added `oivToStackConfig` to the factory, which changes its bytecode and therefore its CREATE2 address — the factory must be **redeployed** (and the address tables updated) before the CCIP path is used. See the redeploy checklist in [docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md).
 
 ---
@@ -123,6 +127,8 @@ docs/
   KpkShares.md             kpkShares contract reference
   KpkOivFactory.md         factory reference
   CCIP_CROSS_CHAIN_DEPLOY.md cross-chain deployment design + networks
+  FUND_DEPLOYMENT_FLOW.md  fund deployment flow diagrams (direct, per-chain)
+  CCIP_FUND_DEPLOYMENT_FLOW.md fund deployment flow diagrams (one-tx multichain)
   DEPLOYED_ADDRESSES.md    production addresses
 test/                      Foundry tests (fork-based for factory/CCIP)
 ```
