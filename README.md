@@ -1,445 +1,145 @@
-# kpkShares Contract Documentation
+# kpk On-Chain Investment Vehicles (OIVs)
 
-## Overview
+Tooling and smart contracts for deploying **tokenized funds ("OIVs") entirely on-chain** — and giving each fund the **same identity (same addresses) across every supported EVM chain**.
 
-The `kpkShares` contract is a tokenized fund implementation that allows users to subscribe for and receive fund shares, as well as redeem shares for underlying assets. It implements a request-based system with operator approval, comprehensive fee management, and multi-asset support.
+A fund is not a single contract. It is a small stack of Safe + [Zodiac Roles](https://www.zodiac.wiki/documentation/roles-modifier) contracts plus an ERC-20 shares token, wired together. This repo provides:
 
-## Contract Architecture
+- **`KpkOivFactory`** — an on-chain factory that deploys and wires a complete fund stack in **one transaction**, at deterministic addresses.
+- **`CcipOivDeployer`** — a Chainlink CCIP orchestrator that, from **one mainnet transaction**, fans the operational stack out to multiple sidechains so the fund lands at the **same addresses everywhere**.
+- **`kpkShares`** — the fund's ERC-20 shares token (request-based subscribe/redeem, fees, multi-asset). This is the externally-audited core; its detailed reference lives in **[docs/KpkShares.md](docs/KpkShares.md)**.
 
-### Inheritance Chain
-```
-KpkShares
-├── Initializable (OpenZeppelin)
-├── UUPSUpgradeable (OpenZeppelin)
-├── AccessControlUpgradeable (OpenZeppelin)
-├── ERC20Upgradeable (OpenZeppelin)
-├── IkpkShares (Custom Interface)
-└── RecoverFunds (Custom Abstract)
-```
+---
 
-### Key Components
-- **Token Management**: ERC20-compliant shares with minting/burning capabilities
-- **Request System**: Subscription and redemption requests with TTL-based cancellation
-- **Fee Management**: Management, performance, and redemption fees
-- **Asset Management**: Multi-asset support with configurable asset types
-- **Access Control**: Role-based permissions for different operations
+## The fund stack
 
-## Dependencies
-
-### External Libraries
-- **OpenZeppelin Contracts Upgradeable** (`5.0.2` - pinned version)
-  - `ERC20Upgradeable`: Standard ERC20 token functionality
-  - `AccessControlUpgradeable`: Role-based access control
-  - `UUPSUpgradeable`: Upgradeable proxy pattern
-  - `Initializable`: Initialization pattern for upgradeable contracts
-  - `SafeERC20`: Safe ERC20 operations
-  - `Math`: Mathematical operations with overflow protection
-
-### Internal Dependencies
-- `IPerfFeeModule`: Performance fee calculation interface
-- `WatermarkFee`: Watermark-based performance fee implementation
-- `IkpkShares`: Main contract interface
-- `RecoverFunds`: Asset recovery mechanism
-
-## Access Control & Authorities
-
-### Role Hierarchy
-```
-DEFAULT_ADMIN_ROLE (0x00)
-├── Can upgrade the contract
-├── Can modify fee rates and receivers
-├── Can set TTL values
-└── Can grant/revoke other roles
-
-OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
-├── Can process deposit/redemption requests
-├── Can update asset configurations
-└── Cannot cancel requests (only investors/receivers can cancel)
+Every fund the factory deploys is the same five-to-seven-contract stack:
 
 ```
+                    ┌─────────────────────────────────────────────┐
+                    │                Avatar Safe                  │  holds all fund assets;
+                    │     (sole signer = Empty contract — no       │  cannot execute directly
+                    │      EOA/multisig can execute directly)      │
+                    └───────────────▲─────────────────────────────┘
+                                    │ execTransactionFromModule
+                    ┌───────────────┴───────────┐
+                    │     exec Roles Modifier    │  primary execution gate (owned by admin /
+                    └───────▲───────────▲────────┘  Security Council)
+                            │           │
+              ┌─────────────┴──┐   ┌────┴───────────────┐
+              │ sub Roles Mod  │   │   Manager Safe     │  operational multisig (fund managers)
+              │ (bots/automation)  │  + manager Roles Mod │
+              └────────────────┘   └────────────────────┘
 
-### Permission Matrix
-
-| Function | DEFAULT_ADMIN_ROLE | OPERATOR | INVESTOR | Public |
-|----------|-------------------|----------|----------|---------|
-| `initialize` | ❌ | ❌ | ❌ | ✅ (initializer, one-time) |
-| `_authorizeUpgrade` | ✅ | ❌ | ❌ | ❌ |
-| `setSubscriptionRequestTtl` | ✅ | ❌ | ❌ | ❌ |
-| `setRedemptionRequestTtl` | ✅ | ❌ | ❌ | ❌ |
-| `setFeeReceiver` | ✅ | ❌ | ❌ | ❌ |
-| `setManagementFeeRate` | ✅ | ❌ | ❌ | ❌ |
-| `setRedemptionFeeRate` | ✅ | ❌ | ❌ | ❌ |
-| `setPerformanceFeeRate` | ✅ | ❌ | ❌ | ❌ |
-| `setPerformanceFeeModule` | ✅ | ❌ | ❌ | ❌ |
-| `updateAsset` | ❌ | ✅ | ❌ | ❌ |
-| `processRequests` | ❌ | ✅ | ❌ | ❌ |
-| `requestSubscription` | ❌ | ❌ | ❌ | ✅ |
-| `requestRedemption` | ❌ | ❌ | ❌ | ✅ |
-| `cancelSubscription` | ❌ | ❌ | ✅ (investor or receiver, after TTL) | ❌ |
-| `cancelRedemption` | ❌ | ❌ | ✅ (investor or receiver, after TTL) | ❌ |
-
-## Core Capabilities
-
-### 1. Asset Management
-- **Multi-Asset Support**: Configure multiple assets for subscriptions and redemptions
-- **Asset Configuration**: Granular control over which assets can be used for subscriptions/redemptions
-- **Dynamic Updates**: Add/remove assets and modify configurations
-- **Asset Removal Restrictions**: 
-  - Cannot remove asset with pending subscriptions (`subscriptionAssets[asset] > 0`)
-  - Cannot remove asset with pending requests (subscriptions or redemptions)
-  - Cannot remove the last remaining approved asset
-  - Cannot add asset with both `canDeposit = false` and `canRedeem = false`
-  - Maximum 36 decimals per asset (prevents overflow risks)
-
-### 2. Subscription System
-- **Request-Based**: Users submit subscription requests that require operator approval
-- **Asset Escrow**: Assets are held in escrow until request processing
-- **TTL Protection**: Configurable time-to-live for request cancellation
-
-### 3. Redemption System
-- **Share Escrow**: Shares are held in escrow during redemption requests
-- **Flexible Asset Selection**: Users can redeem for any approved asset
-- **Fee Deduction**: Redemption fees are applied before asset distribution
-
-### 4. Fee Management
-- **Management Fees**: Time-based fees calculated on total share supply
-- **Performance Fees**: Watermark-based performance fees using modular calculation system
-- **Redemption Fees**: Percentage-based fees on redemption amounts
-- **Fee Distribution**: All fees are distributed as shares to the configured fee receiver
-- **Watermark System**: Performance fees only charged on profits above the highest previous share price
-- **Modular Design**: Performance fee calculation can be upgraded by changing the fee module
-- **Fee Timestamp Management**:
-  - Management fees use shared `_managementFeeLastUpdate` timestamp across all assets
-  - Performance fees use separate `_performanceFeeLastUpdate` timestamp (prevents gaming)
-  - Performance fees only calculated for assets with `isFeeModuleAsset = true`
-  - When updating fee rates, any accrued fees are charged before the rate change
-
-### 5. Performance Fee System
-- **Watermark Mechanism**: Tracks the highest share price achieved
-- **Profit-Only Charging**: Fees only charged on gains above the watermark
-- **Modular Architecture**: Fee calculation logic can be upgraded via module replacement
-- **Time-Based Calculation**: Performance fees calculated based on time elapsed and price appreciation
-- **Automatic Watermark Updates**: Watermark is updated when new high prices are achieved
-
-### 6. Request Lifecycle
-```
-Request Creation → Pending → Processing → Approved/Rejected/Expired
-       ↓              ↓          ↓           ↓
-   User Action   TTL Window  Operator    Final State
-   (Subscription/ (Cancellation  Review    (Shares Minted/
-    Redeem)      Available)    Required   Assets Transferred)
-                                    ↓
-                              Expiry Check
-                              (7 days max)
-                                    ↓
-                            Auto-Reject if Expired
+                    ┌─────────────────────────────────────────────┐
+                    │   kpkShares (UUPS proxy) + per-fund impl     │  the ERC-20 investors hold
+                    └─────────────────────────────────────────────┘
 ```
 
-**Request Lifetime vs Cancellation TTL:**
-- **Request Lifetime**: All requests expire after 7 days (`expiryAt = timestamp + MAX_TTL`)
-- **Cancellation TTL**: Configurable time window (max 7 days) before user can cancel
-- **Expiry Handling**: Expired requests in `approveRequests` are automatically rejected during processing
-- **Expiry Events**: `SubscriptionRequestExpired` or `RedemptionRequestExpired` emitted when requests expire
+- **Avatar Safe** — holds the assets. Its only signer is the `Empty` contract (same address on every chain via CREATE2), so **no key can execute on it directly**; all execution must flow through the Roles Modifiers.
+- **exec / sub / manager Roles Modifiers** — Zodiac Roles v2 instances that gate what can be executed, by whom, against the Avatar and Manager Safes.
+- **Manager Safe** — the operators' multisig.
+- **kpkShares** — the fund's shares token; investors subscribe/redeem against it. See [docs/KpkShares.md](docs/KpkShares.md).
 
-## Asset and Shares Flow Analysis
+---
 
-The kpkShares contract manages a tokenized fund with asynchronous subscription and redemption processes. Below is a detailed breakdown of asset and shares flows for each user interaction:
+## `KpkOivFactory` — one-transaction fund deployment
 
-### Key Components
+`KpkOivFactory` deploys and fully wires that stack via CREATE2, so the addresses are **deterministic** and reproducible across chains. Two permissionless entry points:
 
-| Component | Description |
-|-----------|-------------|
-| **Investor** | User requesting subscription/redemption |
-| **Receiver** | Address that receives shares (subscription) or assets (redemption) |
-| **Contract** | kpkShares contract (holds assets in escrow during pending requests) |
-| **Portfolio Safe** | Main fund vault where approved assets are transferred |
-| **Fee Receiver** | Address that receives management, performance, and redemption fees |
+| Entry point | Deploys | Typical use |
+|---|---|---|
+| `deployOiv(config)` | the full fund: the 5-contract operational stack **+** a per-fund `kpkShares` implementation and UUPS proxy, with asset allowances and operator wiring | **mainnet** |
+| `deployStack(config)` | the 5-contract operational stack only (no shares token) | **sidechains** |
 
-### Subscription Flow
+Key properties:
 
-| Function | Asset Origin | Asset Destination | Asset Amount | Shares Origin | Shares Destination | Shares Amount | State Changes |
-|----------|--------------|-------------------|--------------|---------------|-------------------|---------------|---------------|
-| `requestSubscription` | Investor's wallet | kpkShares contract (escrow) | Full asset amount | None (not minted yet) | None | None | Assets transferred to escrow, `subscriptionAssets[asset]` increased, request PENDING (shares calculated during approval) |
-| `cancelSubscription` | kpkShares contract (escrow) | Investor's wallet | Full original amount | None | None | None | `subscriptionAssets[asset]` decreased, request CANCELLED |
-| `processRequests` (approve) | kpkShares contract (escrow) | Portfolio Safe | Full asset amount | None (newly minted) | Receiver's wallet | Calculated shares | `subscriptionAssets[asset]` decreased, request PROCESSED, shares minted |
-| `processRequests` (reject) | kpkShares contract (escrow) | Investor's wallet | Full original amount | None | None | None | `subscriptionAssets[asset]` decreased, request REJECTED |
+- **Cross-chain address invariant.** For the same `(caller, salt)`, `deployOiv` and `deployStack` produce **identical** Avatar Safe / Manager Safe / Roles Modifier addresses on every EVM chain — so a fund has one Avatar Safe address everywhere. The caller is mixed into the salt to prevent front-running of deterministic addresses.
+- **`oivToStackConfig(config)`** is the single source of truth for the `OivConfig → StackConfig` mapping that both `deployOiv` and off-chain orchestrators use, so sidechain addresses can't drift from mainnet.
+- **`predictOivAddresses` / `predictStackAddresses`** return, read-only, the addresses a deployment would produce (including the CREATE2-derived `kpkShares` impl/proxy).
+- **Trust model.** Deployment entry points are permissionless; only infrastructure setters are owner-gated, and the owner **must** be a TimelockController/governance multisig (never an EOA) — a compromised owner could backdoor future deployments.
 
-### Redemption Flow
+Full reference: **[docs/KpkOivFactory.md](docs/KpkOivFactory.md)**.
 
-| Function | Asset Origin | Asset Destination | Asset Amount | Shares Origin | Shares Destination | Shares Amount | State Changes |
-|----------|--------------|-------------------|--------------|---------------|-------------------|---------------|---------------|
-| `requestRedemption` | None (not transferred yet) | None | None | Investor's wallet | kpkShares contract (escrow) | Full shares amount | Shares transferred to escrow, request PENDING (assets calculated during approval) |
-| `cancelRedemption` | None | None | None | kpkShares contract (escrow) | Investor's wallet | Full original amount | Request CANCELLED |
-| `processRequests` (approve) | Portfolio Safe | Receiver's wallet | Net assets (after fees) | kpkShares contract (escrow) | Fee Receiver + Burned | Fee shares transferred + Net shares burned | Request PROCESSED, net shares burned, fee shares transferred |
-| `processRequests` (reject) | None | None | None | kpkShares contract (escrow) | Investor's wallet | Full original amount | Request REJECTED |
+---
 
-### Fee Collection Patterns
+## Cross-chain deployment via Chainlink CCIP
 
-| Fee Type | Trigger | Calculation Method | Collection Method | Frequency | Destination | Event Emission |
-|----------|---------|-------------------|-------------------|-----------|-------------|----------------|
-| **Management Fee** | Any request processing | `(totalSupply - feeReceiverBalance) * managementFeeRate * timeElapsed / (10_000 * SECONDS_PER_YEAR)` | New shares minted | Only when `timeElapsed > MIN_TIME_ELAPSED` | Fee Receiver | Only when fee > 0 |
-| **Performance Fee** | Any request processing | Via performance fee module based on price appreciation | New shares minted | Only when `timeElapsed > MIN_TIME_ELAPSED` and `asset.isFeeModuleAsset == true` | Fee Receiver | Only when fee > 0 |
-| **Redemption Fee** | Redemption request processing only | `request.shares * redemptionFeeRate / 10000` | Shares transferred from escrow | Every redemption approval | Fee Receiver | `RedemptionApproval` event (includes `redemptionFee` parameter) |
+`CcipOivDeployer` extends a fund across chains in a single mainnet transaction, preserving the address invariant.
 
-### Request Status Transitions
+Because `KpkOivFactory` mixes `msg.sender` into its salts, identical addresses across chains require the **same caller** on every chain. The orchestrator is deployed at **one identical address on all chains** (deterministic CREATE2, chain-identical creation code) and is therefore the uniform factory caller everywhere — without putting any CCIP logic into the factory's deployment path.
 
-| Current Status | Possible Actions | New Status | Asset/Shares Movement |
-|----------------|------------------|------------|----------------------|
-| **PENDING** | Operator approval | PROCESSED | Assets/shares transferred according to request type |
-| **PENDING** | Operator rejection | REJECTED | Assets/shares returned to investor |
-| **PENDING** | User cancellation (after TTL) | CANCELLED | Assets/shares returned to investor |
-| **PENDING** | Request expiry (after 7 days) | REJECTED | Assets/shares returned to investor, expiry event emitted |
-| **PROCESSED** | None | PROCESSED | Final state - no further changes |
-| **REJECTED** | None | REJECTED | Final state - no further changes |
-| **CANCELLED** | None | CANCELLED | Final state - no further changes |
+- **`deployEverywhere(config, destSelectors, gasLimit)`** — deploys the full OIV locally (mainnet) and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain.
+- **`dispatchTo(...)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
+- **Security.** `ccipReceive` accepts a message only from the configured router, the mainnet source chain, and a source sender equal to its own (sibling) address.
+- **Fees.** Paid in LINK from the orchestrator's balance; size with `quoteDeployEverywhere`.
+- **Async, not atomic.** Sidechain stacks land after Ethereum finality (~15 min); a failed CCIP message is manually re-executable.
 
-### Key Design Principles
+**Supported networks:** 23 on-chain-verified mainnets where the full prerequisite stack exists at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2 ∩ canonical CREATE2 deployer ∩ a live CCIP lane from Ethereum). The machine-readable registry is **[`script/ccip-networks.json`](script/ccip-networks.json)**.
 
-1. **Asynchronous Processing**: All requests are two-step (request → approve/reject)
-2. **Escrow Mechanism**: Assets/shares held in contract during pending state
-3. **Fee Separation**: Different fee types collected at different stages
-4. **Flexible Receivers**: Investor and receiver can be different addresses
-5. **TTL Protection**: Requests can be cancelled after TTL expires
+Full reference, the supported-network table, and the new-chain onboarding checklist: **[docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md)**.
 
-## Safety Considerations
+---
 
-### 1. Reentrancy Protection
-- **SafeERC20**: Uses OpenZeppelin's SafeERC20 for all token transfers
-- **State Updates**: State changes occur before external calls
-- **Request Status Tracking**: Comprehensive status management prevents double-processing
+## `kpkShares` — the shares token
 
-### 2. Access Control
-- **Role-Based Security**: Granular permissions for different operations
-- **Admin Controls**: Critical functions restricted to admin role
-- **Operator Limits**: Operators can only process requests, not modify core parameters
+`kpkShares` is the externally-audited ERC-20 each fund issues. It implements request-based subscriptions and redemptions with operator approval, management/performance/redemption fees, multi-asset support, and a UUPS upgrade path. The optional performance fee is computed by a pluggable module (`WatermarkFee`, a high-watermark implementation).
 
-### 3. Asset Safety
-- **Escrow Protection**: Assets/shares held in escrow during request processing
-- **Asset Validation**: Asset configuration validation before operations
-- **Asset Recovery**: RecoverFunds mechanism for emergency asset recovery
+Full reference: **[docs/KpkShares.md](docs/KpkShares.md)**.
 
-### 4. Request Security
-- **TTL Enforcement**: Time-based restrictions prevent indefinite holds
-- **Authorization Checks**: Users can only cancel their own requests
+---
 
-### 5. Fee Safety
-- **Rate Limits**: Maximum fee rates capped at 20% (2,000 basis points)
-- **Time-Based Calculation**: Management fees calculated based on elapsed time
-- **Fee Receiver Protection**: Dedicated fee receiver address for fee collection
-- **Event Optimization**: Fee collection events only emitted when actual fees are charged
+## Deploying a fund
 
-### 6. Upgrade Safety
-- **UUPS Pattern**: Upgradeable proxy with admin-only upgrade authorization
-- **Storage Gaps**: Proper storage layout management for upgrades
-- **Initialization Protection**: Initializer pattern prevents double initialization
+You don't need to write Solidity. The **`/deploy-oiv`** Claude Code skill walks you through configuration and writes a JSON config; the Foundry script `script/DeployOiv.s.sol` reads it and calls the factory:
 
-### 7. Price Deviation Protection
-- **Automatic Validation**: Price changes validated during `processRequests()`
-- **Deviation Limit**: Maximum 30% deviation from last settled price
-- **First-Time Exception**: No validation on first price submission (no previous price exists)
-- **Error Handling**: Reverts with `PriceDeviationTooLarge` if exceeded
-- **Purpose**: Prevents operator errors or manipulation through extreme price changes
+- `predict(configPath)` — show the expected addresses (no transaction).
+- `deployOiv(configPath)` — full fund (mainnet).
+- `deployStack(configPath)` — operational stack only (sidechains).
 
-## Configuration Parameters
+Step-by-step guide, config format, and environment setup: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
-### TTL Settings
-- **Subscription Request TTL**: Maximum 7 days, configurable by admin (1 day recommended)
-- **Redemption Request TTL**: Maximum 7 days, configurable by admin (1 day recommended)
+> **Note on deployed addresses.** Current production addresses are tracked in **[docs/DEPLOYED_ADDRESSES.md](docs/DEPLOYED_ADDRESSES.md)** and [DEPLOYMENT.md](DEPLOYMENT.md). The CCIP work added `oivToStackConfig` to the factory, which changes its bytecode and therefore its CREATE2 address — the factory must be **redeployed** (and the address tables updated) before the CCIP path is used. See the redeploy checklist in [docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md).
 
-### Fee Rates (Basis Points)
-- **Management Fee**: 0-2000 (0%-20%), configurable by admin
-- **Performance Fee**: 0-2000 (0%-20%), configurable by admin
-- **Redemption Fee**: 0-2000 (0%-20%), configurable by admin
+---
 
-### System Constants
-- **Precision**: 18 decimal places (WAD)
-- **Normalized Precision (USD)**: 8 decimal places
-- **Basis Points Precision**: 10,000 (1 BPS = 0.01%)
-- **Minimum Time Elapsed**: 6 hours for fee calculations
-- **Seconds Per Year**: 365 days for annualized calculations
-- **Maximum Price Deviation**: 30% (3,000 basis points)
-- **Maximum Request Lifetime**: 7 days (MAX_TTL)
-- **Maximum Asset Decimals**: 36 (overflow protection)
+## Repository layout
 
-## Events & Monitoring
-
-### Key Events
-- **Request Events**: Creation, approval, rejection, cancellation, expiry, updates
-- **Fee Events**: Fee collection (only when fees > 0), rate updates (only when values change), receiver changes
-- **Asset Events**: Asset addition, removal, configuration updates
-- **System Events**: TTL updates (only when values change), parameter changes
-- **Expiry Events**: `SubscriptionRequestExpired` and `RedemptionRequestExpired` emitted when requests expire during processing
-
-### Event Indexing
-- Critical events are indexed for efficient filtering
-- Request IDs and addresses are indexed for easy tracking
-- Timestamp information included for audit trails
-
-### Event Optimization
-- **Conditional Emission**: Events are only emitted when meaningful changes occur
-- **Fee Events**: `FeeCollection` only emitted when fees > 0
-- **Rate Updates**: Rate update events only emitted when values actually change
-- **TTL Updates**: TTL update events only emitted when values actually change
-- **Gas Efficiency**: Reduces unnecessary gas costs and event log noise
-
-## Price Management
-
-### Last Settled Price
-- **Per-Asset Tracking**: Each asset maintains its own last settled price
-- **Price Updates**: Updated during `processRequests()` after successful processing
-- **Price Format**: Stored in normalized USD units (8 decimals)
-- **First-Time Processing**: No price validation on first submission (no previous price exists)
-
-### Price Deviation Validation
-- **Automatic Check**: Validated during `processRequests()` before processing requests
-- **Deviation Limit**: Maximum 30% deviation from last settled price
-- **Calculation**: `deviationBps = (abs(newPrice - lastPrice) * 10000) / lastPrice`
-- **Error**: Reverts with `PriceDeviationTooLarge` if limit exceeded
-- **Purpose**: Prevents operator errors and price manipulation
-
-### Preview Functions with Last Settled Price
-- **Fallback Mechanism**: Both `previewSubscription()` and `previewRedemption()` accept `sharesPrice = 0`
-- **Behavior**: When `sharesPrice = 0`, automatically uses last settled price for the asset
-- **Error Handling**: Reverts with `NoStoredPrice()` if no price has been settled yet
-- **Use Case**: Allows users to preview transactions without knowing current price
-
-## Integration Points
-
-### External Contracts
-- **Safe**: Main fund vault for asset storage
-- **Performance Fee Module**: Custom fee calculation logic (WatermarkFee implementation)
-- **Asset Tokens**: ERC20 tokens for deposits/redemptions
-
-### Interface Compliance
-- **ERC20**: Standard token interface
-- **ERC165**: Interface detection support
-- **Custom Interface**: IkpkShares for fund-specific operations
-
-## Deployment & Initialization
-
-### Constructor Parameters
-```solidity
-struct ConstructorParams {
-    address asset;           // Base asset address
-    address admin;           // Initial admin address
-    string name;             // Share token name
-    string symbol;           // Share token symbol
-    address safe;            // Fund safe address
-    uint64 subscriptionRequestTtl; // Subscription request TTL
-    uint64 redemptionRequestTtl;  // Redemption request TTL
-    address feeReceiver;      // Fee receiver address
-    uint256 managementFeeRate;   // Management fee rate
-    uint256 redemptionFeeRate;    // Redemption fee rate
-    address performanceFeeModule;    // Performance fee module
-    uint256 performanceFeeRate;      // Performance fee rate
-}
+```
+src/
+  KpkOivFactory.sol        on-chain factory: deployOiv / deployStack
+  CcipOivDeployer.sol      Chainlink CCIP cross-chain orchestrator
+  KpkSharesDeployer.sol    deploys a per-fund kpkShares implementation
+  kpkShares.sol            the fund's ERC-20 shares token (audited)
+  IkpkShares.sol           kpkShares interface
+  FeeModules/              WatermarkFee (perf fee) + IPerfFeeModule
+  interfaces/              Safe + Zodiac interfaces used by the factory
+  utils/                   Empty (Avatar Safe signer), RecoverFunds
+script/
+  DeployOiv.s.sol          deploy a fund via the factory
+  DeployKpkOivFactory.s.sol deterministic factory + deployer deployment
+  DeployCcipOivDeployer.s.sol deterministic orchestrator deployment
+  ccip-networks.json       CCIP router / LINK / selector registry (23 chains)
+docs/
+  KpkShares.md             kpkShares contract reference
+  KpkOivFactory.md         factory reference
+  CCIP_CROSS_CHAIN_DEPLOY.md cross-chain deployment design + networks
+  DEPLOYED_ADDRESSES.md    production addresses
+test/                      Foundry tests (fork-based for factory/CCIP)
 ```
 
-### Initialization Flow
-1. Contract deployment via proxy
-2. Parameter validation
-3. Asset configuration setup (base asset configured with isFeeModuleAsset=true)
-4. Role assignment
-5. State initialization
-
-**Important**: The base asset (`asset` parameter) is automatically configured with `isFeeModuleAsset=true` during initialization. Performance fees are only calculated when processing requests for assets that have `isFeeModuleAsset=true` enabled. The base asset must have this flag enabled to ensure performance fees can be calculated for that asset.
-
-## Testing & Verification
-
-### Test Coverage
-- Comprehensive unit tests for all functions
-- Integration tests for request workflows
-- Edge case testing for fee calculations
-- Access control verification
-
-### Security Considerations
-- Reentrancy attack prevention
-- Access control validation
-- Fee calculation accuracy
-- Asset escrow integrity
-
-## Security Audits
-
-Security audit reports are published in the `audit-reports/` folder:
-
-- `cantina-kpk-oivs-oct-2025.pdf` — Cantina audit (October 2025)
-- `team-omega-kpk-oivs-oct-2025.pdf` — Team Omega audit (October 2025)
-
-## Gas Optimization
-
-### Efficient Operations
-- **Batch Processing**: Processing 5 requests costs ~29,851 gas per subscription and ~21,561 gas per redemption (vs ~101,655 and ~47,346 for single requests)
-- **Optimized Storage Layout**: Efficient struct packing and storage access patterns
-- **Minimal External Calls**: Reduced oracle calls and token transfers
-- **Efficient Loop Implementations**: Optimized batch processing algorithms
-- **Event Optimization**: Conditional event emission reduces gas costs when no state changes occur
-
-### Gas Costs
-*Based on actual gas measurements from test suite*
-
-#### Core Operations
-- **Subscription request**: 250,117 gas
-- **Redemption request**: 186,385 gas
-- **Subscription processing (approve)**: 101,655 gas
-- **Subscription processing (reject)**: 46,811 gas
-- **Redemption processing (approve)**: 47,346 gas
-- **Redemption processing (reject)**: 12,157 gas
-
-#### Batch Operations
-- **Process 5 subscription requests**: 149,259 gas (29,851 gas per request)
-- **Process 5 redemption requests**: 107,805 gas (21,561 gas per request)
-
-#### Request Cancellation
-- **Cancel subscription**: 9,203 gas
-- **Cancel redemption**: 8,649 gas
-
-#### Asset Management
-- **Update asset configuration**: 118,600 gas
-
-#### Fee Management
-- **Set management fee rate**: 33,706 gas
-- **Set redemption fee rate**: 23,728 gas
-- **Set performance fee rate**: 22,237 gas
-- **Set fee receiver**: 22,407 gas
-- **Set subscription request TTL**: 24,149 gas
-- **Set redemption request TTL**: 24,198 gas
-
-#### View Functions
-- **Get request details**: 4,395 gas
-- **Convert assets to shares**: 21,204 gas
-- **Convert shares to assets**: 20,296 gas
-- **Get approved assets list**: 15,998 gas
-- **Get approved asset details**: 21,445 gas
-
-#### Preview Functions
-- **Preview subscription**: Calculates shares that would be received for given assets
-  - If `sharesPrice = 0`, uses last settled price for the asset
-  - Reverts with `NoStoredPrice()` if no price has been settled yet
-  - Returns shares before fees (fees are not included in preview)
-- **Preview redemption**: Calculates assets that would be received for given shares
-  - If `sharesPrice = 0`, uses last settled price for the asset
-  - Reverts with `NoStoredPrice()` if no price has been settled yet
-  - Returns assets after redemption fees (fees are deducted in preview)
-
-#### Fee Collection
-- **Process requests (with management fee)**: 143,699 gas
-- **Process requests (with redemption fee)**: 47,346 gas
-
-### Running Gas Tests
-To get current gas measurements, run the gas test suite:
+## Build & test
 
 ```bash
-forge test --match-contract kpkSharesGasTest -vv
+forge build
+forge test                                   # unit tests
+forge test --fork-url $MAINNET_URL           # factory + CCIP tests run against a mainnet fork
 ```
 
-The tests will output detailed gas usage for each operation, allowing you to verify current gas costs and identify any changes after code modifications.
+The `KpkOivFactory`, `CcipOivDeployer`, and several `kpkShares` suites fork mainnet to use the canonical Safe/Zodiac infrastructure; set `MAINNET_URL` (see `.env.sample`). Coverage is summarized in [COVERAGE_REPORT.md](COVERAGE_REPORT.md).
 
-## Future Considerations
+## Security
 
-### Potential Enhancements
-- **Additional Fee Modules**: More performance fee calculation strategies beyond watermark-based
+`kpkShares` has been audited; reports are in `audit-reports/`:
 
-### Upgrade Path
-- **UUPS Pattern**: Allows for future contract upgrades
-- **Storage Layout**: Maintains compatibility across upgrades
-- **Interface Evolution**: Backward-compatible interface updates
+- `cantina-kpk-oivs-oct-2025.pdf` — Cantina (October 2025)
+- `team-omega-kpk-oivs-oct-2025.pdf` — Team Omega (October 2025)
