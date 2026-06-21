@@ -108,12 +108,42 @@ CREATE2 deployer (`0x4e59b448…`), and a live CCIP arbitrary-messaging lane **f
 mainnet**. Modifying `KpkOivFactory` does **not** widen this set — the limiter is external infra,
 and same-address determinism only holds where that infra is canonical.
 
-The machine-readable registry is **`script/ccip-networks.json`** (router / LINK / selector per
-chain). **23 READY mainnets** (on-chain verified):
+The per-chain data (CCIP router / LINK token / chain selector) lives in the machine-readable
+registry **`script/ccip-networks.json`**. The **23 READY mainnets** below are the complete set the
+cross-chain deployment can target today — every one has the full prerequisite stack on-chain and a
+live CCIP lane from Ethereum. Sorted by chain ID:
 
-Ethereum, Optimism, BNB Smart Chain, Gnosis, Unichain, Polygon PoS, World Chain, HyperEVM, Sei,
-Sonic, Mantle, Base, Plasma, Mode, Arbitrum One, Celo, Avalanche, Ink, Linea, Bob, Berachain,
-Scroll, Katana.
+| Chain | Chain ID | CCIP chain selector | LINK verified |
+|---|---|---|---|
+| Ethereum | 1 | `5009297550715157269` | yes |
+| Optimism | 10 | `3734403246176062136` | yes |
+| BNB Smart Chain | 56 | `11344663589394136015` | yes |
+| Gnosis | 100 | `465200170687744372` | yes |
+| Unichain | 130 | `1923510103922296319` | **verify** |
+| Polygon PoS | 137 | `4051577828743386545` | yes |
+| Sonic | 146 | `1673871237479749969` | yes |
+| World Chain | 480 | `2049429975587534727` | **verify** |
+| HyperEVM | 999 | `2442541497099098535` | **verify** |
+| Sei | 1329 | `9027416829622342829` | **verify** |
+| Mantle | 5000 | `1556008542357238666` | **verify** |
+| Base | 8453 | `15971525489660198786` | yes |
+| Plasma | 9745 | `9335212494177455608` | **verify** |
+| Mode | 34443 | `7264351850409363825` | **verify** |
+| Arbitrum One | 42161 | `4949039107694359620` | yes |
+| Celo | 42220 | `1346049177634351622` | yes |
+| Avalanche | 43114 | `6433500567565415381` | yes |
+| Ink | 57073 | `3461204551265785888` | **verify** |
+| Linea | 59144 | `4627098889531055414` | yes |
+| Bob | 60808 | `3849287863852499584` | **verify** |
+| Berachain | 80094 | `1294465214383781161` | **verify** |
+| Scroll | 534352 | `13204309965629103672` | yes |
+| Katana | 747474 | `2459028469735686113` | **verify** |
+
+The CCIP chain selector is the value passed to `deployEverywhere` / `dispatchTo` (and configured as
+the trusted source on each chain). **LINK verified** = `yes` means the CCIP LINK-token address is
+on-chain-confirmed; **verify** means the router is confirmed but the LINK address must be pulled
+from the CCIP directory before broadcasting (see the note below). Router and LINK addresses for
+every chain are in `script/ccip-networks.json`.
 
 Near-misses and exclusions:
 
