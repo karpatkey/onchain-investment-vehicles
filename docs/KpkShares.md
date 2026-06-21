@@ -360,7 +360,7 @@ struct ConstructorParams {
 
 ## Security Audits
 
-Security audit reports are published in the `audit-reports/` folder:
+Security audit reports are published in the repository's `audit-reports/` folder:
 
 - `cantina-kpk-oivs-oct-2025.pdf` — Cantina audit (October 2025)
 - `team-omega-kpk-oivs-oct-2025.pdf` — Team Omega audit (October 2025)
