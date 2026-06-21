@@ -46,7 +46,7 @@ sequenceDiagram
     Note over O: require configured + non-empty destinations
     O->>F: deployOiv(config)
     F-->>O: full OIV deployed on mainnet (emit LocalOivDeployed)
-    Note over O: payload = abi.encode(factory.oivToStackConfig(config));<br/>sum getFee over destinations; check LINK balance ≥ total
+    Note over O: payload = abi.encode(factory.oivToStackConfig(config)),<br/>sum getFee over destinations, check LINK balance >= total
     O->>L: forceApprove(router, totalFee)
     loop each destination chain
         O->>R: ccipSend(destSelector, message) [receiver = this address]
@@ -56,7 +56,7 @@ sequenceDiagram
 
     Note over R,N: ~15 min — Ethereum finality + CCIP delivery
     N->>O2: ccipReceive(message)
-    Note over O2: require msg.sender == router;<br/>sourceChainSelector == mainnet;<br/>decoded sender == address(this)
+    Note over O2: require msg.sender == router,<br/>sourceChainSelector == mainnet,<br/>decoded sender == address(this)
     O2->>F2: deployStack(stackConfig)
     F2-->>O2: stack deployed at the fund's addresses (emit StackReceived)
 ```
