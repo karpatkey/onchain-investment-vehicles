@@ -45,14 +45,14 @@ sequenceDiagram
 
     Op->>Fg: deployOiv(configPath)
     Fg->>F: deployOiv(config)
-    Note over F: validate config; reserve instance id;<br/>stackConfig = oivToStackConfig(config)
+    Note over F: validate config, reserve instance id,<br/>stackConfig = oivToStackConfig(config)
     F->>Z: deploy exec / sub / manager Roles Modifiers (CREATE2)
-    F->>S: create Avatar Safe (signer = Empty; modules [exec, factory])
-    F->>S: create Manager Safe (owners + threshold; module [manager])
+    F->>S: create Avatar Safe (signer = Empty, modules [exec, factory])
+    F->>S: create Manager Safe (owners + threshold, module [manager])
     Note over F: wire exec/sub/manager modifiers<br/>(assign roles, set avatar/target, transfer ownership)
     F->>D: deploy(implSalt) → kpkShares implementation
     F->>F: new ERC1967Proxy(impl, initialize) → shares proxy
-    Note over F: register additional assets; grant OPERATOR to Manager Safe;<br/>grant admin to admin; renounce factory's own admin
+    Note over F: register additional assets, grant OPERATOR to Manager Safe,<br/>grant admin to admin, renounce factory's own admin
     F->>Av: approve shares proxy for base + redeemable assets (via module call)
     F->>Av: disable factory module
     F-->>Fg: OivInstance (7 addresses) + emit OivDeployed
@@ -96,10 +96,10 @@ sequenceDiagram
 
     Op->>Fg: deployStack(configPath)
     Fg->>F: deployStack(config)
-    Note over F: validate config; reserve stack id
+    Note over F: validate config, reserve stack id
     F->>Z: deploy exec / sub / manager Roles Modifiers (CREATE2)
-    F->>S: create Avatar Safe (signer = Empty; modules [exec, factory])
-    F->>S: create Manager Safe (owners + threshold; module [manager])
+    F->>S: create Avatar Safe (signer = Empty, modules [exec, factory])
+    F->>S: create Manager Safe (owners + threshold, module [manager])
     Note over F: wire all three modifiers
     F->>Av: disable factory module
     F-->>Fg: StackInstance (5 addresses) + emit StackDeployed
