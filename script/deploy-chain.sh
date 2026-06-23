@@ -33,15 +33,28 @@ if [ "$verdict" = "NOT-READY" ]; then
   exit 1
 fi
 
-cap=$(echo "$CHAIN" | sed -E 's/^(.)/\U\1/')
-script="script/chains/Deploy_${cap}.s.sol:Deploy_${cap}"
-[ -f "$ROOT/script/chains/Deploy_${cap}.s.sol" ] || { echo "per-chain script missing: $script"; exit 1; }
+# Resolve the per-chain script file case-insensitively so internal casing of the registry name can
+# never silently mismatch the generated file name.
+file=$(cd "$ROOT/script/chains" 2>/dev/null && ls | grep -i "^Deploy_${CHAIN}\.s\.sol$" | head -1 || true)
+[ -n "$file" ] || { echo "per-chain script missing for '$CHAIN' (expected script/chains/Deploy_${CHAIN}.s.sol)"; exit 1; }
+contract="${file%.s.sol}"
+script="script/chains/${file}:${contract}"
 
 EOA=$(cast wallet address --private-key "$PRIVATE_KEY")
 FINAL="${DEPLOY_FINAL_OWNER:-$EOA}"
 
 bflag="--broadcast"; [ "${DRY_RUN:-0}" = "1" ] && bflag=""
-vflag=""; [ "${VERIFY:-0}" = "1" ] && vflag="--verify"
+# Only pass --verify when the chain actually has an [etherscan] entry in foundry.toml — otherwise the
+# broadcast would succeed but verification would error and (under deploy-all.sh `set -e`) abort the
+# whole fleet after contracts are already deployed.
+vflag=""
+if [ "${VERIFY:-0}" = "1" ]; then
+  if awk '/^\[etherscan\]/{f=1;next} /^\[/{f=0} f' "$ROOT/foundry.toml" | grep -qE "^[[:space:]]*${CHAIN}[[:space:]]*="; then
+    vflag="--verify"
+  else
+    echo "  NOTE: no [etherscan] entry for '$CHAIN' — skipping --verify (verify manually later)."
+  fi
+fi
 
 echo "=== Deploying OIV infra to $CHAIN (verdict $verdict) ==="
 echo "  eoaOwner=$EOA  finalOwner=$FINAL  dryRun=${DRY_RUN:-0}"
