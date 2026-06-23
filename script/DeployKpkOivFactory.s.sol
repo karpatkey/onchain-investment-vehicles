@@ -66,7 +66,14 @@ contract DeployKpkOivFactory is Script {
 
     // ── Zodiac (canonical, same address on every EVM chain) ───────────────────
     address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+    // Roles Modifier v2.1.1 (patched). v2.1.0 (0x9646fDAD06d3e24444381f44362a3B0eB343D337) is
+    // VULNERABLE to the June 2026 ERC-1271 authorization bypass (Gnosis Guild post-mortem,
+    // 19 Jun 2026) when a Safe using the CompatibilityFallbackHandler is a role member — exactly
+    // our setup. v2.1.1 (same address on every chain via the zodiac singleton factory at salt 0,
+    // ABI-identical to v2.1.0) requires staticcall success for ERC-1271 validation. Changing this
+    // arg changes the factory's CREATE2 address (intended: a fresh factory that deploys patched
+    // Roles proxies). Verified deployed on mainnet/OP/Base/Arbitrum/Gnosis.
+    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
 
     // ── CREATE2 salts ─────────────────────────────────────────────────────────
     /// @dev Bump the version uint to redeploy at a fresh address (e.g. after a constructor or

@@ -102,73 +102,90 @@ Avatar Safe execution.
 
 ## Supported networks
 
-A chain qualifies only when **all four** prerequisites exist at canonical (same-on-every-chain)
-addresses: Safe v1.4.1 stack, Zodiac ModuleProxyFactory + Roles v2 mastercopy, the canonical
-CREATE2 deployer (`0x4e59b448…`), and a live CCIP arbitrary-messaging lane **from Ethereum
-mainnet**. Modifying `KpkOivFactory` does **not** widen this set — the limiter is external infra,
-and same-address determinism only holds where that infra is canonical.
+A chain qualifies only when **all** prerequisites exist at canonical (same-on-every-chain)
+addresses: Safe v1.4.1 stack, Zodiac ModuleProxyFactory + **Roles Modifier v2.1.1 (patched —
+`0xF2964CE6…83D5`)**, the canonical CREATE2 deployer (`0x4e59b448…`), the `Empty` contract
+(`0xA470…4652`, or its deployer factory so it can be onboarded), and a live CCIP arbitrary-messaging
+lane **from Ethereum mainnet** that exposes a **LINK fee token**. Modifying `KpkOivFactory` does
+**not** widen this set — the limiter is external infra, and same-address determinism only holds where
+that infra is canonical.
 
-The per-chain data (CCIP router / LINK token / chain selector) lives in the machine-readable
-registry **`script/ccip-networks.json`**. The **23 READY mainnets** below are the complete set the
-cross-chain deployment can target today — every one has the full prerequisite stack on-chain and a
-live CCIP lane from Ethereum. Sorted by chain ID:
+> **Security note (Roles v2.1.1).** The factory deploys Roles Modifier *proxies* delegating to the
+> patched **v2.1.1** mastercopy. v2.1.0 (`0x9646fDAD…D337`) is vulnerable to the June-2026 ERC-1271
+> authorization bypass when a Safe using the CompatibilityFallbackHandler is a role member — exactly
+> this architecture. A chain is wired only if v2.1.1 is present on it.
 
-| Chain | Chain ID | CCIP chain selector | LINK verified |
-|---|---|---|---|
-| Ethereum | 1 | `5009297550715157269` | yes |
-| Optimism | 10 | `3734403246176062136` | yes |
-| BNB Smart Chain | 56 | `11344663589394136015` | yes |
-| Gnosis | 100 | `465200170687744372` | yes |
-| Unichain | 130 | `1923510103922296319` | **verify** |
-| Polygon PoS | 137 | `4051577828743386545` | yes |
-| Sonic | 146 | `1673871237479749969` | yes |
-| World Chain | 480 | `2049429975587534727` | **verify** |
-| HyperEVM | 999 | `2442541497099098535` | **verify** |
-| Sei | 1329 | `9027416829622342829` | **verify** |
-| Mantle | 5000 | `1556008542357238666` | **verify** |
-| Base | 8453 | `15971525489660198786` | yes |
-| Plasma | 9745 | `9335212494177455608` | **verify** |
-| Mode | 34443 | `7264351850409363825` | **verify** |
-| Arbitrum One | 42161 | `4949039107694359620` | yes |
-| Celo | 42220 | `1346049177634351622` | yes |
-| Avalanche | 43114 | `6433500567565415381` | yes |
-| Ink | 57073 | `3461204551265785888` | **verify** |
-| Linea | 59144 | `4627098889531055414` | yes |
-| Bob | 60808 | `3849287863852499584` | **verify** |
-| Berachain | 80094 | `1294465214383781161` | **verify** |
-| Scroll | 534352 | `13204309965629103672` | yes |
-| Katana | 747474 | `2459028469735686113` | **verify** |
+The per-chain data lives in the machine-readable registry **`script/ccip-networks.json`**, the single
+source of truth for the deploy scripts. Every `linkToken` was resolved **on-chain** from each chain's
+CCIP `onRamp → feeQuoter.getFeeTokens()` and confirmed via `symbol() == "LINK"` (Avalanche: `LINK.e`,
+bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows are
+excluded. Sorted by chain ID:
 
-The CCIP chain selector is the value passed to `deployEverywhere` / `dispatchTo` (and configured as
-the trusted source on each chain). **LINK verified** = `yes` means the CCIP LINK-token address is
-on-chain-confirmed; **verify** means the router is confirmed but the LINK address must be pulled
-from the CCIP directory before broadcasting (see the note below). Router and LINK addresses for
-every chain are in `script/ccip-networks.json`.
+| Chain | Chain ID | CCIP chain selector | LINK fee token (on-chain) | Verdict |
+|---|---|---|---|---|
+| Ethereum | 1 | `5009297550715157269` | `0x5149…986CA` | READY |
+| Optimism | 10 | `3734403246176062136` | `0x350a…a7f6` | READY |
+| BNB Smart Chain | 56 | `11344663589394136015` | `0x4044…BB75` | READY-AFTER-EMPTY |
+| Gnosis | 100 | `465200170687744372` | `0xE2e7…09b2` | READY |
+| Unichain | 130 | `1923510103922296319` | `0xEF66…8A1A` | READY-AFTER-EMPTY |
+| Polygon PoS | 137 | `4051577828743386545` | `0xb089…E0F1` | READY-AFTER-EMPTY |
+| Sonic | 146 | `1673871237479749969` | `0x7105…018F` | READY-AFTER-EMPTY |
+| World Chain | 480 | `2049429975587534727` | `0x915b…5473` | READY-AFTER-EMPTY |
+| HyperEVM | 999 | `2442541497099098535` | `0x1AC2…De59` | READY-AFTER-EMPTY |
+| Sei | 1329 | `9027416829622342829` | — | **NOT-READY** |
+| Mantle | 5000 | `1556008542357238666` | `0xfe36…E043` | READY-AFTER-EMPTY |
+| Base | 8453 | `15971525489660198786` | `0x88Fb…e196` | READY |
+| Plasma | 9745 | `9335212494177455608` | `0x76a4…eb40` | READY-AFTER-EMPTY |
+| Mode | 34443 | `7264351850409363825` | `0x183E…1F54` | **NOT-READY** |
+| Arbitrum One | 42161 | `4949039107694359620` | `0xf97f…9FB4` | READY |
+| Celo | 42220 | `1346049177634351622` | `0xd072…2ae0` | READY-AFTER-EMPTY |
+| Avalanche | 43114 | `6433500567565415381` | `0x5947…27A3` (LINK.e) | READY-AFTER-EMPTY |
+| Ink | 57073 | `3461204551265785888` | `0x7105…018F` | READY-AFTER-EMPTY |
+| Linea | 59144 | `4627098889531055414` | `0x5B16…FA2d` | READY-AFTER-EMPTY |
+| Bob | 60808 | `3849287863852499584` | `0x5aB8…c833` | READY-AFTER-EMPTY |
+| Berachain | 80094 | `1294465214383781161` | `0x7105…018F` | READY-AFTER-EMPTY |
+| Scroll | 534352 | `13204309965629103672` | `0x548C…d3Ac` | READY-AFTER-EMPTY |
+| Katana | 747474 | `2459028469735686113` | `0xc2C4…27b6` | READY-AFTER-EMPTY |
 
-Near-misses and exclusions:
+**Verdict** meanings: `READY` = every prerequisite incl. `Empty` already present; `READY-AFTER-EMPTY`
+= everything present and `Empty` is onboarded automatically at deploy preflight (absent on these
+chains but reproducible at its canonical address — see below); `NOT-READY` = a hard blocker, not
+wired. Full router + LINK addresses live in `script/ccip-networks.json`. The CCIP chain selector is
+the value passed to `deployEverywhere` / `dispatchTo`.
+
+Excluded / not wired:
 
 | Verdict | Chains | Why |
 |---|---|---|
-| **NEEDS-ZODIAC** | Metis, Soneium | Full Safe + CCIP, but Zodiac Roles v2 / ModuleProxyFactory absent. Deploy Zodiac (CREATE2 via the zodiac-core singleton factory → same `0x9646fDAD…` address) to promote to READY, then confirm a live CCIP lane from Ethereum. |
-| **NO-CCIP** | Blast, Polygon zkEVM, Flare | Safe/Zodiac present but no live CCIP lane from Ethereum (Polygon zkEVM also lacks SafeModuleSetup). |
-| **EXCLUDED** | zkSync Era | Non-EVM-bytecode-equivalent: different Safe addresses, no canonical CREATE2 deployer → same-address determinism impossible. |
+| **NOT-READY (no Roles v2.1.1)** | Sei, Mode | Patched Roles v2.1.1 mastercopy absent on-chain. Deploy it via the zodiac singleton factory (`0xce0042B8…`) to promote; Sei additionally exposes no LINK CCIP fee token (native-only). |
+| **NEEDS-ZODIAC** | Metis, Soneium | Full Safe + CCIP, but Zodiac Roles + ModuleProxyFactory absent. |
+| **NO-CCIP** | Blast, Polygon zkEVM, Flare | Safe/Zodiac present but no live CCIP lane from Ethereum. |
+| **EXCLUDED** | zkSync Era | Non-EVM-bytecode-equivalent: different Safe addresses, no canonical CREATE2 deployer. |
 
-> **Verify before broadcast.** Registry entries flagged `linkVerified: false` (Unichain, World
-> Chain, HyperEVM, Sei, Mantle, Plasma, Mode, Ink, Bob, Berachain, Katana) have a CCIP **router**
-> confirmed but their **LINK** address unconfirmed — pull it from the CCIP directory first. Also
-> confirm the repo's `SAFE_PROXY_FACTORY` (`0xa6B71E26…`, the widely-deployed Safe v1.3.0 factory)
-> and the Zodiac mastercopy are actually present on any chain before its first deployment.
+### The `Empty` contract (READY-AFTER-EMPTY)
 
-### Onboarding a new chain
+The factory bakes `EMPTY_CONTRACT = 0xA470…4652` in as a constant (the Avatar Safe's sole signer), so
+every chain must host `Empty` at exactly that address. It was originally deployed via the CREATE2
+helper factory `0x7cbB62…CFAa4` (present on every wired chain); replaying that fixed creation call
+reproduces the same address regardless of caller (verified caller-independent on a fork). The deploy
+tooling does this automatically as a **preflight** — `script/DeployEmpty.s.sol` standalone, or inlined
+in the per-chain scripts and the runner.
 
-1. Confirm all four prerequisites at canonical addresses (Safe stack, Zodiac, CREATE2 deployer, CCIP
-   lane). If `verdict` is NEEDS-ZODIAC, deploy Zodiac there first.
-2. Predeploy the `Empty` contract (`0xA470…4652`) via the canonical CREATE2 deployer.
-3. Deploy `KpkSharesDeployer` + `KpkOivFactory` (`script/DeployKpkOivFactory.s.sol`) — same address
-   as every other chain.
-4. Deploy + `configure` the orchestrator (`script/DeployCcipOivDeployer.s.sol`) with the chain's
-   verified CCIP router / LINK.
-5. Add the chain's verified row to `script/ccip-networks.json`.
+### Onboarding / deploying a chain (tooling)
+
+Use the config-driven runner (reads `script/ccip-networks.json`):
+
+```bash
+source .env && script/deploy-chain.sh <chain>      # e.g. polygon — Empty → factory → orchestrator
+source .env && script/deploy-all.sh                # every wired chain, then prints the fan-out cmd
+```
+
+Or run the per-chain Solidity script directly (`script/chains/Deploy_<Chain>.s.sol`). Both perform,
+in one broadcast: `Empty` preflight → `KpkOivFactory` + `KpkSharesDeployer` → `CcipOivDeployer` +
+`configure`. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
+(Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
+`Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
+`script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.
 
 ## Deploying the orchestrator
 

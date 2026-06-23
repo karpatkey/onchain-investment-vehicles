@@ -27,18 +27,49 @@ no_match_test = "upgrade"
 no_match_coverage = "^script/"
 
 [rpc_endpoints]
-mainnet  = "${MAINNET_URL}"
-sepolia  = "${SEPOLIA_URL}"
-gnosis   = "${GNOSIS_URL}"
-arbitrum = "${ARBITRUM_URL}"
-base     = "${BASE_URL}"
-optimism = "${OP_URL}"
+# Aliases match the chain `name` in script/ccip-networks.json (used by script/deploy-chain.sh).
+# Each reads an env var; see .env.sample for the variables and public-RPC defaults.
+mainnet    = "${MAINNET_URL}"
+sepolia    = "${SEPOLIA_URL}"
+ethereum   = "${MAINNET_URL}"
+optimism   = "${OP_URL}"
+gnosis     = "${GNOSIS_URL}"
+base       = "${BASE_URL}"
+arbitrum   = "${ARBITRUM_URL}"
+bnb        = "${BNB_URL}"
+polygon    = "${POLYGON_URL}"
+avalanche  = "${AVALANCHE_URL}"
+celo       = "${CELO_URL}"
+linea      = "${LINEA_URL}"
+scroll     = "${SCROLL_URL}"
+sonic      = "${SONIC_URL}"
+unichain   = "${UNICHAIN_URL}"
+worldchain = "${WORLDCHAIN_URL}"
+hyperevm   = "${HYPEREVM_URL}"
+mantle     = "${MANTLE_URL}"
+plasma     = "${PLASMA_URL}"
+ink        = "${INK_URL}"
+bob        = "${BOB_URL}"
+berachain  = "${BERACHAIN_URL}"
+katana     = "${KATANA_URL}"
 
 [etherscan]
-# Etherscan v2 multichain API key — one key covers mainnet, optimism, base, arbitrum, gnosis, sepolia.
-mainnet  = { key = "${ETHERSCAN_API_KEY}" }
-optimism = { key = "${ETHERSCAN_API_KEY}" }
-arbitrum = { key = "${ETHERSCAN_API_KEY}" }
-base     = { key = "${ETHERSCAN_API_KEY}" }
-gnosis   = { key = "${ETHERSCAN_API_KEY}" }
-sepolia  = { key = "${ETHERSCAN_API_KEY}" }
+# Etherscan v2 multichain API key (keyed by chainid). Only used with --verify (opt-in); chains not
+# on Etherscan v2 need a custom verifier. Legacy + registry-named aliases:
+mainnet    = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
+sepolia    = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
+ethereum   = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
+optimism   = { key = "${ETHERSCAN_API_KEY}", chain = 10 }
+gnosis     = { key = "${ETHERSCAN_API_KEY}", chain = 100 }
+base       = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
+arbitrum   = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
+bnb        = { key = "${ETHERSCAN_API_KEY}", chain = 56 }
+polygon    = { key = "${ETHERSCAN_API_KEY}", chain = 137 }
+avalanche  = { key = "${ETHERSCAN_API_KEY}", chain = 43114 }
+celo       = { key = "${ETHERSCAN_API_KEY}", chain = 42220 }
+linea      = { key = "${ETHERSCAN_API_KEY}", chain = 59144 }
+scroll     = { key = "${ETHERSCAN_API_KEY}", chain = 534352 }
+unichain   = { key = "${ETHERSCAN_API_KEY}", chain = 130 }
+worldchain = { key = "${ETHERSCAN_API_KEY}", chain = 480 }
+mantle     = { key = "${ETHERSCAN_API_KEY}", chain = 5000 }
+berachain  = { key = "${ETHERSCAN_API_KEY}", chain = 80094 }

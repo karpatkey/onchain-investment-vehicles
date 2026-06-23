@@ -4,6 +4,13 @@ This repo contains the tools to deploy new OIV funds via `KpkOivFactory` without
 
 The factory contract is already deployed at the same address on all supported chains. This tooling deploys individual funds through it.
 
+> **Security + multi-chain update (June 2026).** New deployments use the **patched Zodiac Roles
+> Modifier v2.1.1** mastercopy (`0xF2964CE6…83D5`); v2.1.0 had the June-2026 ERC-1271 authorization
+> bypass. This changes `KpkOivFactory`'s CREATE2 address, so it must be **redeployed** per chain (the
+> previously-published `0x0d94…d420` is the old, pre-patch build). Cross-chain deployment now covers
+> **21 verified chains** — see `docs/CCIP_CROSS_CHAIN_DEPLOY.md` and the config-driven runner
+> `script/deploy-chain.sh` / `script/deploy-all.sh` (single source of truth: `script/ccip-networks.json`).
+
 ---
 
 ## How it works
