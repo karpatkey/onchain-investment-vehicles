@@ -104,7 +104,9 @@ abstract contract OivChainDeploy is Script {
         if (EMPTY.code.length > 0) {
             // Defense-in-depth: a non-empty address is NOT enough — verify it is the canonical
             // `Empty` runtime, never an arbitrary contract squatting the address.
-            require(keccak256(EMPTY.code) == keccak256(EMPTY_RUNTIME), "Empty: unexpected bytecode at canonical address");
+            require(
+                keccak256(EMPTY.code) == keccak256(EMPTY_RUNTIME), "Empty: unexpected bytecode at canonical address"
+            );
             console.log("[SKIP] Empty already at:             ", EMPTY);
             return;
         }
