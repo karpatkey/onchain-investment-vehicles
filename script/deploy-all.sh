@@ -18,10 +18,31 @@ command -v jq >/dev/null || { echo "jq required"; exit 1; }
 mapfile -t CHAINS < <(jq -r '.networks[] | select(.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") | .name' "$REG")
 echo "Wired chains (${#CHAINS[@]}): ${CHAINS[*]}"
 
+# True if foundry.toml has an [etherscan] alias for the chain (i.e. deploy-chain.sh can --verify it).
+has_etherscan() { awk '/^\[etherscan\]/{f=1;next} /^\[/{f=0} f' "$ROOT/foundry.toml" | grep -qE "^[[:space:]]*${1}[[:space:]]*="; }
+
+declare -a OK_CHAINS=() FAILED_CHAINS=() UNVERIFIED_CHAINS=()
+
+# Deploy each chain independently: a failure on one (unset RPC var, missing Empty factory, etc.) is
+# recorded and the rollout continues, rather than aborting the whole fleet mid-way and leaving the
+# operator to guess which chains already landed. Per-chain deploys are idempotent, so re-running a
+# failed chain after fixing its cause is safe.
 for c in "${CHAINS[@]}"; do
   echo; echo "############################################################"
-  "$ROOT/script/deploy-chain.sh" "$c" || { echo "FAILED on $c — stopping."; exit 1; }
+  if "$ROOT/script/deploy-chain.sh" "$c"; then
+    OK_CHAINS+=("$c")
+    [ "${VERIFY:-0}" = "1" ] && ! has_etherscan "$c" && UNVERIFIED_CHAINS+=("$c")
+  else
+    echo "FAILED on $c — continuing with remaining chains."
+    FAILED_CHAINS+=("$c")
+  fi
 done
+
+echo; echo "############################################################"
+echo "Fleet summary: ${#OK_CHAINS[@]} ok, ${#FAILED_CHAINS[@]} failed (of ${#CHAINS[@]} wired chains)."
+[ ${#OK_CHAINS[@]} -gt 0 ] && echo "  ok:        ${OK_CHAINS[*]}"
+[ ${#FAILED_CHAINS[@]} -gt 0 ] && echo "  FAILED:    ${FAILED_CHAINS[*]}   (idempotent — re-run: script/deploy-chain.sh <chain>)"
+[ ${#UNVERIFIED_CHAINS[@]} -gt 0 ] && echo "  UNVERIFIED (deployed, no [etherscan] cfg — verify manually): ${UNVERIFIED_CHAINS[*]}"
 
 # Build the destination selector list (all destinations, i.e. exclude the source role).
 SELECTORS=$(jq -r '[.networks[] | select(.role=="destination" and (.verdict=="READY" or .verdict=="READY-AFTER-EMPTY")) | .ccipChainSelector] | join(",")' "$REG")
@@ -43,3 +64,6 @@ NEXT (manual, deliberate) — fan a fund out from mainnet:
          <ORCHESTRATOR> script/<fund>-config.json "[$SELECTORS]" 2000000
 ############################################################
 EOF
+
+# Non-zero exit if any chain failed, so callers / CI can detect a partial rollout.
+[ ${#FAILED_CHAINS[@]} -eq 0 ] || exit 1

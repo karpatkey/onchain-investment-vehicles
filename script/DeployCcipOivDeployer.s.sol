@@ -35,7 +35,16 @@ contract DeployCcipOivDeployer is OivChainDeploy {
         require(eoaOwner != address(0), "eoaOwner is zero");
         require(finalOwner != address(0), "finalOwner is zero");
         require(factory != address(0), "factory is zero");
-        require(factory != LEGACY_FACTORY, "factory is the legacy pre-v2.1.1 build; use the redeployed factory");
+        require(factory != LEGACY_FACTORY, "factory is the legacy pre-v2.1.1 build; use the redeployed v2.1.1 factory");
+        // The orchestrator's CREATE2 address depends on the factory baked into its init-code, so the
+        // factory MUST be the canonical v2.1.1 build for this eoaOwner — otherwise the orchestrator
+        // lands at a different address than the per-chain `_runChain` path and cross-chain
+        // `ccipReceive` (which trusts a source sender equal to its own address) rejects messages.
+        // This also guarantees the patched Roles v2.1.1 mastercopy is the one baked in.
+        require(
+            factory == _predictFactory(eoaOwner),
+            "factory is not the canonical v2.1.1 CREATE2 factory for this eoaOwner"
+        );
         require(ccipRouter != address(0), "ccipRouter is zero");
         require(linkToken != address(0), "linkToken is zero");
         require(mainnetSelector != 0, "mainnetSelector is zero");

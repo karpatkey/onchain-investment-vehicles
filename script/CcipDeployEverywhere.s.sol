@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Script, console} from "forge-std/Script.sol";
-import {stdJson} from "forge-std/StdJson.sol";
+import {console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
+import {OivConfigReader} from "./base/OivConfigReader.sol";
 
 /**
  * Purpose: Drive an already-deployed `CcipOivDeployer` to deploy a full OIV on mainnet and fan the
@@ -21,13 +21,11 @@ import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
  *   - deployEverywhere(orchestrator, configPath, selectors, gasLimit): broadcast. Deploys the full
  *     OIV locally (intended for mainnet) and dispatches one CCIP message per selector.
  * Notes:
- *   - The config builder is copied verbatim from script/DeployOiv.s.sol:_buildOivConfig.
+ *   - The config parsing lives in the shared OivConfigReader base (same as DeployOiv).
  *   - deployEverywhere is onlyOwner on the orchestrator; PRIVATE_KEY must be the orchestrator owner.
  *   - CCIP fees are paid in LINK from the orchestrator's balance; fund it before broadcasting.
  */
-contract CcipDeployEverywhere is Script {
-    using stdJson for string;
-
+contract CcipDeployEverywhere is OivConfigReader {
     // ── Entry points ───────────────────────────────────────────────────────────
 
     function predict(address orchestrator, string calldata configPath) external view {
@@ -112,47 +110,5 @@ contract CcipDeployEverywhere is Script {
         }
         console.log("  Track delivery at https://ccip.chain.link");
         console.log("============================================================");
-    }
-
-    // ── Config builder (copied from script/DeployOiv.s.sol) ──────────────────────
-
-    function _buildOivConfig(string memory json) internal view returns (KpkOivFactory.OivConfig memory config) {
-        config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");
-        config.managerSafe.threshold = json.readUint(".managerSafe.threshold");
-        config.salt = json.readUint(".salt");
-        config.admin = json.readAddress(".oiv.admin");
-
-        config.sharesParams.asset = json.readAddress(".oiv.sharesParams.asset");
-        config.sharesParams.name = json.readString(".oiv.sharesParams.name");
-        config.sharesParams.symbol = json.readString(".oiv.sharesParams.symbol");
-        config.sharesParams.subscriptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.subscriptionRequestTtl"));
-        config.sharesParams.redemptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.redemptionRequestTtl"));
-        config.sharesParams.feeReceiver = json.readAddress(".oiv.sharesParams.feeReceiver");
-        config.sharesParams.managementFeeRate = json.readUint(".oiv.sharesParams.managementFeeRate");
-        config.sharesParams.redemptionFeeRate = json.readUint(".oiv.sharesParams.redemptionFeeRate");
-        config.sharesParams.performanceFeeModule = json.readAddress(".oiv.sharesParams.performanceFeeModule");
-        config.sharesParams.performanceFeeRate = json.readUint(".oiv.sharesParams.performanceFeeRate");
-
-        config.additionalAssets = _readAdditionalAssets(json);
-    }
-
-    function _readAdditionalAssets(string memory json)
-        internal
-        view
-        returns (KpkOivFactory.AssetConfig[] memory assets)
-    {
-        uint256 count = 0;
-        for (uint256 i = 0; i < 20; i++) {
-            if (!vm.keyExists(json, string.concat(".oiv.additionalAssets[", vm.toString(i), "].asset"))) break;
-            count++;
-        }
-
-        assets = new KpkOivFactory.AssetConfig[](count);
-        for (uint256 i = 0; i < count; i++) {
-            string memory base = string.concat(".oiv.additionalAssets[", vm.toString(i), "]");
-            assets[i].asset = json.readAddress(string.concat(base, ".asset"));
-            assets[i].canDeposit = json.readBool(string.concat(base, ".canDeposit"));
-            assets[i].canRedeem = json.readBool(string.concat(base, ".canRedeem"));
-        }
     }
 }

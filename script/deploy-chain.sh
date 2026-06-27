@@ -28,8 +28,11 @@ entry=$(jq -c --arg n "$CHAIN" '.networks[] | select(.name==$n)' "$REG")
 [ -n "$entry" ] || { echo "chain '$CHAIN' not in registry"; exit 1; }
 
 verdict=$(echo "$entry" | jq -r .verdict)
-if [ "$verdict" = "NOT-READY" ]; then
-  echo "REFUSING: '$CHAIN' is NOT-READY — $(echo "$entry" | jq -r '.note // "missing prerequisites"')"
+# Allowlist, not blocklist: only the two known-deployable verdicts pass. Anything else (NOT-READY, a
+# typo, or a reintroduced category like NEEDS-ZODIAC) is refused, so a non-deployable chain can never
+# slip through just because its verdict string isn't the literal "NOT-READY".
+if [ "$verdict" != "READY" ] && [ "$verdict" != "READY-AFTER-EMPTY" ]; then
+  echo "REFUSING: '$CHAIN' has verdict '$verdict' (only READY / READY-AFTER-EMPTY are deployable) — $(echo "$entry" | jq -r '.note // "missing prerequisites"')"
   exit 1
 fi
 

@@ -120,12 +120,23 @@ abstract contract OivChainDeploy is Script {
     // ── Full per-chain deploy ────────────────────────────────────────────────────
 
     /// @notice Empty preflight → factory + deployer → orchestrator (+configure), in one broadcast.
+    /// @param expectedChainId The chain this script's hardcoded router/LINK belong to. Guarded against
+    ///                   `block.chainid` so a wrong `--rpc-url` cannot configure the orchestrator with
+    ///                   one chain's CCIP params on another (the post-flight checks compare against the
+    ///                   same hardcoded constants, so without this guard a wrong chain passes silently).
     /// @param eoaOwner   Initial owner; MUST equal the broadcasting sender (enforced below) since it
     ///                   is baked into the CREATE2 init-code and calls the onlyOwner setters.
     /// @param finalOwner Owner after handoff (pass == eoaOwner to keep control, e.g. for testing).
     /// @param ccipRouter CCIP Router on THIS chain.
     /// @param linkToken  CCIP LINK fee token on THIS chain.
-    function _runChain(address eoaOwner, address finalOwner, address ccipRouter, address linkToken) internal {
+    function _runChain(
+        uint256 expectedChainId,
+        address eoaOwner,
+        address finalOwner,
+        address ccipRouter,
+        address linkToken
+    ) internal {
+        require(block.chainid == expectedChainId, "wrong chain: block.chainid != this script's chain (check --rpc-url)");
         require(eoaOwner != address(0) && finalOwner != address(0), "owner is zero");
         require(ccipRouter != address(0) && linkToken != address(0), "ccip arg is zero");
         // The broadcasting key signs the onlyOwner setters; it must be `eoaOwner` (which is also
@@ -206,12 +217,23 @@ abstract contract OivChainDeploy is Script {
         require(KpkOivFactory(factory).kpkSharesDeployer() == deployer, "post: deployer not wired");
         require(KpkOivFactory(factory).owner() == finalOwner, "post: factory owner != finalOwner");
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
-        require(
-            orch.router() == ccipRouter && orch.linkToken() == linkToken
-                && orch.mainnetChainSelector() == MAINNET_SELECTOR,
-            "post: orchestrator not configured (finalOwner must call configure)"
-        );
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
+
+        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken
+            && orch.mainnetChainSelector() == MAINNET_SELECTOR;
+        if (!configured) {
+            // The orchestrator is owned by finalOwner but not (correctly) configured — only reachable
+            // on a re-run of a chain whose first deploy handed off ownership before `configure()` landed
+            // (configure is gated on `orch.owner() == eoaOwner`, so this script can no longer do it).
+            // Surface the exact remaining action instead of a bare revert, and do NOT print "Chain
+            // ready" — so this is an [ACTION REQUIRED], not a false-positive success.
+            console.log("[ACTION REQUIRED] orchestrator deployed but NOT configured; finalOwner must call");
+            console.log("  configure(router, link, mainnetSelector):");
+            console.log("  router:  ", ccipRouter);
+            console.log("  link:    ", linkToken);
+            console.log("  selector:", MAINNET_SELECTOR);
+            return;
+        }
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
     }
 }
