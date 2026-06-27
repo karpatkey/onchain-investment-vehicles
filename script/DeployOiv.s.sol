@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Script, console} from "forge-std/Script.sol";
-import {stdJson} from "forge-std/StdJson.sol";
+import {console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 import {KpkShares} from "../src/kpkShares.sol";
+import {OivConfigReader} from "./base/OivConfigReader.sol";
 
 /**
  * Purpose: Deploy a new OIV fund via KpkOivFactory, or the operational stack only for sidechains.
@@ -23,11 +23,9 @@ import {KpkShares} from "../src/kpkShares.sol";
  *   - Cross-chain determinism: the same PRIVATE_KEY must broadcast deployStack on every sidechain.
  * Known limitations:
  *   - predict() must be called with --rpc-url pointing to a chain where the factory is deployed.
- *   - Additional assets array is capped at 20 entries.
+ *   - additionalAssets is bounded by OivConfigReader.MAX_ADDITIONAL_ASSETS (reverts if exceeded).
  */
-contract DeployOiv is Script {
-    using stdJson for string;
-
+contract DeployOiv is OivConfigReader {
     // Update this when the factory is redeployed (its CREATE2 address changes with its bytecode).
     address constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
 
@@ -98,54 +96,5 @@ contract DeployOiv is Script {
         console.log("  subRolesModifier:     ", instance.subRolesModifier);
         console.log("  managerRolesModifier: ", instance.managerRolesModifier);
         console.log("============================================================");
-    }
-
-    // ── Config builders ────────────────────────────────────────────────────────
-
-    function _buildOivConfig(string memory json) internal view returns (KpkOivFactory.OivConfig memory config) {
-        config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");
-        config.managerSafe.threshold = json.readUint(".managerSafe.threshold");
-        config.salt = json.readUint(".salt");
-        config.admin = json.readAddress(".oiv.admin");
-
-        config.sharesParams.asset = json.readAddress(".oiv.sharesParams.asset");
-        config.sharesParams.name = json.readString(".oiv.sharesParams.name");
-        config.sharesParams.symbol = json.readString(".oiv.sharesParams.symbol");
-        config.sharesParams.subscriptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.subscriptionRequestTtl"));
-        config.sharesParams.redemptionRequestTtl = uint64(json.readUint(".oiv.sharesParams.redemptionRequestTtl"));
-        config.sharesParams.feeReceiver = json.readAddress(".oiv.sharesParams.feeReceiver");
-        config.sharesParams.managementFeeRate = json.readUint(".oiv.sharesParams.managementFeeRate");
-        config.sharesParams.redemptionFeeRate = json.readUint(".oiv.sharesParams.redemptionFeeRate");
-        config.sharesParams.performanceFeeModule = json.readAddress(".oiv.sharesParams.performanceFeeModule");
-        config.sharesParams.performanceFeeRate = json.readUint(".oiv.sharesParams.performanceFeeRate");
-
-        config.additionalAssets = _readAdditionalAssets(json);
-    }
-
-    function _buildStackConfig(string memory json) internal view returns (KpkOivFactory.StackConfig memory config) {
-        config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");
-        config.managerSafe.threshold = json.readUint(".managerSafe.threshold");
-        config.execRolesMod.finalOwner = json.readAddress(".execRolesModFinalOwner");
-        config.salt = json.readUint(".salt");
-    }
-
-    function _readAdditionalAssets(string memory json)
-        internal
-        view
-        returns (KpkOivFactory.AssetConfig[] memory assets)
-    {
-        uint256 count = 0;
-        for (uint256 i = 0; i < 20; i++) {
-            if (!vm.keyExists(json, string.concat(".oiv.additionalAssets[", vm.toString(i), "].asset"))) break;
-            count++;
-        }
-
-        assets = new KpkOivFactory.AssetConfig[](count);
-        for (uint256 i = 0; i < count; i++) {
-            string memory base = string.concat(".oiv.additionalAssets[", vm.toString(i), "]");
-            assets[i].asset = json.readAddress(string.concat(base, ".asset"));
-            assets[i].canDeposit = json.readBool(string.concat(base, ".canDeposit"));
-            assets[i].canRedeem = json.readBool(string.concat(base, ".canRedeem"));
-        }
     }
 }
