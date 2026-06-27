@@ -39,6 +39,13 @@ abstract contract OivChainDeploy is Script {
     ///      CREATE2 (verified on a Polygon fork). THE ONLY copy of this calldata in the repo.
     bytes internal constant EMPTY_CREATE_CALLDATA =
         hex"4847be6f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060307831313933333333333331393235323536383234373334353633343131000000000000000000000000000000000000000000000000000000000000000000586080604052348015600e575f5ffd5b50603e80601a5f395ff3fe60806040525f5ffdfea2646970667358221220dddfa414d3e674246761d7c4ce7ba241adbe729cb02d75a50b9cac1086c72cdf64736f6c634300081b00330000000000000000";
+    /// @dev The canonical `Empty` runtime — the 62 bytes returned by deploying `EMPTY_CREATE_CALLDATA`
+    ///      (the tail of the creation code after the `603e80601a5f395ff3` constructor). Every call
+    ///      reverts, which is what makes the Avatar Safe non-executable except via the Roles module.
+    ///      We assert any code already at `EMPTY` matches this, so a different contract squatting the
+    ///      address (e.g. one implementing ERC-1271) can never be trusted as the Avatar's sole signer.
+    bytes internal constant EMPTY_RUNTIME =
+        hex"60806040525f5ffdfea2646970667358221220dddfa414d3e674246761d7c4ce7ba241adbe729cb02d75a50b9cac1086c72cdf64736f6c634300081b0033";
 
     // ── Deterministic salts ────────────────────────────────────────────────────
     bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(1)));
@@ -95,13 +102,16 @@ abstract contract OivChainDeploy is Script {
     ///      `vm.startBroadcast()`. Reverts if it cannot land `Empty` at the canonical address.
     function _ensureEmpty() internal {
         if (EMPTY.code.length > 0) {
+            // Defense-in-depth: a non-empty address is NOT enough — verify it is the canonical
+            // `Empty` runtime, never an arbitrary contract squatting the address.
+            require(keccak256(EMPTY.code) == keccak256(EMPTY_RUNTIME), "Empty: unexpected bytecode at canonical address");
             console.log("[SKIP] Empty already at:             ", EMPTY);
             return;
         }
         require(EMPTY_HELPER_FACTORY.code.length > 0, "Empty helper factory missing on this chain");
         (bool ok,) = EMPTY_HELPER_FACTORY.call(EMPTY_CREATE_CALLDATA);
         require(ok, "Empty deploy via helper factory failed");
-        require(EMPTY.code.length > 0, "Empty not at canonical address after deploy");
+        require(keccak256(EMPTY.code) == keccak256(EMPTY_RUNTIME), "Empty: unexpected bytecode after deploy");
         console.log("[OK]   Empty deployed at:            ", EMPTY);
     }
 

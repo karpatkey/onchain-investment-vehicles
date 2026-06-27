@@ -19,13 +19,11 @@ import {OivChainDeploy} from "./base/OivChainDeploy.sol";
 ///     --rpc-url <chain> --private-key $PRIVATE_KEY --broadcast
 contract DeployEmpty is OivChainDeploy {
     function run() external {
-        if (EMPTY.code.length > 0) {
-            console.log("[SKIP] Empty already deployed at", EMPTY);
-            return;
-        }
+        // `_ensureEmpty` is the single source of truth: it skips if already present, deploys if not,
+        // and in BOTH cases asserts the bytecode is the canonical `Empty` runtime (never a squatter).
         vm.startBroadcast();
         _ensureEmpty();
         vm.stopBroadcast();
-        console.log("[OK] Empty deployed at", EMPTY);
+        console.log("[OK] Empty present at canonical address", EMPTY);
     }
 }

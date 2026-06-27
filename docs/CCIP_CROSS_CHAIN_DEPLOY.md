@@ -115,8 +115,12 @@ that infra is canonical.
 > authorization bypass when a Safe using the CompatibilityFallbackHandler is a role member — exactly
 > this architecture. A chain is wired only if v2.1.1 is present on it.
 
-The per-chain data lives in the machine-readable registry **`script/ccip-networks.json`**, the single
-source of truth for the deploy scripts. Every `linkToken` was resolved **on-chain** from each chain's
+The per-chain data lives in the machine-readable registry **`script/ccip-networks.json`** — the
+operator reference, and the input `script/deploy-chain.sh` reads for verdict gating and chain-name
+resolution. Note it is **not** read by the Solidity scripts at runtime: the per-chain scripts in
+`script/chains/` hardcode the `CCIP_ROUTER`/`LINK_TOKEN` constants, which must be kept in sync with
+the registry (editing the JSON alone does not change what gets deployed). Every `linkToken` was
+resolved **on-chain** from each chain's
 CCIP `onRamp → feeQuoter.getFeeTokens()` and confirmed via `symbol() == "LINK"` (Avalanche: `LINK.e`,
 bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows are
 excluded. Sorted by chain ID:
