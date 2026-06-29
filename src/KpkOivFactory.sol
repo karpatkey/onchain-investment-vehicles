@@ -616,13 +616,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         gap) and the membership flag cleared.
     /// @param  registeredFundId The `registeredFunds` index to remove (from the `FundRegistered` event).
     function unregisterFund(uint256 registeredFundId) external onlyOwner {
-        OivInstance memory instance = registeredFunds[registeredFundId];
-        if (instance.kpkSharesProxy == address(0)) revert FundNotRegistered();
+        // Only the proxy is needed (membership key + event); read just that slot, not the whole struct.
+        address kpkSharesProxy = registeredFunds[registeredFundId].kpkSharesProxy;
+        if (kpkSharesProxy == address(0)) revert FundNotRegistered();
 
-        delete isFundRegistered[instance.kpkSharesProxy];
+        delete isFundRegistered[kpkSharesProxy];
         delete registeredFunds[registeredFundId];
 
-        emit FundUnregistered(registeredFundId, instance.kpkSharesProxy);
+        emit FundUnregistered(registeredFundId, kpkSharesProxy);
     }
 
     /// @notice Derives the operational `StackConfig` that `deployOiv` builds for a given `OivConfig`.
