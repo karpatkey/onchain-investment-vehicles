@@ -256,6 +256,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Fund instances indexed by their deployment order (0-based).
     mapping(uint256 => OivInstance) public instances;
 
+    /// @notice Number of funds ever added to the curated external-fund registry via `registerFund`.
+    ///         Monotonic — IDs are never reused, including across `unregisterFund` (which leaves a
+    ///         gap). This is NOT the count of currently-registered funds; to enumerate live entries,
+    ///         iterate `[0, registeredFundCount)` and skip slots with a zero `kpkSharesProxy`.
+    uint256 public registeredFundCount;
+
+    /// @notice Curated registry of funds NOT deployed by this factory, indexed by registration order
+    ///         (0-based). Intentionally separate from `instances` (the trustless, append-only log of
+    ///         funds this factory itself deployed): entries here are owner-asserted and removable. A
+    ///         removed entry is zeroed; a live entry always has a non-zero `kpkSharesProxy`.
+    mapping(uint256 => OivInstance) public registeredFunds;
+
+    /// @notice Whether a fund — keyed by its KpkShares proxy — is currently in the curated registry.
+    ///         Prevents duplicate registration and gives O(1) membership lookups.
+    mapping(address => bool) public isFundRegistered;
+
     // ── Events ─────────────────────────────────────────────────────────────────
 
     /// @notice Emitted when `deployStack` successfully deploys an operational stack.
@@ -267,6 +283,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param instanceId  Zero-based index of this fund in the `instances` mapping.
     /// @param instance    Addresses of all seven deployed contracts.
     event OivDeployed(uint256 indexed instanceId, OivInstance instance);
+
+    /// @notice Emitted when the owner adds an externally-deployed fund to the curated registry.
+    /// @param registeredFundId  Zero-based index of this fund in the `registeredFunds` mapping.
+    /// @param instance          The seven fund-component addresses, as supplied by the owner.
+    /// @param registrar         The owner address that registered the fund.
+    event FundRegistered(uint256 indexed registeredFundId, OivInstance instance, address indexed registrar);
+
+    /// @notice Emitted when the owner removes a fund from the curated registry.
+    /// @param registeredFundId  Zero-based index removed from the `registeredFunds` mapping.
+    /// @param kpkSharesProxy    The removed fund's KpkShares proxy (its registry key).
+    event FundUnregistered(uint256 indexed registeredFundId, address indexed kpkSharesProxy);
 
     /// @notice Emitted when the owner updates the Safe proxy factory address.
     event SafeProxyFactoryUpdated(address indexed newAddress);
@@ -323,6 +350,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         is unaffected — it does not touch `kpkSharesDeployer` and remains callable
     ///         regardless of wiring status.
     error KpkSharesDeployerNotSet();
+
+    /// @notice Thrown when `registerFund` is given a fund whose KpkShares proxy is already in the
+    ///         curated registry.
+    error FundAlreadyRegistered();
+
+    /// @notice Thrown when `unregisterFund` targets an ID with no live entry (never registered, or
+    ///         already removed).
+    error FundNotRegistered();
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -545,6 +580,75 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         instances[id] = instance;
         emit OivDeployed(id, instance);
+    }
+
+    // ── Curated external-fund registry ───────────────────────────────────────────
+
+    /// @notice Adds a fund that was NOT deployed by this factory to a curated, owner-managed registry.
+    /// @dev    Owner-only. This registry is intentionally separate from `instances` (the append-only
+    ///         log of funds this factory deployed deterministically): entries here are owner-asserted,
+    ///         not verified on-chain, and can be removed via `unregisterFund`. The factory performs no
+    ///         wiring, ownership, or approval changes on the supplied fund — registration is purely
+    ///         bookkeeping. All seven addresses must be non-zero, and the fund (keyed by
+    ///         `kpkSharesProxy`) must not already be registered.
+    ///         The full `OivInstance` is stored on-chain (not just `kpkSharesProxy`) by design, so an
+    ///         on-chain consumer can read a registered fund's seven component addresses directly via the
+    ///         `registeredFunds`/`getFund` getter without replaying `FundRegistered` events. The extra
+    ///         SSTOREs are paid once per (rare, owner-only) registration.
+    /// @param  instance The seven fund-component addresses to record.
+    /// @return registeredFundId Zero-based index assigned in the `registeredFunds` mapping.
+    function registerFund(OivInstance calldata instance) external onlyOwner returns (uint256 registeredFundId) {
+        if (
+            instance.avatarSafe == address(0) || instance.managerSafe == address(0)
+                || instance.execRolesModifier == address(0) || instance.subRolesModifier == address(0)
+                || instance.managerRolesModifier == address(0) || instance.kpkSharesImpl == address(0)
+                || instance.kpkSharesProxy == address(0)
+        ) revert ZeroAddress();
+        if (isFundRegistered[instance.kpkSharesProxy]) revert FundAlreadyRegistered();
+
+        registeredFundId = registeredFundCount++;
+        registeredFunds[registeredFundId] = instance;
+        isFundRegistered[instance.kpkSharesProxy] = true;
+
+        emit FundRegistered(registeredFundId, instance, msg.sender);
+    }
+
+    /// @notice Removes a previously `registerFund`-ed fund from the curated registry.
+    /// @dev    Owner-only. Only funds added via `registerFund` live in `registeredFunds`, so
+    ///         factory-deployed funds in `instances` are never affected — the deployment log stays
+    ///         append-only and tamper-evident. The slot is zeroed (IDs are never reused, leaving a
+    ///         gap) and the membership flag cleared.
+    /// @param  registeredFundId The `registeredFunds` index to remove (from the `FundRegistered` event).
+    function unregisterFund(uint256 registeredFundId) external onlyOwner {
+        // Only the proxy is needed (membership key + event); read just that slot, not the whole struct.
+        address kpkSharesProxy = registeredFunds[registeredFundId].kpkSharesProxy;
+        if (kpkSharesProxy == address(0)) revert FundNotRegistered();
+
+        delete isFundRegistered[kpkSharesProxy];
+        delete registeredFunds[registeredFundId];
+
+        emit FundUnregistered(registeredFundId, kpkSharesProxy);
+    }
+
+    /// @notice Whether `registeredFundId` holds a live (registered, not-removed) fund.
+    /// @dev    `registeredFundCount` is monotonic and `unregisterFund` leaves zeroed gaps, so the raw
+    ///         `registeredFunds` auto-getter returns an all-zero struct for a removed/never-set id
+    ///         rather than reverting. Enumerators iterating `[0, registeredFundCount)` MUST gate on
+    ///         this (or `getFund`) to skip gaps — do NOT treat every id `< registeredFundCount` as a
+    ///         live fund (unlike the gap-free `instances`/`stacks` deploy logs).
+    /// @param  registeredFundId The `registeredFunds` index to check.
+    function registeredFundExists(uint256 registeredFundId) public view returns (bool) {
+        return registeredFunds[registeredFundId].kpkSharesProxy != address(0);
+    }
+
+    /// @notice Returns the registered fund at `registeredFundId`, reverting `FundNotRegistered` if the
+    ///         slot is empty (never registered, or removed). Safe accessor for indexers/consumers —
+    ///         prefer it over the raw `registeredFunds` getter, which silently returns a zero struct.
+    /// @param  registeredFundId The `registeredFunds` index to read.
+    /// @return instance The seven fund-component addresses recorded at that id.
+    function getFund(uint256 registeredFundId) external view returns (OivInstance memory instance) {
+        instance = registeredFunds[registeredFundId];
+        if (instance.kpkSharesProxy == address(0)) revert FundNotRegistered();
     }
 
     /// @notice Derives the operational `StackConfig` that `deployOiv` builds for a given `OivConfig`.
