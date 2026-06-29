@@ -288,7 +288,9 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         internal
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
-        // Fail before the local deployOiv if we could not dispatch afterwards.
+        // Fail fast on the structural preconditions (not configured / no destinations) before the
+        // local deployOiv. Fee sufficiency is enforced later, inside _dispatch (after deployOiv); an
+        // underfunded call still reverts the whole transaction atomically, so no partial state lands.
         if (router == address(0)) revert NotConfigured();
         if (destSelectors.length == 0) revert NoDestinations();
 
