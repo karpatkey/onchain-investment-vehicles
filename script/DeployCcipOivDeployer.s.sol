@@ -74,7 +74,7 @@ contract DeployCcipOivDeployer is OivChainDeploy {
             console.log("[SKIP] CcipOivDeployer already at: ", predicted);
         }
 
-        CcipOivDeployer orchestrator = CcipOivDeployer(predicted);
+        CcipOivDeployer orchestrator = CcipOivDeployer(payable(predicted));
 
         if (orchestrator.owner() == eoaOwner) {
             if (

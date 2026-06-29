@@ -71,10 +71,26 @@ the deprecated factory:
    (same address everywhere).
 
 Check (3) blocks a forged message from pre-occupying the deterministic CREATE2 addresses for a salt
-and griefing the legitimate deployment. `deployEverywhere` is `onlyOwner` because it spends the
-orchestrator's pre-funded LINK. The orchestrator never holds a privileged role on any deployed
-fund — the exec Roles Modifier (owned by `config.admin`) remains the authoritative gatekeeper of
-Avatar Safe execution.
+and griefing the legitimate deployment. `deployEverywhere` and `dispatchTo` are **permissionless** —
+the caller pays the CCIP fees in **native gas** via `msg.value`, so there is no shared balance to
+drain.
+
+**Anti-front-running (config-bound salt).** The factory mixes its caller into every CREATE2 salt to
+stop salt-squatting, but the orchestrator is the factory's *uniform* caller on every chain, which would
+neutralise that protection now that deploy is permissionless. To restore it the orchestrator derives
+the salt from the **whole config** — `salt = keccak256(abi.encode(config))`. Any config difference
+(notably `admin`) changes *every* deployed address, so an attacker cannot land a fund at another
+config's addresses; an identical config still yields identical addresses on every chain. **Off-chain
+code must predict via the orchestrator's `predictOiv(config)`** (which applies this derivation), not
+the factory's raw `predictOivAddresses`.
+
+**Source-chain only.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
+fan-out, so they are restricted to the source chain (Ethereum mainnet, `SOURCE_CHAIN_ID = 1`) and
+revert `NotSourceChain` elsewhere. Without this, a permissionless caller could run the full `deployOiv`
+directly on a *destination* chain and pre-occupy the deterministic stack addresses — the later CCIP
+`deployStack` would then collide and stick in `FAILED`, leaving a stray shares token behind. The
+orchestrator never holds a privileged role on any deployed fund — the exec Roles Modifier (owned by
+`config.admin`) remains the authoritative gatekeeper of Avatar Safe execution.
 
 ## Operational model (important)
 
@@ -86,12 +102,15 @@ Avatar Safe execution.
 - **Recovery / add-a-chain.** `deployEverywhere` is for the first, atomic fan-out and cannot be
   re-run with the same config (the local `deployOiv` would collide on its CREATE2 addresses). To
   extend a fund to a sidechain that was not in the original set — or to send a fresh message to one
-  whose prior delivery permanently failed — use **`dispatchTo(config, destSelectors, gasLimit)`**,
+  whose prior delivery permanently failed — use **`dispatchTo(config, destChainIds, gasLimit)`**,
   which performs the CCIP fan-out only (no local OIV). Pass the SAME `config` (notably the same
   `salt`) so the stack lands at the fund's existing addresses; never re-dispatch to a chain that
   already has the stack (its message would revert on the CREATE2 collision).
-- **Pre-fund LINK.** CCIP fees are paid in LINK from the orchestrator's balance. Use
-  `quoteDeployEverywhere(config, destSelectors, gasLimit)` to size funding before broadcasting.
+- **Native fees, caller-funded.** CCIP fees are paid in the source chain's **native gas** from the
+  caller's `msg.value` — the orchestrator holds no fee balance. Use
+  `quoteDeployEverywhere(config, destChainIds, gasLimit)` to size the `msg.value` to send; any
+  surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
+  automatically, with a small buffer.)
 - **Gas limit.** `deployStack` measures at ~1.45M gas; pass `gasLimit` of ~1.8M–2.0M. CCIP caps
   destination execution at 3M, so there is comfortable headroom. Unspent gas is **not** refunded.
 - **`EMPTY_CONTRACT` precondition.** `deployStack` reverts with `EmptyContractMissing` unless the
@@ -106,9 +125,12 @@ A chain qualifies only when **all** prerequisites exist at canonical (same-on-ev
 addresses: Safe v1.4.1 stack, Zodiac ModuleProxyFactory + **Roles Modifier v2.1.1 (patched —
 `0xF2964CE6…83D5`)**, the canonical CREATE2 deployer (`0x4e59b448…`), the `Empty` contract
 (`0xA470…4652`, or its deployer factory so it can be onboarded), and a live CCIP arbitrary-messaging
-lane **from Ethereum mainnet** that exposes a **LINK fee token**. Modifying `KpkOivFactory` does
-**not** widen this set — the limiter is external infra, and same-address determinism only holds where
-that infra is canonical.
+lane **from Ethereum mainnet**. Modifying `KpkOivFactory` does **not** widen this set — the limiter is
+external infra, and same-address determinism only holds where that infra is canonical.
+
+> Fees are paid in **native gas** (not LINK), so a chain no longer needs a LINK CCIP fee token to be
+> wired. The `LINK fee token` column below is retained as on-chain reference only; it is not a
+> requirement. The wired set is unchanged — both excluded chains fail on the Roles v2.1.1 prerequisite.
 
 > **Security note (Roles v2.1.1).** The factory deploys Roles Modifier *proxies* delegating to the
 > patched **v2.1.1** mastercopy. v2.1.0 (`0x9646fDAD…D337`) is vulnerable to the June-2026 ERC-1271
@@ -154,8 +176,9 @@ excluded. Sorted by chain ID:
 **Verdict** meanings: `READY` = every prerequisite incl. `Empty` already present; `READY-AFTER-EMPTY`
 = everything present and `Empty` is onboarded automatically at deploy preflight (absent on these
 chains but reproducible at its canonical address — see below); `NOT-READY` = a hard blocker, not
-wired. Full router + LINK addresses live in `script/ccip-networks.json`. The CCIP chain selector is
-the value passed to `deployEverywhere` / `dispatchTo`.
+wired. Full router + LINK addresses live in `script/ccip-networks.json`. Callers pass plain **chain
+IDs** to `deployEverywhere` / `dispatchTo`; the orchestrator resolves each to its CCIP chain selector
+via an owner-managed `chainSelectorOf` mapping (see below), so the selector is never hand-passed.
 
 Excluded / not wired:
 
@@ -212,10 +235,36 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
 `mainnetSelector` (`5009297550715157269`) is the same on every chain — it identifies the trusted
 *source* (Ethereum mainnet), not the chain being deployed to.
 
-## Usage
+### Destination chain registry ("selected chains")
 
-1. Deploy + configure the orchestrator on mainnet and all target sidechains (above).
-2. Fund the mainnet orchestrator with LINK (size via `quoteDeployEverywhere`).
-3. Ensure `EMPTY_CONTRACT` is present on every target chain.
-4. From the owner, call `deployEverywhere(oivConfig, destSelectors, gasLimit)` on mainnet.
-5. Watch CCIP Explorer; manually re-execute any failed destination message.
+Callers target chains by **chain ID**; the mainnet orchestrator resolves each id to its CCIP selector
+via an owner-managed, **enumerable** registry:
+
+- `setChainSelector(chainId, ccipChainSelector)` / `setChainSelectors(chainIds[], selectors[])` — owner
+  adds or corrects entries (e.g. a selector migration, or a newly-wired chain).
+- `removeChainSelector(chainId)` — owner removes a chain.
+- `getChainIds()` / `getChainIdCount()` — read the current selected set (e.g. on a block explorer).
+
+The set defines the "selected chains" the no-array `deployEverywhere(config, gasLimit)` fans out to.
+An unmapped chain id reverts `UnknownChain(chainId)`, so a fund can never be dispatched to a chain the
+owner hasn't approved.
+
+## Usage — from a block explorer (no script needed)
+
+Everything is a direct contract call on the mainnet orchestrator; no Foundry script is required.
+
+1. Deploy + configure the orchestrator on mainnet and all target sidechains (above), and ensure
+   `EMPTY_CONTRACT` is present on every target chain.
+2. **Owner**, once: seed the selected chains — **Write** `setChainSelectors([chainIds], [selectors])`
+   (values from `script/ccip-networks.json`). Confirm with **Read** `getChainIds()`.
+3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
+4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
+   the quoted fee (a little extra is fine; surplus is refunded). This deploys the OIV on mainnet and
+   fans the stack out to every selected chain in one transaction. To target only a subset, use the
+   `deployEverywhere(config, destChainIds, gasLimit)` overload with an explicit chain-ID array.
+5. Watch the [CCIP Explorer](https://ccip.chain.link); manually re-execute any failed destination
+   message. To add a chain later (or re-send a permanently-failed one), call `dispatchTo`.
+
+> A Foundry script (`script/CcipDeployEverywhere.s.sol`) is still provided for CLI users — it can seed
+> the registry from `ccip-networks.json` and quote+forward the fee automatically — but it is optional;
+> the steps above are entirely explorer-driven.

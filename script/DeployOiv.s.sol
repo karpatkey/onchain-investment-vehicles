@@ -42,13 +42,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  Predicted addresses (no deployment)");
         console.log("============================================================");
-        console.log("  Avatar Safe:          ", predicted.avatarSafe);
-        console.log("  Manager Safe:         ", predicted.managerSafe);
-        console.log("  execRolesModifier:    ", predicted.execRolesModifier);
-        console.log("  subRolesModifier:     ", predicted.subRolesModifier);
-        console.log("  managerRolesModifier: ", predicted.managerRolesModifier);
-        console.log("  kpkShares impl:       ", predicted.kpkSharesImpl);
-        console.log("  kpkShares proxy:      ", predicted.kpkSharesProxy);
+        _logInstance(predicted);
         console.log("------------------------------------------------------------");
         console.log("  Caller (deployer):    ", caller);
         console.log("  NOTE: these addresses are identical across all chains");
@@ -68,13 +62,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  OIV Deployed");
         console.log("============================================================");
-        console.log("  Avatar Safe:          ", instance.avatarSafe);
-        console.log("  Manager Safe:         ", instance.managerSafe);
-        console.log("  execRolesModifier:    ", instance.execRolesModifier);
-        console.log("  subRolesModifier:     ", instance.subRolesModifier);
-        console.log("  managerRolesModifier: ", instance.managerRolesModifier);
-        console.log("  kpkShares impl:       ", instance.kpkSharesImpl);
-        console.log("  kpkShares proxy:      ", instance.kpkSharesProxy);
+        _logInstance(instance);
         console.log("============================================================");
     }
 
