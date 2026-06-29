@@ -591,6 +591,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         wiring, ownership, or approval changes on the supplied fund — registration is purely
     ///         bookkeeping. All seven addresses must be non-zero, and the fund (keyed by
     ///         `kpkSharesProxy`) must not already be registered.
+    ///         The full `OivInstance` is stored on-chain (not just `kpkSharesProxy`) by design, so an
+    ///         on-chain consumer can read a registered fund's seven component addresses directly via the
+    ///         `registeredFunds`/`getFund` getter without replaying `FundRegistered` events. The extra
+    ///         SSTOREs are paid once per (rare, owner-only) registration.
     /// @param  instance The seven fund-component addresses to record.
     /// @return registeredFundId Zero-based index assigned in the `registeredFunds` mapping.
     function registerFund(OivInstance calldata instance) external onlyOwner returns (uint256 registeredFundId) {
@@ -624,6 +628,27 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         delete registeredFunds[registeredFundId];
 
         emit FundUnregistered(registeredFundId, kpkSharesProxy);
+    }
+
+    /// @notice Whether `registeredFundId` holds a live (registered, not-removed) fund.
+    /// @dev    `registeredFundCount` is monotonic and `unregisterFund` leaves zeroed gaps, so the raw
+    ///         `registeredFunds` auto-getter returns an all-zero struct for a removed/never-set id
+    ///         rather than reverting. Enumerators iterating `[0, registeredFundCount)` MUST gate on
+    ///         this (or `getFund`) to skip gaps — do NOT treat every id `< registeredFundCount` as a
+    ///         live fund (unlike the gap-free `instances`/`stacks` deploy logs).
+    /// @param  registeredFundId The `registeredFunds` index to check.
+    function registeredFundExists(uint256 registeredFundId) public view returns (bool) {
+        return registeredFunds[registeredFundId].kpkSharesProxy != address(0);
+    }
+
+    /// @notice Returns the registered fund at `registeredFundId`, reverting `FundNotRegistered` if the
+    ///         slot is empty (never registered, or removed). Safe accessor for indexers/consumers —
+    ///         prefer it over the raw `registeredFunds` getter, which silently returns a zero struct.
+    /// @param  registeredFundId The `registeredFunds` index to read.
+    /// @return instance The seven fund-component addresses recorded at that id.
+    function getFund(uint256 registeredFundId) external view returns (OivInstance memory instance) {
+        instance = registeredFunds[registeredFundId];
+        if (instance.kpkSharesProxy == address(0)) revert FundNotRegistered();
     }
 
     /// @notice Derives the operational `StackConfig` that `deployOiv` builds for a given `OivConfig`.

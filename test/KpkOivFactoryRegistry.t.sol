@@ -209,4 +209,34 @@ contract KpkOivFactoryRegistryTest is Test {
         _assertEq(_stored(1), inst);
         assertEq(_stored(0).kpkSharesProxy, address(0), "old slot still empty");
     }
+
+    // ── Safe accessors (getFund / registeredFundExists) ───────────────────────────
+
+    function test_getFund_returnsLiveEntry() public {
+        KpkOivFactory.OivInstance memory inst = _instance(1);
+        vm.prank(owner);
+        factory.registerFund(inst);
+        _assertEq(factory.getFund(0), inst);
+        assertTrue(factory.registeredFundExists(0), "exists");
+    }
+
+    function test_getFund_revertsOnNeverRegistered() public {
+        vm.expectRevert(KpkOivFactory.FundNotRegistered.selector);
+        factory.getFund(0);
+        assertFalse(factory.registeredFundExists(0), "no live entry");
+    }
+
+    function test_getFund_revertsOnRemovedGap() public {
+        // The footgun the accessor guards against: a removed slot reads as a zero struct via the raw
+        // getter (count stays 1), but getFund/registeredFundExists treat it as not-live.
+        vm.startPrank(owner);
+        factory.registerFund(_instance(1));
+        factory.unregisterFund(0);
+        vm.stopPrank();
+
+        assertEq(factory.registeredFundCount(), 1, "count still 1 (monotonic, gap left)");
+        assertFalse(factory.registeredFundExists(0), "removed slot is not live");
+        vm.expectRevert(KpkOivFactory.FundNotRegistered.selector);
+        factory.getFund(0);
+    }
 }
