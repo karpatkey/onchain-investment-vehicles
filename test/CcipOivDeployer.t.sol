@@ -34,10 +34,17 @@ contract CcipOivDeployerTest is Test {
     address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
     address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
 
-    // CCIP chain selectors (mainnet source, two example destinations).
+    // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
     uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
     uint64 constant BASE_SELECTOR = 15971525489660198786;
+    uint64 constant OPTIMISM_SELECTOR = 3734403246176062136;
+
+    // Destination chain IDs — callers target chains by id; the orchestrator resolves each to its CCIP
+    // selector via the owner-managed mapping (seeded in setUp).
+    uint256 constant ARBITRUM_CHAIN_ID = 42161;
+    uint256 constant BASE_CHAIN_ID = 8453;
+    uint256 constant OPTIMISM_CHAIN_ID = 10;
 
     uint256 constant GAS_LIMIT = 2_000_000;
     uint256 constant FEE = 1 ether; // 1 LINK per message (mock)
@@ -82,6 +89,11 @@ contract CcipOivDeployerTest is Test {
         orchestrator = new CcipOivDeployer(address(this), address(factory));
         orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
 
+        // Seed the chainId -> CCIP selector mapping for the destinations used in tests.
+        orchestrator.setChainSelector(ARBITRUM_CHAIN_ID, ARBITRUM_SELECTOR);
+        orchestrator.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
+        orchestrator.setChainSelector(OPTIMISM_CHAIN_ID, OPTIMISM_SELECTOR);
+
         // LINK is still configured (retained for the withdrawLink sweep), but CCIP fees are now paid
         // in NATIVE gas from the caller's msg.value — so the caller, not the orchestrator, is funded.
         link.mint(address(orchestrator), 100 ether);
@@ -104,7 +116,7 @@ contract CcipOivDeployerTest is Test {
     function test_deployEverywhere_deploysLocalOivMatchingPrediction() public {
         KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(orchestrator));
 
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         (KpkOivFactory.OivInstance memory inst,) =
             orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
@@ -117,7 +129,7 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_deployEverywhere_dispatchesOnePerDestinationAndChargesNativeFee() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         uint256 routerBalBefore = address(router).balance;
 
         (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
@@ -129,7 +141,7 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_deployEverywhere_refundsSurplusValue() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         uint256 overpay = 5 ether;
         uint256 balBefore = address(this).balance;
 
@@ -142,7 +154,7 @@ contract CcipOivDeployerTest is Test {
 
     /// @dev The whole point of native, caller-funded fees: anyone — not just the owner — can deploy.
     function test_deployEverywhere_isPermissionless() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         vm.prank(stranger);
         (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
         assertEq(ids.length, 2, "stranger can deploy + dispatch");
@@ -150,7 +162,7 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_deployEverywhere_payloadEncodesDerivedStackConfig() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
@@ -164,19 +176,19 @@ contract CcipOivDeployerTest is Test {
 
     function test_deployEverywhere_revertsWhenNotConfigured() public {
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
         fresh.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
     function test_deployEverywhere_revertsOnNoDestinations() public {
-        uint64[] memory dests = new uint64[](0);
+        uint256[] memory dests = new uint256[](0);
         vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
         orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
     function test_deployEverywhere_revertsOnInsufficientFee() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         // Aggregate fee across both destinations is checked up front against msg.value.
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientFee.selector, 2 * FEE, FEE));
         orchestrator.deployEverywhere{value: FEE}(oivConfig, dests, GAS_LIMIT);
@@ -251,7 +263,7 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_quoteDeployEverywhere_sumsFees() public view {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         (uint256 total, uint256[] memory per) = orchestrator.quoteDeployEverywhere(oivConfig, dests, GAS_LIMIT);
         assertEq(total, 2 * FEE, "total fee");
         assertEq(per[0], FEE, "per[0]");
@@ -262,7 +274,7 @@ contract CcipOivDeployerTest is Test {
 
     function test_dispatchTo_sendsWithoutLocalDeployOiv() public {
         uint256 instancesBefore = factory.instanceCount();
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
 
         uint256 routerBalBefore = address(router).balance;
         bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
@@ -279,7 +291,7 @@ contract CcipOivDeployerTest is Test {
     }
 
     function test_dispatchTo_isPermissionless() public {
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         vm.prank(stranger);
         bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
         assertEq(ids.length, 2, "non-owner can dispatch");
@@ -287,7 +299,7 @@ contract CcipOivDeployerTest is Test {
 
     function test_dispatchTo_revertsWhenNotConfigured() public {
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
-        uint64[] memory dests = _dests();
+        uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
         fresh.dispatchTo(oivConfig, dests, GAS_LIMIT);
     }
@@ -300,8 +312,8 @@ contract CcipOivDeployerTest is Test {
         orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT); // Arbitrum + Base
         uint256 sentAfterDeploy = router.sentCount();
 
-        uint64[] memory more = new uint64[](1);
-        more[0] = 3734403246176062136; // Optimism selector
+        uint256[] memory more = new uint256[](1);
+        more[0] = OPTIMISM_CHAIN_ID;
         bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(more.length)}(oivConfig, more, GAS_LIMIT);
 
         assertEq(ids.length, 1, "one new message");
@@ -331,12 +343,89 @@ contract CcipOivDeployerTest is Test {
         assertFalse(orchestrator.supportsInterface(0xffffffff), "bad iface");
     }
 
+    // ── chainId → selector registry ───────────────────────────────────────────────
+
+    function test_setChainSelector_storesMapping() public {
+        orchestrator.setChainSelector(7777, 12345);
+        assertEq(orchestrator.chainSelectorOf(7777), 12345, "selector not stored");
+    }
+
+    function test_setChainSelector_onlyOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        orchestrator.setChainSelector(7777, 12345);
+    }
+
+    function test_setChainSelector_revertsOnZeroChainId() public {
+        vm.expectRevert(CcipOivDeployer.ZeroChainId.selector);
+        orchestrator.setChainSelector(0, 12345);
+    }
+
+    function test_setChainSelector_revertsOnZeroSelector() public {
+        vm.expectRevert(CcipOivDeployer.ZeroChainSelector.selector);
+        orchestrator.setChainSelector(7777, 0);
+    }
+
+    function test_setChainSelectors_batchPopulates() public {
+        uint256[] memory ids = new uint256[](2);
+        uint64[] memory sels = new uint64[](2);
+        (ids[0], sels[0]) = (1111, 11);
+        (ids[1], sels[1]) = (2222, 22);
+        orchestrator.setChainSelectors(ids, sels);
+        assertEq(orchestrator.chainSelectorOf(1111), 11);
+        assertEq(orchestrator.chainSelectorOf(2222), 22);
+    }
+
+    function test_setChainSelectors_revertsOnLengthMismatch() public {
+        uint256[] memory ids = new uint256[](2);
+        uint64[] memory sels = new uint64[](1);
+        vm.expectRevert(CcipOivDeployer.LengthMismatch.selector);
+        orchestrator.setChainSelectors(ids, sels);
+    }
+
+    function test_removeChainSelector_clearsMapping() public {
+        orchestrator.removeChainSelector(ARBITRUM_CHAIN_ID); // seeded in setUp
+        assertEq(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), 0, "not cleared");
+    }
+
+    function test_removeChainSelector_onlyOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        orchestrator.removeChainSelector(ARBITRUM_CHAIN_ID);
+    }
+
+    function test_removeChainSelector_revertsWhenUnknown() public {
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, uint256(999999)));
+        orchestrator.removeChainSelector(999999);
+    }
+
+    function test_deployEverywhere_revertsForUnconfiguredChain() public {
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = 999999; // never mapped
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, uint256(999999)));
+        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+    }
+
+    function test_deployEverywhere_worksAfterRemappingSelector() public {
+        // Owner can correct a selector; the new value is what gets used on dispatch.
+        orchestrator.setChainSelector(BASE_CHAIN_ID, 99999);
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), 99999, "selector not updated");
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = BASE_CHAIN_ID;
+        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+
+        // MockCcipRouter.Sent = (destChainSelector, receiver, data, feeToken, fee).
+        (uint64 destSel,,,,) = router.sent(router.sentCount() - 1);
+        assertEq(destSel, 99999, "dispatched with the updated selector");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
-    function _dests() internal pure returns (uint64[] memory dests) {
-        dests = new uint64[](2);
-        dests[0] = ARBITRUM_SELECTOR;
-        dests[1] = BASE_SELECTOR;
+    function _dests() internal pure returns (uint256[] memory dests) {
+        dests = new uint256[](2);
+        dests[0] = ARBITRUM_CHAIN_ID;
+        dests[1] = BASE_CHAIN_ID;
     }
 
     function _validMessage() internal view returns (Client.Any2EVMMessage memory) {

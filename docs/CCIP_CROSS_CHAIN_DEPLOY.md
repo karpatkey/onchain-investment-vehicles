@@ -88,13 +88,13 @@ remains the authoritative gatekeeper of Avatar Safe execution.
 - **Recovery / add-a-chain.** `deployEverywhere` is for the first, atomic fan-out and cannot be
   re-run with the same config (the local `deployOiv` would collide on its CREATE2 addresses). To
   extend a fund to a sidechain that was not in the original set — or to send a fresh message to one
-  whose prior delivery permanently failed — use **`dispatchTo(config, destSelectors, gasLimit)`**,
+  whose prior delivery permanently failed — use **`dispatchTo(config, destChainIds, gasLimit)`**,
   which performs the CCIP fan-out only (no local OIV). Pass the SAME `config` (notably the same
   `salt`) so the stack lands at the fund's existing addresses; never re-dispatch to a chain that
   already has the stack (its message would revert on the CREATE2 collision).
 - **Native fees, caller-funded.** CCIP fees are paid in the source chain's **native gas** from the
   caller's `msg.value` — the orchestrator holds no fee balance. Use
-  `quoteDeployEverywhere(config, destSelectors, gasLimit)` to size the `msg.value` to send; any
+  `quoteDeployEverywhere(config, destChainIds, gasLimit)` to size the `msg.value` to send; any
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
 - **Gas limit.** `deployStack` measures at ~1.45M gas; pass `gasLimit` of ~1.8M–2.0M. CCIP caps
@@ -162,8 +162,9 @@ excluded. Sorted by chain ID:
 **Verdict** meanings: `READY` = every prerequisite incl. `Empty` already present; `READY-AFTER-EMPTY`
 = everything present and `Empty` is onboarded automatically at deploy preflight (absent on these
 chains but reproducible at its canonical address — see below); `NOT-READY` = a hard blocker, not
-wired. Full router + LINK addresses live in `script/ccip-networks.json`. The CCIP chain selector is
-the value passed to `deployEverywhere` / `dispatchTo`.
+wired. Full router + LINK addresses live in `script/ccip-networks.json`. Callers pass plain **chain
+IDs** to `deployEverywhere` / `dispatchTo`; the orchestrator resolves each to its CCIP chain selector
+via an owner-managed `chainSelectorOf` mapping (see below), so the selector is never hand-passed.
 
 Excluded / not wired:
 
@@ -220,11 +221,27 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
 `mainnetSelector` (`5009297550715157269`) is the same on every chain — it identifies the trusted
 *source* (Ethereum mainnet), not the chain being deployed to.
 
+### Destination chain registry
+
+Callers target chains by **chain ID**; the mainnet orchestrator resolves each id to its CCIP selector
+via the owner-managed `chainSelectorOf` mapping:
+
+- `setChainSelector(chainId, ccipChainSelector)` / `setChainSelectors(chainIds[], selectors[])` — owner
+  adds or corrects entries (e.g. a selector migration, or a newly-wired chain).
+- `removeChainSelector(chainId)` — owner removes a chain.
+- Seed it from the canonical registry in one call:
+  `forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere --rpc-url ethereum --broadcast
+  --sig "setChainSelectors(address,string)" <ORCHESTRATOR> script/ccip-networks.json` (owner key).
+
+An unmapped chain id reverts `UnknownChain(chainId)`, so a fund can never be dispatched to a chain the
+owner hasn't approved.
+
 ## Usage
 
 1. Deploy + configure the orchestrator on mainnet and all target sidechains (above).
-2. Size the native fee via `quoteDeployEverywhere` (no pre-funding — the caller pays from `msg.value`).
-3. Ensure `EMPTY_CONTRACT` is present on every target chain.
-4. From any account, call `deployEverywhere(oivConfig, destSelectors, gasLimit)` on mainnet, sending
-   the quoted native fee as `msg.value` (surplus is refunded).
-5. Watch CCIP Explorer; manually re-execute any failed destination message.
+2. Seed the mainnet orchestrator's chain registry (`setChainSelectors` from `ccip-networks.json`).
+3. Size the native fee via `quoteDeployEverywhere` (no pre-funding — the caller pays from `msg.value`).
+4. Ensure `EMPTY_CONTRACT` is present on every target chain.
+5. From any account, call `deployEverywhere(oivConfig, destChainIds, gasLimit)` on mainnet (chain IDs,
+   not selectors), sending the quoted native fee as `msg.value` (surplus is refunded).
+6. Watch CCIP Explorer; manually re-execute any failed destination message.
