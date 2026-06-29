@@ -8,7 +8,8 @@
 # Honors the same env as deploy-chain.sh (PRIVATE_KEY, DEPLOY_FINAL_OWNER, DRY_RUN, VERIFY).
 #
 # NOTE: infra deploy is per-chain and idempotent. The actual fund fan-out (deployEverywhere) is a
-# separate, deliberate step you run from mainnet AFTER funding the orchestrator with LINK.
+# separate, deliberate step you run from mainnet; it is permissionless and the caller pays the CCIP
+# fees in native gas from msg.value (no LINK pre-funding).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,24 +45,30 @@ echo "Fleet summary: ${#OK_CHAINS[@]} ok, ${#FAILED_CHAINS[@]} failed (of ${#CHA
 [ ${#FAILED_CHAINS[@]} -gt 0 ] && echo "  FAILED:    ${FAILED_CHAINS[*]}   (idempotent — re-run: script/deploy-chain.sh <chain>)"
 [ ${#UNVERIFIED_CHAINS[@]} -gt 0 ] && echo "  UNVERIFIED (deployed, no [etherscan] cfg — verify manually): ${UNVERIFIED_CHAINS[*]}"
 
-# Build the destination selector list (all destinations, i.e. exclude the source role).
-SELECTORS=$(jq -r '[.networks[] | select(.role=="destination" and (.verdict=="READY" or .verdict=="READY-AFTER-EMPTY")) | .ccipChainSelector] | join(",")' "$REG")
+# Build the destination chain-ID list (all destinations, i.e. exclude the source role). Callers target
+# chains by id; the orchestrator resolves each to its CCIP selector via its owner-managed mapping.
+CHAIN_IDS=$(jq -r '[.networks[] | select(.role=="destination" and (.verdict=="READY" or .verdict=="READY-AFTER-EMPTY")) | .chainId] | join(",")' "$REG")
 
 cat <<EOF
 
 ############################################################
 Infra deployed on all wired chains.
 
-NEXT (manual, deliberate) — fan a fund out from mainnet:
-  1. Fund the mainnet orchestrator with LINK (size it):
-       forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
-         --rpc-url ethereum --sig "quote(address,string,uint64[],uint256)" \\
-         <ORCHESTRATOR> script/<fund>-config.json "[$SELECTORS]" 2000000
-  2. deployEverywhere (deploys the OIV on mainnet + CCIP-fans-out the stack):
+NEXT (manual, deliberate) — fan a fund out from mainnet (permissionless; caller pays native fees):
+  1. Seed the mainnet orchestrator's chainId -> CCIP selector mapping (owner key, once):
        forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
          --rpc-url ethereum --private-key \$PRIVATE_KEY --broadcast \\
-         --sig "deployEverywhere(address,string,uint64[],uint256)" \\
-         <ORCHESTRATOR> script/<fund>-config.json "[$SELECTORS]" 2000000
+         --sig "setChainSelectors(address,string)" <ORCHESTRATOR> script/ccip-networks.json
+  2. Size the native CCIP fee (no pre-funding — paid from msg.value, surplus refunded):
+       forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
+         --rpc-url ethereum --sig "quote(address,string,uint256[],uint256)" \\
+         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 2000000
+  3. deployEverywhere (deploys the OIV on mainnet + CCIP-fans-out the stack; the script quotes and
+     forwards the native fee automatically). Pass destination CHAIN IDs, not selectors:
+       forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
+         --rpc-url ethereum --private-key \$PRIVATE_KEY --broadcast \\
+         --sig "deployEverywhere(address,string,uint256[],uint256)" \\
+         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 2000000
 ############################################################
 EOF
 
