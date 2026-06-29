@@ -102,8 +102,10 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         _logInstance(instance);
         console.log("------------------------------------------------------------");
+        // messageIds are in dispatch order; the orchestrator drops the local chain (if present in
+        // destChainIds), so the two arrays may not align 1:1 — log by dispatch index, not by chainId.
         for (uint256 i = 0; i < messageIds.length; i++) {
-            console.log("  CCIP messageId for chainId:", destChainIds[i]);
+            console.log("  CCIP messageId (dispatch order):", i);
             console.logBytes32(messageIds[i]);
         }
         console.log("  Track delivery at https://ccip.chain.link");

@@ -156,6 +156,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     error LengthMismatch();
     /// @notice Thrown when `deployEverywhere`/`dispatchTo` is called on a chain other than the source.
     error NotSourceChain(uint256 chainId);
+    /// @notice Thrown when `withdrawLink` is called but no LINK token is configured (native fees).
+    error NoLinkToken();
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -462,7 +464,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice Withdraws LINK from the orchestrator to `to`. Owner-only.
     function withdrawLink(address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
-        if (linkToken == address(0)) revert NotConfigured();
+        // Distinct from NotConfigured (router): linkToken may legitimately be zero under native fees.
+        if (linkToken == address(0)) revert NoLinkToken();
         IERC20(linkToken).safeTransfer(to, amount);
     }
 

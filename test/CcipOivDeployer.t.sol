@@ -393,6 +393,12 @@ contract CcipOivDeployerTest is Test {
         orchestrator.withdrawLink(stranger, 1 ether);
     }
 
+    function test_withdrawLink_revertsWithNoLinkTokenWhenUnset() public {
+        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR); // native fees, no LINK
+        vm.expectRevert(CcipOivDeployer.NoLinkToken.selector);
+        orchestrator.withdrawLink(address(this), 1);
+    }
+
     function test_supportsInterface() public view {
         assertTrue(orchestrator.supportsInterface(type(IAny2EVMMessageReceiver).interfaceId), "IAny2EVM");
         assertTrue(orchestrator.supportsInterface(type(IERC165).interfaceId), "IERC165");
