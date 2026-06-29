@@ -8,7 +8,8 @@
 # Honors the same env as deploy-chain.sh (PRIVATE_KEY, DEPLOY_FINAL_OWNER, DRY_RUN, VERIFY).
 #
 # NOTE: infra deploy is per-chain and idempotent. The actual fund fan-out (deployEverywhere) is a
-# separate, deliberate step you run from mainnet AFTER funding the orchestrator with LINK.
+# separate, deliberate step you run from mainnet; it is permissionless and the caller pays the CCIP
+# fees in native gas from msg.value (no LINK pre-funding).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,12 +53,13 @@ cat <<EOF
 ############################################################
 Infra deployed on all wired chains.
 
-NEXT (manual, deliberate) — fan a fund out from mainnet:
-  1. Fund the mainnet orchestrator with LINK (size it):
+NEXT (manual, deliberate) — fan a fund out from mainnet (permissionless; caller pays native fees):
+  1. Size the native CCIP fee (no pre-funding — paid from msg.value, surplus refunded):
        forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
          --rpc-url ethereum --sig "quote(address,string,uint64[],uint256)" \\
          <ORCHESTRATOR> script/<fund>-config.json "[$SELECTORS]" 2000000
-  2. deployEverywhere (deploys the OIV on mainnet + CCIP-fans-out the stack):
+  2. deployEverywhere (deploys the OIV on mainnet + CCIP-fans-out the stack; the script quotes and
+     forwards the native fee automatically):
        forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
          --rpc-url ethereum --private-key \$PRIVATE_KEY --broadcast \\
          --sig "deployEverywhere(address,string,uint64[],uint256)" \\

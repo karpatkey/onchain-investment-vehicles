@@ -71,10 +71,12 @@ the deprecated factory:
    (same address everywhere).
 
 Check (3) blocks a forged message from pre-occupying the deterministic CREATE2 addresses for a salt
-and griefing the legitimate deployment. `deployEverywhere` is `onlyOwner` because it spends the
-orchestrator's pre-funded LINK. The orchestrator never holds a privileged role on any deployed
-fund — the exec Roles Modifier (owned by `config.admin`) remains the authoritative gatekeeper of
-Avatar Safe execution.
+and griefing the legitimate deployment. `deployEverywhere` and `dispatchTo` are **permissionless** —
+the caller pays the CCIP fees in **native gas** via `msg.value`, so there is no shared balance to
+drain. Fund addresses are fixed by the orchestrator (the uniform factory caller) + salt + config, not
+by who calls, so a permissionless caller cannot change where a fund lands. The orchestrator never
+holds a privileged role on any deployed fund — the exec Roles Modifier (owned by `config.admin`)
+remains the authoritative gatekeeper of Avatar Safe execution.
 
 ## Operational model (important)
 
@@ -90,8 +92,11 @@ Avatar Safe execution.
   which performs the CCIP fan-out only (no local OIV). Pass the SAME `config` (notably the same
   `salt`) so the stack lands at the fund's existing addresses; never re-dispatch to a chain that
   already has the stack (its message would revert on the CREATE2 collision).
-- **Pre-fund LINK.** CCIP fees are paid in LINK from the orchestrator's balance. Use
-  `quoteDeployEverywhere(config, destSelectors, gasLimit)` to size funding before broadcasting.
+- **Native fees, caller-funded.** CCIP fees are paid in the source chain's **native gas** from the
+  caller's `msg.value` — the orchestrator holds no fee balance. Use
+  `quoteDeployEverywhere(config, destSelectors, gasLimit)` to size the `msg.value` to send; any
+  surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
+  automatically, with a small buffer.)
 - **Gas limit.** `deployStack` measures at ~1.45M gas; pass `gasLimit` of ~1.8M–2.0M. CCIP caps
   destination execution at 3M, so there is comfortable headroom. Unspent gas is **not** refunded.
 - **`EMPTY_CONTRACT` precondition.** `deployStack` reverts with `EmptyContractMissing` unless the
@@ -106,9 +111,12 @@ A chain qualifies only when **all** prerequisites exist at canonical (same-on-ev
 addresses: Safe v1.4.1 stack, Zodiac ModuleProxyFactory + **Roles Modifier v2.1.1 (patched —
 `0xF2964CE6…83D5`)**, the canonical CREATE2 deployer (`0x4e59b448…`), the `Empty` contract
 (`0xA470…4652`, or its deployer factory so it can be onboarded), and a live CCIP arbitrary-messaging
-lane **from Ethereum mainnet** that exposes a **LINK fee token**. Modifying `KpkOivFactory` does
-**not** widen this set — the limiter is external infra, and same-address determinism only holds where
-that infra is canonical.
+lane **from Ethereum mainnet**. Modifying `KpkOivFactory` does **not** widen this set — the limiter is
+external infra, and same-address determinism only holds where that infra is canonical.
+
+> Fees are paid in **native gas** (not LINK), so a chain no longer needs a LINK CCIP fee token to be
+> wired. The `LINK fee token` column below is retained as on-chain reference only; it is not a
+> requirement. The wired set is unchanged — both excluded chains fail on the Roles v2.1.1 prerequisite.
 
 > **Security note (Roles v2.1.1).** The factory deploys Roles Modifier *proxies* delegating to the
 > patched **v2.1.1** mastercopy. v2.1.0 (`0x9646fDAD…D337`) is vulnerable to the June-2026 ERC-1271
@@ -215,7 +223,8 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
 ## Usage
 
 1. Deploy + configure the orchestrator on mainnet and all target sidechains (above).
-2. Fund the mainnet orchestrator with LINK (size via `quoteDeployEverywhere`).
+2. Size the native fee via `quoteDeployEverywhere` (no pre-funding — the caller pays from `msg.value`).
 3. Ensure `EMPTY_CONTRACT` is present on every target chain.
-4. From the owner, call `deployEverywhere(oivConfig, destSelectors, gasLimit)` on mainnet.
+4. From any account, call `deployEverywhere(oivConfig, destSelectors, gasLimit)` on mainnet, sending
+   the quoted native fee as `msg.value` (surplus is refunded).
 5. Watch CCIP Explorer; manually re-execute any failed destination message.

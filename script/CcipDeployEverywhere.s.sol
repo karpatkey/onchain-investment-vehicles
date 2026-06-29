@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import {console} from "forge-std/Script.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 import {OivConfigReader} from "./base/OivConfigReader.sol";
@@ -16,14 +15,16 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  *   - predict(orchestrator, configPath): view. Prints the 7 OIV addresses the orchestrator would
  *     produce. CALLER IS THE ORCHESTRATOR (not the EOA) — it is the factory's msg.sender on every
  *     chain — so this is the correct prediction for the CCIP flow.
- *   - quote(orchestrator, configPath, selectors, gasLimit): view. Prints total + per-destination LINK
- *     fee and the orchestrator's current LINK balance, to size pre-funding.
+ *   - quote(orchestrator, configPath, selectors, gasLimit): view. Prints total + per-destination
+ *     NATIVE fee, to size the msg.value to send.
  *   - deployEverywhere(orchestrator, configPath, selectors, gasLimit): broadcast. Deploys the full
  *     OIV locally (intended for mainnet) and dispatches one CCIP message per selector.
  * Notes:
  *   - The config parsing lives in the shared OivConfigReader base (same as DeployOiv).
- *   - deployEverywhere is onlyOwner on the orchestrator; PRIVATE_KEY must be the orchestrator owner.
- *   - CCIP fees are paid in LINK from the orchestrator's balance; fund it before broadcasting.
+ *   - deployEverywhere is PERMISSIONLESS; any PRIVATE_KEY can broadcast it (no owner requirement).
+ *   - CCIP fees are paid in NATIVE gas from msg.value; this script quotes the fee and forwards it
+ *     (with a small buffer) automatically, so the broadcasting EOA just needs enough native balance.
+ *     Surplus is refunded to that EOA.
  */
 contract CcipDeployEverywhere is OivConfigReader {
     // ── Entry points ───────────────────────────────────────────────────────────
@@ -58,23 +59,16 @@ contract CcipDeployEverywhere is OivConfigReader {
         CcipOivDeployer orch = CcipOivDeployer(orchestrator);
         (uint256 totalFee, uint256[] memory feePerDestination) = orch.quoteDeployEverywhere(config, selectors, gasLimit);
 
-        uint256 linkBalance = IERC20(orch.linkToken()).balanceOf(orchestrator);
-
         console.log("============================================================");
-        console.log("  CCIP fan-out LINK quote");
+        console.log("  CCIP fan-out NATIVE fee quote");
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Gas limit per dest:   ", gasLimit);
         for (uint256 i = 0; i < selectors.length; i++) {
-            console.log("  selector / fee (LINK wei):", selectors[i], feePerDestination[i]);
+            console.log("  selector / fee (native wei):", selectors[i], feePerDestination[i]);
         }
-        console.log("  TOTAL fee (LINK wei): ", totalFee);
-        console.log("  Orchestrator LINK bal:", linkBalance);
-        if (linkBalance < totalFee) {
-            console.log("  >>> UNDERFUNDED: send at least", totalFee - linkBalance, "more LINK wei to orchestrator");
-        } else {
-            console.log("  >>> Funded sufficiently.");
-        }
+        console.log("  TOTAL fee (native wei):", totalFee);
+        console.log("  >>> Send at least this as msg.value to deployEverywhere; surplus is refunded.");
         console.log("============================================================");
     }
 
@@ -87,10 +81,16 @@ contract CcipDeployEverywhere is OivConfigReader {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
         CcipOivDeployer orch = CcipOivDeployer(orchestrator);
 
+        // Size the native fee now and send it as msg.value, with a 10% buffer so a small fee increase
+        // between this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus
+        // to the broadcasting EOA.
+        (uint256 totalFee,) = orch.quoteDeployEverywhere(config, selectors, gasLimit);
+        uint256 valueToSend = totalFee + totalFee / 10;
+
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
         (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) =
-            orch.deployEverywhere(config, selectors, gasLimit);
+            orch.deployEverywhere{value: valueToSend}(config, selectors, gasLimit);
         vm.stopBroadcast();
 
         console.log("============================================================");

@@ -82,10 +82,22 @@ contract CcipOivDeployerTest is Test {
         orchestrator = new CcipOivDeployer(address(this), address(factory));
         orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
 
+        // LINK is still configured (retained for the withdrawLink sweep), but CCIP fees are now paid
+        // in NATIVE gas from the caller's msg.value — so the caller, not the orchestrator, is funded.
         link.mint(address(orchestrator), 100 ether);
+        vm.deal(address(this), 1_000 ether);
+        vm.deal(stranger, 1_000 ether);
 
         oivConfig = _buildOivConfig();
     }
+
+    /// @dev Total native fee for `n` destinations at the mock's flat per-message fee.
+    function _fee(uint256 n) internal pure returns (uint256) {
+        return n * FEE;
+    }
+
+    /// @dev Accept native refunds of surplus `msg.value` from the orchestrator.
+    receive() external payable {}
 
     // ── Source path: deployEverywhere ────────────────────────────────────────────
 
@@ -93,7 +105,8 @@ contract CcipOivDeployerTest is Test {
         KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(orchestrator));
 
         uint64[] memory dests = _dests();
-        (KpkOivFactory.OivInstance memory inst,) = orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        (KpkOivFactory.OivInstance memory inst,) =
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         assertEq(inst.avatarSafe, predicted.avatarSafe, "avatarSafe mismatch");
         assertEq(inst.managerSafe, predicted.managerSafe, "managerSafe mismatch");
@@ -103,21 +116,42 @@ contract CcipOivDeployerTest is Test {
         assertGt(inst.kpkSharesProxy.code.length, 0, "shares proxy not deployed");
     }
 
-    function test_deployEverywhere_dispatchesOnePerDestinationAndChargesLink() public {
+    function test_deployEverywhere_dispatchesOnePerDestinationAndChargesNativeFee() public {
         uint64[] memory dests = _dests();
-        uint256 balBefore = link.balanceOf(address(orchestrator));
+        uint256 routerBalBefore = address(router).balance;
 
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         assertEq(ids.length, 2, "two message ids");
         assertEq(router.sentCount(), 2, "two ccipSend calls");
-        assertEq(link.balanceOf(address(orchestrator)), balBefore - 2 * FEE, "LINK not charged correctly");
-        assertEq(link.balanceOf(address(router)), 2 * FEE, "router did not receive fees");
+        assertEq(address(router).balance, routerBalBefore + 2 * FEE, "router did not receive native fees");
+        assertEq(address(orchestrator).balance, 0, "orchestrator must not retain native");
+    }
+
+    function test_deployEverywhere_refundsSurplusValue() public {
+        uint64[] memory dests = _dests();
+        uint256 overpay = 5 ether;
+        uint256 balBefore = address(this).balance;
+
+        orchestrator.deployEverywhere{value: _fee(dests.length) + overpay}(oivConfig, dests, GAS_LIMIT);
+
+        // Only the exact fee should be consumed; the surplus is refunded to the caller.
+        assertEq(balBefore - address(this).balance, _fee(dests.length), "surplus not refunded");
+        assertEq(address(orchestrator).balance, 0, "orchestrator must not retain native");
+    }
+
+    /// @dev The whole point of native, caller-funded fees: anyone — not just the owner — can deploy.
+    function test_deployEverywhere_isPermissionless() public {
+        uint64[] memory dests = _dests();
+        vm.prank(stranger);
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        assertEq(ids.length, 2, "stranger can deploy + dispatch");
+        assertEq(router.sentCount(), 2, "messages dispatched for non-owner caller");
     }
 
     function test_deployEverywhere_payloadEncodesDerivedStackConfig() public {
         uint64[] memory dests = _dests();
-        orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
         assertEq(sent.salt, oivConfig.salt, "salt mismatch");
@@ -126,13 +160,6 @@ contract CcipOivDeployerTest is Test {
         assertEq(sent.managerRolesMod.finalOwner, address(0), "managerMod finalOwner must be zero");
         assertEq(sent.managerSafe.owners[0], oivConfig.managerSafe.owners[0], "manager owner mismatch");
         assertEq(sent.managerSafe.threshold, oivConfig.managerSafe.threshold, "threshold mismatch");
-    }
-
-    function test_deployEverywhere_onlyOwner() public {
-        uint64[] memory dests = _dests();
-        vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
     function test_deployEverywhere_revertsWhenNotConfigured() public {
@@ -148,12 +175,11 @@ contract CcipOivDeployerTest is Test {
         orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
-    function test_deployEverywhere_revertsOnInsufficientLink() public {
-        orchestrator.withdrawLink(address(this), link.balanceOf(address(orchestrator)));
+    function test_deployEverywhere_revertsOnInsufficientFee() public {
         uint64[] memory dests = _dests();
-        // Aggregate fee across both destinations is checked up front.
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientLinkBalance.selector, 2 * FEE, 0));
-        orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        // Aggregate fee across both destinations is checked up front against msg.value.
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientFee.selector, 2 * FEE, FEE));
+        orchestrator.deployEverywhere{value: FEE}(oivConfig, dests, GAS_LIMIT);
     }
 
     // ── Destination path: ccipReceive ─────────────────────────────────────────────
@@ -238,24 +264,25 @@ contract CcipOivDeployerTest is Test {
         uint256 instancesBefore = factory.instanceCount();
         uint64[] memory dests = _dests();
 
-        bytes32[] memory ids = orchestrator.dispatchTo(oivConfig, dests, GAS_LIMIT);
+        uint256 routerBalBefore = address(router).balance;
+        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         // No local OIV was deployed — only CCIP messages went out.
         assertEq(factory.instanceCount(), instancesBefore, "dispatchTo must not deploy a local OIV");
         assertEq(ids.length, 2, "two message ids");
         assertEq(router.sentCount(), 2, "two ccipSend calls");
-        assertEq(link.balanceOf(address(router)), 2 * FEE, "router did not receive fees");
+        assertEq(address(router).balance, routerBalBefore + 2 * FEE, "router did not receive native fees");
         // Payload is the same factory-derived StackConfig as the deploy path.
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
         assertEq(sent.salt, oivConfig.salt, "salt mismatch");
         assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner mismatch");
     }
 
-    function test_dispatchTo_onlyOwner() public {
+    function test_dispatchTo_isPermissionless() public {
         uint64[] memory dests = _dests();
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        orchestrator.dispatchTo(oivConfig, dests, GAS_LIMIT);
+        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        assertEq(ids.length, 2, "non-owner can dispatch");
     }
 
     function test_dispatchTo_revertsWhenNotConfigured() public {
@@ -270,12 +297,12 @@ contract CcipOivDeployerTest is Test {
     ///      would revert on the mainnet CREATE2 collision). (Actual delivery → matching addresses is
     ///      covered by test_ccipReceive_deploysStackMatchingMainnetOivPrediction.)
     function test_dispatchTo_addsNewChainAfterDeployEverywhere() public {
-        orchestrator.deployEverywhere(oivConfig, _dests(), GAS_LIMIT); // Arbitrum + Base
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT); // Arbitrum + Base
         uint256 sentAfterDeploy = router.sentCount();
 
         uint64[] memory more = new uint64[](1);
         more[0] = 3734403246176062136; // Optimism selector
-        bytes32[] memory ids = orchestrator.dispatchTo(oivConfig, more, GAS_LIMIT);
+        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(more.length)}(oivConfig, more, GAS_LIMIT);
 
         assertEq(ids.length, 1, "one new message");
         assertEq(router.sentCount(), sentAfterDeploy + 1, "dispatchTo adds exactly one more message");
@@ -286,7 +313,7 @@ contract CcipOivDeployerTest is Test {
     /// @dev The orchestrator's dispatched StackConfig must equal the factory's own deployOiv mapping,
     ///      enforced by both calling factory.oivToStackConfig (single source of truth, finding #3).
     function test_oivToStackConfig_matchesDispatchedPayload() public {
-        orchestrator.dispatchTo(oivConfig, _dests(), GAS_LIMIT);
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT);
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
         KpkOivFactory.StackConfig memory expected = factory.oivToStackConfig(oivConfig);
         assertEq(abi.encode(sent), abi.encode(expected), "dispatched payload must equal factory mapping");
