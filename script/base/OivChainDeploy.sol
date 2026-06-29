@@ -199,7 +199,7 @@ abstract contract OivChainDeploy is Script {
         } else {
             console.log("[SKIP] CcipOivDeployer already at:   ", orchestrator);
         }
-        CcipOivDeployer orch = CcipOivDeployer(orchestrator);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         if (orch.owner() == eoaOwner) {
             if (
                 orch.router() != ccipRouter || orch.linkToken() != linkToken

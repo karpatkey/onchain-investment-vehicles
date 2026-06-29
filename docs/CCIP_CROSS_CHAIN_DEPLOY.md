@@ -73,10 +73,18 @@ the deprecated factory:
 Check (3) blocks a forged message from pre-occupying the deterministic CREATE2 addresses for a salt
 and griefing the legitimate deployment. `deployEverywhere` and `dispatchTo` are **permissionless** —
 the caller pays the CCIP fees in **native gas** via `msg.value`, so there is no shared balance to
-drain. Fund addresses are fixed by the orchestrator (the uniform factory caller) + salt + config, not
-by who calls, so a permissionless caller cannot change where a fund lands. The orchestrator never
-holds a privileged role on any deployed fund — the exec Roles Modifier (owned by `config.admin`)
-remains the authoritative gatekeeper of Avatar Safe execution.
+drain.
+
+**Anti-front-running (config-bound salt).** The factory mixes its caller into every CREATE2 salt to
+stop salt-squatting, but the orchestrator is the factory's *uniform* caller on every chain, which would
+neutralise that protection now that deploy is permissionless. To restore it the orchestrator derives
+the salt from the **whole config** — `salt = keccak256(abi.encode(config))`. Any config difference
+(notably `admin`) changes *every* deployed address, so an attacker cannot land a fund at another
+config's addresses; an identical config still yields identical addresses on every chain. **Off-chain
+code must predict via the orchestrator's `predictOiv(config)`** (which applies this derivation), not
+the factory's raw `predictOivAddresses`. The orchestrator never holds a privileged role on any deployed
+fund — the exec Roles Modifier (owned by `config.admin`) remains the authoritative gatekeeper of Avatar
+Safe execution.
 
 ## Operational model (important)
 

@@ -111,10 +111,20 @@ contract CcipOivDeployerTest is Test {
     /// @dev Accept native refunds of surplus `msg.value` from the orchestrator.
     receive() external payable {}
 
+    /// @dev Mirrors CcipOivDeployer._effectiveConfig — the config-bound salt the deploy path uses.
+    function _effSalt() internal view returns (uint256) {
+        return uint256(keccak256(abi.encode(oivConfig)));
+    }
+
+    function _effConfig() internal view returns (KpkOivFactory.OivConfig memory eff) {
+        eff = oivConfig;
+        eff.salt = _effSalt();
+    }
+
     // ── Source path: deployEverywhere ────────────────────────────────────────────
 
     function test_deployEverywhere_deploysLocalOivMatchingPrediction() public {
-        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(orchestrator));
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig);
 
         uint256[] memory dests = _dests();
         (KpkOivFactory.OivInstance memory inst,) =
@@ -166,7 +176,7 @@ contract CcipOivDeployerTest is Test {
         orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
 
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
-        assertEq(sent.salt, oivConfig.salt, "salt mismatch");
+        assertEq(sent.salt, _effSalt(), "salt mismatch");
         assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner must equal admin");
         assertEq(sent.subRolesMod.finalOwner, address(0), "subMod finalOwner must be zero");
         assertEq(sent.managerRolesMod.finalOwner, address(0), "managerMod finalOwner must be zero");
@@ -200,7 +210,7 @@ contract CcipOivDeployerTest is Test {
     ///      path) lands at the SAME operational addresses as the mainnet OIV prediction, because the
     ///      orchestrator is the uniform factory caller on every chain.
     function test_ccipReceive_deploysStackMatchingMainnetOivPrediction() public {
-        KpkOivFactory.OivInstance memory oivPred = factory.predictOivAddresses(oivConfig, address(orchestrator));
+        KpkOivFactory.OivInstance memory oivPred = orchestrator.predictOiv(oivConfig);
 
         _deliver(_validMessage());
 
@@ -286,7 +296,7 @@ contract CcipOivDeployerTest is Test {
         assertEq(address(router).balance, routerBalBefore + 2 * FEE, "router did not receive native fees");
         // Payload is the same factory-derived StackConfig as the deploy path.
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
-        assertEq(sent.salt, oivConfig.salt, "salt mismatch");
+        assertEq(sent.salt, _effSalt(), "salt mismatch");
         assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner mismatch");
     }
 
@@ -319,7 +329,7 @@ contract CcipOivDeployerTest is Test {
         assertEq(ids.length, 1, "one new message");
         assertEq(router.sentCount(), sentAfterDeploy + 1, "dispatchTo adds exactly one more message");
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
-        assertEq(sent.salt, oivConfig.salt, "same fund salt");
+        assertEq(sent.salt, _effSalt(), "same fund salt");
     }
 
     /// @dev The orchestrator's dispatched StackConfig must equal the factory's own deployOiv mapping,
@@ -327,7 +337,7 @@ contract CcipOivDeployerTest is Test {
     function test_oivToStackConfig_matchesDispatchedPayload() public {
         orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT);
         KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
-        KpkOivFactory.StackConfig memory expected = factory.oivToStackConfig(oivConfig);
+        KpkOivFactory.StackConfig memory expected = factory.oivToStackConfig(_effConfig());
         assertEq(abi.encode(sent), abi.encode(expected), "dispatched payload must equal factory mapping");
     }
 
@@ -477,6 +487,56 @@ contract CcipOivDeployerTest is Test {
         fresh.deployEverywhere{value: 0}(oivConfig, GAS_LIMIT);
     }
 
+    // ── Anti-front-running (config-bound salt) + native sweep ─────────────────────
+
+    /// @dev The High-severity fix: because the orchestrator binds the FULL config into the salt,
+    ///      changing any field (here `admin`) changes EVERY deployed address — so a permissionless
+    ///      caller cannot front-run a victim's salt and land a fund (with their own admin) at the
+    ///      victim's intended addresses.
+    function test_predictOiv_differentAdminYieldsDifferentAddresses() public {
+        KpkOivFactory.OivInstance memory legit = orchestrator.predictOiv(oivConfig);
+
+        KpkOivFactory.OivConfig memory attacker = oivConfig; // same salt, different admin
+        attacker.admin = makeAddr("attacker");
+        KpkOivFactory.OivInstance memory squat = orchestrator.predictOiv(attacker);
+
+        assertTrue(legit.avatarSafe != squat.avatarSafe, "avatar safe must differ when admin differs");
+        assertTrue(legit.execRolesModifier != squat.execRolesModifier, "exec modifier must differ");
+        assertTrue(legit.kpkSharesProxy != squat.kpkSharesProxy, "shares proxy must differ");
+    }
+
+    /// @dev Determinism: the same config predicts the same addresses (so cross-chain stacks align).
+    function test_predictOiv_sameConfigIsStable() public view {
+        KpkOivFactory.OivInstance memory a = orchestrator.predictOiv(oivConfig);
+        KpkOivFactory.OivInstance memory b = orchestrator.predictOiv(oivConfig);
+        assertEq(a.avatarSafe, b.avatarSafe);
+        assertEq(a.kpkSharesProxy, b.kpkSharesProxy);
+    }
+
+    /// @dev Deployed fund must match predictOiv (the config-bound-salt prediction).
+    function test_deployEverywhere_matchesPredictOiv() public {
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig);
+        uint256[] memory dests = _dests();
+        (KpkOivFactory.OivInstance memory inst,) =
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        assertEq(inst.avatarSafe, predicted.avatarSafe);
+        assertEq(inst.kpkSharesProxy, predicted.kpkSharesProxy);
+    }
+
+    function test_withdrawNative_onlyOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        orchestrator.withdrawNative(stranger, 1);
+    }
+
+    function test_withdrawNative_sweepsStrayNative() public {
+        vm.deal(address(orchestrator), 3 ether);
+        uint256 balBefore = address(this).balance;
+        orchestrator.withdrawNative(address(this), 3 ether);
+        assertEq(address(this).balance - balBefore, 3 ether, "native not swept");
+        assertEq(address(orchestrator).balance, 0, "orchestrator balance not cleared");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     function _dests() internal pure returns (uint256[] memory dests) {
@@ -488,7 +548,7 @@ contract CcipOivDeployerTest is Test {
     function _validMessage() internal view returns (Client.Any2EVMMessage memory) {
         // Source the StackConfig from the factory's own mapping — the same single source of truth
         // the orchestrator uses on the send side.
-        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(oivConfig);
+        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(_effConfig());
         return Client.Any2EVMMessage({
             messageId: keccak256("msg"),
             sourceChainSelector: MAINNET_SELECTOR,

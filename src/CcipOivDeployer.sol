@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -44,9 +45,17 @@ import {KpkOivFactory} from "./KpkOivFactory.sol";
 ///         - `deployEverywhere` / `dispatchTo` are PERMISSIONLESS and `payable`: the caller funds the
 ///           CCIP fees in native gas via `msg.value` (the message's `feeToken` is `address(0)`), so
 ///           there is no shared balance to drain — anyone may deploy a fund and pay for their own
-///           fan-out. Surplus `msg.value` is refunded. Fund addresses are fixed by the orchestrator
-///           (the uniform factory caller) + salt + config, NOT by who calls, so a permissionless
-///           caller cannot alter where a fund lands. `configure` / `withdrawLink` remain `onlyOwner`.
+///           fan-out. Surplus `msg.value` is refunded. `configure` / `withdrawLink` / `withdrawNative`
+///           remain `onlyOwner`.
+///         - Anti-front-running: the factory mixes its caller into every CREATE2 salt to stop
+///           salt-squatting, but THIS contract is the factory's uniform caller on every chain, which
+///           would neutralise that protection for permissionless callers. To restore it the
+///           orchestrator binds the FULL fund config into the salt (`_effectiveConfig`:
+///           `salt = keccak256(abi.encode(config))`). Any config difference (notably `admin`) changes
+///           every deployed address, so an attacker cannot land a fund at another config's addresses;
+///           an identical config still yields identical addresses on every chain. Off-chain code MUST
+///           predict via `predictOiv(config)` (which applies the same derivation), not the factory's
+///           raw `predictOivAddresses`.
 ///         - `ccipReceive` accepts a message only when (a) `msg.sender` is the configured router,
 ///           (b) the source chain selector is the configured mainnet selector, and (c) the source
 ///           sender equals `address(this)` — which, by the same-address-everywhere property, is the
@@ -55,7 +64,7 @@ import {KpkOivFactory} from "./KpkOivFactory.sol";
 ///         - The factory's exec Roles Modifier (owned by `config.admin`) remains the authoritative
 ///           gatekeeper of Avatar Safe execution. This contract never gains a privileged role on
 ///           any deployed fund — it is purely a deployment conduit.
-contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
+contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, IERC165 {
     using SafeERC20 for IERC20;
 
     // ── Immutable config (identical on every chain) ────────────────────────────
@@ -254,9 +263,10 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     function deployEverywhere(KpkOivFactory.OivConfig calldata config, uint256 gasLimit)
         external
         payable
+        nonReentrant
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
-        return _deployEverywhere(config, _allConfiguredSelectors(), gasLimit);
+        return _deployEverywhere(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
     }
 
     /// @notice Same as `deployEverywhere(config, gasLimit)` but fans out only to the given `destChainIds`
@@ -265,15 +275,16 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         KpkOivFactory.OivConfig calldata config,
         uint256[] calldata destChainIds,
         uint256 gasLimit
-    ) external payable returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
+    ) external payable nonReentrant returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
         if (router == address(0)) revert NotConfigured();
         if (destChainIds.length == 0) revert NoDestinations();
-        return _deployEverywhere(config, _resolveSelectors(destChainIds), gasLimit);
+        return _deployEverywhere(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
     }
 
     /// @dev Local full OIV (`msg.sender` to the factory is this orchestrator — the uniform caller on
-    ///      every chain, so all addresses align) then CCIP fan-out to `destSelectors`.
-    function _deployEverywhere(KpkOivFactory.OivConfig calldata config, uint64[] memory destSelectors, uint256 gasLimit)
+    ///      every chain, so all addresses align) then CCIP fan-out to `destSelectors`. `config` here is
+    ///      already the config-bound-salt `_effectiveConfig`.
+    function _deployEverywhere(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
         internal
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
@@ -305,11 +316,12 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     function dispatchTo(KpkOivFactory.OivConfig calldata config, uint256[] calldata destChainIds, uint256 gasLimit)
         external
         payable
+        nonReentrant
         returns (bytes32[] memory messageIds)
     {
         if (router == address(0)) revert NotConfigured();
         if (destChainIds.length == 0) revert NoDestinations();
-        messageIds = _dispatch(config, _resolveSelectors(destChainIds), gasLimit);
+        messageIds = _dispatch(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
     }
 
     /// @notice Total NATIVE fee to fan out to ALL configured chains, plus the per-destination
@@ -321,7 +333,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         view
         returns (uint256 totalFee, uint256[] memory feePerDestination)
     {
-        return _quote(config, _allConfiguredSelectors(), gasLimit);
+        return _quote(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
     }
 
     /// @notice Same, for an explicit subset of `destChainIds` — matches the 3-arg `deployEverywhere`.
@@ -330,10 +342,22 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         uint256[] calldata destChainIds,
         uint256 gasLimit
     ) external view returns (uint256 totalFee, uint256[] memory feePerDestination) {
-        return _quote(config, _resolveSelectors(destChainIds), gasLimit);
+        return _quote(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
     }
 
-    function _quote(KpkOivFactory.OivConfig calldata config, uint64[] memory destSelectors, uint256 gasLimit)
+    /// @notice Predicts the seven fund addresses a `deployEverywhere`/`dispatchTo` for `config` would
+    ///         produce, using the SAME config-bound salt the deploy path uses (`_effectiveConfig`).
+    ///         Off-chain callers MUST use this rather than the factory's raw `predictOivAddresses`,
+    ///         which would key on the un-derived `config.salt`.
+    function predictOiv(KpkOivFactory.OivConfig calldata config)
+        external
+        view
+        returns (KpkOivFactory.OivInstance memory)
+    {
+        return factory.predictOivAddresses(_effectiveConfig(config), address(this));
+    }
+
+    function _quote(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
         internal
         view
         returns (uint256 totalFee, uint256[] memory feePerDestination)
@@ -355,7 +379,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     ///      the caller at the end (checks-effects-interactions: refund is the final action). The
     ///      `StackConfig` payload comes from `factory.oivToStackConfig` so it cannot drift from
     ///      `deployOiv`'s mapping.
-    function _dispatch(KpkOivFactory.OivConfig calldata config, uint64[] memory destSelectors, uint256 gasLimit)
+    function _dispatch(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
         internal
         returns (bytes32[] memory messageIds)
     {
@@ -411,7 +435,7 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         emit StackReceived(message.sourceChainSelector, message.messageId, inst);
     }
 
-    // ── LINK treasury management ─────────────────────────────────────────────────
+    // ── Treasury management ──────────────────────────────────────────────────────
 
     /// @notice Withdraws LINK from the orchestrator to `to`. Owner-only.
     function withdrawLink(address to, uint256 amount) external onlyOwner {
@@ -419,6 +443,19 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
         if (linkToken == address(0)) revert NotConfigured();
         IERC20(linkToken).safeTransfer(to, amount);
     }
+
+    /// @notice Sweeps native to `to`. Owner-only. The deploy path sends the exact per-message CCIP fee
+    ///         and refunds surplus, so nothing should normally accrue — this recovers any native a
+    ///         router happens to return to the orchestrator (which `receive()` accepts).
+    function withdrawNative(address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        (bool ok,) = payable(to).call{value: amount}("");
+        if (!ok) revert RefundFailed();
+    }
+
+    /// @notice Accepts native so a CCIP router returning fee change to the orchestrator cannot revert a
+    ///         dispatch. Anything received this way is recoverable via `withdrawNative`.
+    receive() external payable {}
 
     // ── ERC165 ─────────────────────────────────────────────────────────────────
 
@@ -429,6 +466,22 @@ contract CcipOivDeployer is Ownable, IAny2EVMMessageReceiver, IERC165 {
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────────
+
+    /// @dev Binds the FULL fund config into the CREATE2 salt: `salt = keccak256(abi.encode(config))`.
+    ///      Restores the factory's caller-in-salt anti-front-running protection, which the orchestrator
+    ///      (the factory's uniform caller on every chain) would otherwise neutralise: any config
+    ///      difference — notably `admin` — changes every deployed address, so a permissionless caller
+    ///      cannot land a fund at another config's addresses, while an identical config still yields
+    ///      identical addresses on every chain. The local deploy and the dispatched `StackConfig` both
+    ///      use this derived salt, so cross-chain stack addresses still match.
+    function _effectiveConfig(KpkOivFactory.OivConfig calldata config)
+        internal
+        pure
+        returns (KpkOivFactory.OivConfig memory eff)
+    {
+        eff = config;
+        eff.salt = uint256(keccak256(abi.encode(config)));
+    }
 
     /// @dev Resolves caller-supplied destination chain ids to their CCIP selectors via the
     ///      owner-managed `chainSelectorOf` registry, reverting `UnknownChain` for any unconfigured id.

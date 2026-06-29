@@ -34,9 +34,11 @@ contract CcipDeployEverywhere is OivConfigReader {
 
     function predict(address orchestrator, string calldata configPath) external view {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
-        CcipOivDeployer orch = CcipOivDeployer(orchestrator);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         KpkOivFactory factory = orch.factory();
-        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(config, orchestrator);
+        // Use the orchestrator's predictOiv (applies the config-bound salt the deploy path uses), NOT
+        // the factory's raw predictOivAddresses, which would key on the un-derived config.salt.
+        KpkOivFactory.OivInstance memory predicted = orch.predictOiv(config);
 
         console.log("============================================================");
         console.log("  Predicted OIV addresses (caller = orchestrator)");
@@ -50,7 +52,8 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("  managerRolesModifier: ", predicted.managerRolesModifier);
         console.log("  kpkShares impl:       ", predicted.kpkSharesImpl);
         console.log("  kpkShares proxy:      ", predicted.kpkSharesProxy);
-        console.log("  NOTE: stack addresses are identical on every chain for this orchestrator+salt.");
+        console.log("  NOTE: addresses are bound to this exact config (salt = keccak256(config)) and are");
+        console.log("        identical on every chain for this orchestrator. Changing any field moves them.");
         console.log("============================================================");
     }
 
@@ -59,7 +62,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         view
     {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
-        CcipOivDeployer orch = CcipOivDeployer(orchestrator);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         (uint256 totalFee, uint256[] memory feePerDestination) =
             orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
 
@@ -83,7 +86,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         uint256 gasLimit
     ) external {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
-        CcipOivDeployer orch = CcipOivDeployer(orchestrator);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
 
         // Size the native fee now and send it as msg.value, with a 10% buffer so a small fee increase
         // between this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus
@@ -123,12 +126,13 @@ contract CcipDeployEverywhere is OivConfigReader {
     function setChainSelectors(address orchestrator, string calldata registryPath) external {
         string memory json = vm.readFile(registryPath);
 
-        // Two passes (array length is not known up front): count wired networks, then fill.
+        // Two passes (array length is not known up front): count wired DESTINATION networks (the
+        // source chain runs the local deployOiv and is never a CCIP destination), then fill.
         uint256 count;
         for (uint256 i = 0; i < 256; i++) {
-            string memory verdictKey = string.concat(".networks[", vm.toString(i), "].verdict");
-            if (!vm.keyExists(json, verdictKey)) break;
-            if (_isWired(json.readString(verdictKey))) count++;
+            string memory base = string.concat(".networks[", vm.toString(i), "]");
+            if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
+            if (_seedable(json, base)) count++;
         }
 
         uint256[] memory chainIds = new uint256[](count);
@@ -137,7 +141,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         for (uint256 i = 0; i < 256; i++) {
             string memory base = string.concat(".networks[", vm.toString(i), "]");
             if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
-            if (!_isWired(json.readString(string.concat(base, ".verdict")))) continue;
+            if (!_seedable(json, base)) continue;
             chainIds[w] = json.readUint(string.concat(base, ".chainId"));
             // ccipChainSelector is stored as a string in the registry.
             selectors[w] = uint64(vm.parseUint(json.readString(string.concat(base, ".ccipChainSelector"))));
@@ -146,7 +150,7 @@ contract CcipDeployEverywhere is OivConfigReader {
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
-        CcipOivDeployer(orchestrator).setChainSelectors(chainIds, selectors);
+        CcipOivDeployer(payable(orchestrator)).setChainSelectors(chainIds, selectors);
         vm.stopBroadcast();
 
         console.log("============================================================");
@@ -157,6 +161,15 @@ contract CcipDeployEverywhere is OivConfigReader {
         }
         console.log("  Count:", chainIds.length);
         console.log("============================================================");
+    }
+
+    /// @dev A registry entry is seedable into the chain mapping when it is wired AND a CCIP
+    ///      destination (the source chain is deployed to locally, never via CCIP).
+    function _seedable(string memory json, string memory base) internal view returns (bool) {
+        string memory verdict = json.readString(string.concat(base, ".verdict"));
+        if (!_isWired(verdict)) return false;
+        string memory role = json.readString(string.concat(base, ".role"));
+        return keccak256(bytes(role)) == keccak256(bytes("destination"));
     }
 
     function _isWired(string memory verdict) internal pure returns (bool) {
