@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Script} from "forge-std/Script.sol";
+import {Script, console} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
 
@@ -17,6 +17,19 @@ abstract contract OivConfigReader is Script {
     ///      realistic fund; if a config ever exceeds it the reader REVERTS rather than silently
     ///      truncating (which would deploy a fund missing assets, with no error at deploy time).
     uint256 internal constant MAX_ADDITIONAL_ASSETS = 100;
+
+    /// @dev Logs the seven OIV instance addresses in a consistent format. Shared by the predict /
+    ///      deploy entry points of `DeployOiv` and `CcipDeployEverywhere` so the label block lives in
+    ///      one place.
+    function _logInstance(KpkOivFactory.OivInstance memory inst) internal pure {
+        console.log("  Avatar Safe:          ", inst.avatarSafe);
+        console.log("  Manager Safe:         ", inst.managerSafe);
+        console.log("  execRolesModifier:    ", inst.execRolesModifier);
+        console.log("  subRolesModifier:     ", inst.subRolesModifier);
+        console.log("  managerRolesModifier: ", inst.managerRolesModifier);
+        console.log("  kpkShares impl:       ", inst.kpkSharesImpl);
+        console.log("  kpkShares proxy:      ", inst.kpkSharesProxy);
+    }
 
     function _buildOivConfig(string memory json) internal view returns (KpkOivFactory.OivConfig memory config) {
         config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");

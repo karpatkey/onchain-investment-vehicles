@@ -46,13 +46,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Factory:              ", address(factory));
-        console.log("  Avatar Safe:          ", predicted.avatarSafe);
-        console.log("  Manager Safe:         ", predicted.managerSafe);
-        console.log("  execRolesModifier:    ", predicted.execRolesModifier);
-        console.log("  subRolesModifier:     ", predicted.subRolesModifier);
-        console.log("  managerRolesModifier: ", predicted.managerRolesModifier);
-        console.log("  kpkShares impl:       ", predicted.kpkSharesImpl);
-        console.log("  kpkShares proxy:      ", predicted.kpkSharesProxy);
+        _logInstance(predicted);
         console.log("  NOTE: addresses are bound to this exact config (salt = keccak256(config)) and are");
         console.log("        identical on every chain for this orchestrator. Changing any field moves them.");
         console.log("============================================================");
@@ -89,11 +83,13 @@ contract CcipDeployEverywhere is OivConfigReader {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
 
-        // Size the native fee now and send it as msg.value, with a 10% buffer so a small fee increase
-        // between this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus
-        // to the broadcasting EOA.
+        // Size the native fee now and send it as msg.value, with a buffer so a fee increase between
+        // this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus to the
+        // broadcasting EOA. Buffer is operator-tunable via FEE_BUFFER_PCT (default 10%); raise it on
+        // volatile L1 fan-outs.
         (uint256 totalFee,) = orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
-        uint256 valueToSend = totalFee + totalFee / 10;
+        uint256 bufferPct = vm.envOr("FEE_BUFFER_PCT", uint256(10));
+        uint256 valueToSend = totalFee + (totalFee * bufferPct) / 100;
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
@@ -104,13 +100,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         console.log("  deployEverywhere complete (local OIV deployed, CCIP dispatched)");
         console.log("============================================================");
-        console.log("  Avatar Safe:          ", instance.avatarSafe);
-        console.log("  Manager Safe:         ", instance.managerSafe);
-        console.log("  execRolesModifier:    ", instance.execRolesModifier);
-        console.log("  subRolesModifier:     ", instance.subRolesModifier);
-        console.log("  managerRolesModifier: ", instance.managerRolesModifier);
-        console.log("  kpkShares impl:       ", instance.kpkSharesImpl);
-        console.log("  kpkShares proxy:      ", instance.kpkSharesProxy);
+        _logInstance(instance);
         console.log("------------------------------------------------------------");
         for (uint256 i = 0; i < messageIds.length; i++) {
             console.log("  CCIP messageId for chainId:", destChainIds[i]);
@@ -129,29 +119,29 @@ contract CcipDeployEverywhere is OivConfigReader {
     function setChainSelectors(address orchestrator, string calldata registryPath) external {
         string memory json = vm.readFile(registryPath);
 
-        // Two passes (array length is not known up front): count wired DESTINATION networks (the
-        // source chain runs the local deployOiv and is never a CCIP destination), then fill.
+        // Single traversal into max-size scratch buffers (the registry is well under 256 entries),
+        // then copy out the exact-length arrays. One pass = no count/fill drift between two loops.
+        uint256[] memory idsBuf = new uint256[](256);
+        uint64[] memory selBuf = new uint64[](256);
         uint256 count;
         for (uint256 i = 0; i < 256; i++) {
             string memory base = string.concat(".networks[", vm.toString(i), "]");
             if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
-            if (_seedable(json, base)) count++;
-        }
-
-        uint256[] memory chainIds = new uint256[](count);
-        uint64[] memory selectors = new uint64[](count);
-        uint256 w;
-        for (uint256 i = 0; i < 256; i++) {
-            string memory base = string.concat(".networks[", vm.toString(i), "]");
-            if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
             if (!_seedable(json, base)) continue;
-            chainIds[w] = json.readUint(string.concat(base, ".chainId"));
+            idsBuf[count] = json.readUint(string.concat(base, ".chainId"));
             // ccipChainSelector is stored as a string in the registry. Bounds-check before the uint64
             // cast so a malformed registry value can't silently truncate into a wrong selector.
             uint256 selector = vm.parseUint(json.readString(string.concat(base, ".ccipChainSelector")));
             require(selector <= type(uint64).max, "ccipChainSelector exceeds uint64");
-            selectors[w] = uint64(selector);
-            w++;
+            selBuf[count] = uint64(selector);
+            count++;
+        }
+
+        uint256[] memory chainIds = new uint256[](count);
+        uint64[] memory selectors = new uint64[](count);
+        for (uint256 i = 0; i < count; i++) {
+            chainIds[i] = idsBuf[i];
+            selectors[i] = selBuf[i];
         }
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");

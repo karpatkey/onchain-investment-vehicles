@@ -73,6 +73,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         chain, so it is safe to bake into the constructor (init-code stays chain-identical).
     KpkOivFactory public immutable factory;
 
+    /// @notice Chain id of the deployment SOURCE — Ethereum mainnet. `deployEverywhere` / `dispatchTo`
+    ///         (which run the local `deployOiv` and originate the CCIP fan-out) are restricted to it,
+    ///         so the full OIV can never be deployed on a destination chain and pre-occupy the
+    ///         deterministic stack addresses the cross-chain fan-out targets. This matches the rest of
+    ///         the system, which is hardcoded to fan out FROM mainnet (the trusted `mainnetChainSelector`
+    ///         source); a different source chain (e.g. a testnet) requires changing this constant.
+    uint256 public constant SOURCE_CHAIN_ID = 1;
+
     // ── Per-chain config (wired post-deploy via `configure`) ────────────────────
 
     /// @notice CCIP Router for the current chain. Differs per chain, so set after construction.
@@ -146,6 +154,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     error ZeroChainId();
     /// @notice Thrown when `setChainSelectors` is given arrays of differing lengths.
     error LengthMismatch();
+    /// @notice Thrown when `deployEverywhere`/`dispatchTo` is called on a chain other than the source.
+    error NotSourceChain(uint256 chainId);
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -159,6 +169,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         factory = KpkOivFactory(_factory);
     }
 
+    /// @dev Restricts the local-`deployOiv` + fan-out entry points to the source chain (mainnet), so
+    ///      the full OIV can't be deployed on a destination chain and grief the cross-chain stack.
+    modifier onlySourceChain() {
+        if (block.chainid != SOURCE_CHAIN_ID) revert NotSourceChain(block.chainid);
+        _;
+    }
+
     // ── Configuration ────────────────────────────────────────────────────────────
 
     /// @notice Wires the per-chain CCIP parameters. Owner-only; idempotent (re-callable to update
@@ -166,10 +183,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         orchestrator's creation code — and therefore its CREATE2 address — is identical on
     ///         every chain.
     /// @param _router               CCIP Router on the current chain.
-    /// @param _linkToken            LINK token used for CCIP fees on the current chain.
+    /// @param _linkToken            LINK token, retained only for the `withdrawLink` sweep escape hatch
+    ///                              — fees are paid in native, so this MAY be `address(0)` on a lane
+    ///                              with no LINK fee token (the chain is still usable).
     /// @param _mainnetChainSelector CCIP selector of Ethereum mainnet (the trusted source).
     function configure(address _router, address _linkToken, uint64 _mainnetChainSelector) external onlyOwner {
-        if (_router == address(0) || _linkToken == address(0)) revert ZeroAddress();
+        // Only the router is mandatory; LINK is no longer the fee mechanism (native fees), so a zero
+        // linkToken is allowed (just disables `withdrawLink`).
+        if (_router == address(0)) revert ZeroAddress();
         if (_mainnetChainSelector == 0) revert ZeroChainSelector();
         router = _router;
         linkToken = _linkToken;
@@ -264,78 +285,88 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         external
         payable
         nonReentrant
+        onlySourceChain
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
         return _deployEverywhere(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
     }
 
     /// @notice Same as `deployEverywhere(config, gasLimit)` but fans out only to the given `destChainIds`
-    ///         (each resolved via `chainSelectorOf`; an unconfigured id reverts `UnknownChain`).
+    ///         (each resolved via `chainSelectorOf`; an unconfigured id reverts `UnknownChain`; the
+    ///         local chain, if present, is skipped). Structural preconditions are enforced once inside
+    ///         `_deployEverywhere`, matching the no-array overload.
     function deployEverywhere(
         KpkOivFactory.OivConfig calldata config,
         uint256[] calldata destChainIds,
         uint256 gasLimit
-    ) external payable nonReentrant returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
-        if (router == address(0)) revert NotConfigured();
-        if (destChainIds.length == 0) revert NoDestinations();
+    )
+        external
+        payable
+        nonReentrant
+        onlySourceChain
+        returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
+    {
         return _deployEverywhere(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
     }
 
     /// @dev Local full OIV (`msg.sender` to the factory is this orchestrator — the uniform caller on
-    ///      every chain, so all addresses align) then CCIP fan-out to `destSelectors`. `config` here is
-    ///      already the config-bound-salt `_effectiveConfig`.
+    ///      every chain, so all addresses align) then CCIP fan-out. `config` is already the
+    ///      config-bound-salt `_effectiveConfig`. The fee is priced and checked against `msg.value`
+    ///      BEFORE the (~7M-gas) deployOiv, so an underfunded call fails fast without burning it.
     function _deployEverywhere(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
         internal
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
-        // Fail fast on the structural preconditions (not configured / no destinations) before the
-        // local deployOiv. Fee sufficiency is enforced later, inside _dispatch (after deployOiv); an
-        // underfunded call still reverts the whole transaction atomically, so no partial state lands.
-        if (router == address(0)) revert NotConfigured();
         if (destSelectors.length == 0) revert NoDestinations();
+        (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
+            _price(config, destSelectors, gasLimit);
+        if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
 
         instance = factory.deployOiv(config);
         emit LocalOivDeployed(instance);
 
-        messageIds = _dispatch(config, destSelectors, gasLimit);
+        messageIds = _send(message, destSelectors, fees, totalFee);
     }
 
-    /// @notice Dispatch-only: CCIP-send the operational stack to `destSelectors` WITHOUT deploying a
+    /// @notice Dispatch-only: CCIP-send the operational stack to `destChainIds` WITHOUT deploying a
     ///         local OIV. Use after `deployEverywhere` has already run for this `config` — to extend
     ///         the fund to a sidechain that was not in the original set, or to re-dispatch to one
     ///         whose prior message permanently failed (CCIP manual re-execution can replay an
     ///         existing message; a fresh message needs this). Permissionless and `payable`; the caller
-    ///         funds the CCIP fees in native via `msg.value` (surplus refunded).
+    ///         funds the CCIP fees in native via `msg.value` (surplus refunded). Source-chain only.
     /// @dev    `config` MUST be the SAME config (notably the same `salt`, manager owners/threshold,
     ///         and `admin`) used in the original `deployEverywhere`, so the dispatched stack lands
     ///         at the fund's existing operational addresses. A destination that already has the
     ///         stack will revert on the CREATE2 collision when its message executes — do not
     ///         re-dispatch to an already-deployed chain.
-    /// @param config         OIV config — identical to the original deployment's.
-    /// @param destChainIds   Chain IDs to dispatch to (resolved to CCIP selectors via `chainSelectorOf`).
-    /// @param gasLimit       Destination `ccipReceive` gas limit (see `deployEverywhere`).
-    /// @return messageIds    CCIP message id per destination, in `destChainIds` order.
     function dispatchTo(KpkOivFactory.OivConfig calldata config, uint256[] calldata destChainIds, uint256 gasLimit)
         external
         payable
         nonReentrant
+        onlySourceChain
         returns (bytes32[] memory messageIds)
     {
-        if (router == address(0)) revert NotConfigured();
-        if (destChainIds.length == 0) revert NoDestinations();
-        messageIds = _dispatch(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
+        uint64[] memory destSelectors = _resolveSelectors(destChainIds);
+        if (destSelectors.length == 0) revert NoDestinations();
+        (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
+            _price(_effectiveConfig(config), destSelectors, gasLimit);
+        if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
+        messageIds = _send(message, destSelectors, fees, totalFee);
     }
 
     /// @notice Total NATIVE fee to fan out to ALL configured chains, plus the per-destination
     ///         breakdown — matches `deployEverywhere(config, gasLimit)`. Read this on a block explorer
-    ///         to size the `msg.value` to send. Uses the exact derived `StackConfig` payload so the
-    ///         fee — which scales with calldata length and gas limit — is accurate.
+    ///         to size the `msg.value` to send. Uses the exact derived `StackConfig` payload so the fee
+    ///         — which scales with calldata length and gas limit — is accurate.
+    /// @dev    The all-configured set is read at call time; if the owner mutates the chain registry
+    ///         between this quote and your deploy, the fee / chain set can differ. Use the explicit
+    ///         `destChainIds` overload when you need a fixed set.
     function quoteDeployEverywhere(KpkOivFactory.OivConfig calldata config, uint256 gasLimit)
         external
         view
         returns (uint256 totalFee, uint256[] memory feePerDestination)
     {
-        return _quote(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
+        (, totalFee, feePerDestination) = _price(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
     }
 
     /// @notice Same, for an explicit subset of `destChainIds` — matches the 3-arg `deployEverywhere`.
@@ -344,7 +375,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         uint256[] calldata destChainIds,
         uint256 gasLimit
     ) external view returns (uint256 totalFee, uint256[] memory feePerDestination) {
-        return _quote(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
+        (, totalFee, feePerDestination) = _price(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
     }
 
     /// @notice Predicts the seven fund addresses a `deployEverywhere`/`dispatchTo` for `config` would
@@ -359,50 +390,39 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         return factory.predictOivAddresses(_effectiveConfig(config), address(this));
     }
 
-    function _quote(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
+    /// @dev Single source of truth for fee computation: builds the (loop-invariant) CCIP message once
+    ///      and prices it per destination. Shared by `quoteDeployEverywhere`, `deployEverywhere` and
+    ///      `dispatchTo` so the quoted and charged fees can never drift. The `StackConfig` payload comes
+    ///      from `factory.oivToStackConfig` so it also cannot drift from `deployOiv`'s mapping. Reverts
+    ///      `NotConfigured` if the router is unset.
+    function _price(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
         internal
         view
-        returns (uint256 totalFee, uint256[] memory feePerDestination)
+        returns (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees)
     {
         if (router == address(0)) revert NotConfigured();
-        Client.EVM2AnyMessage memory message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
+        message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
         IRouterClient ccipRouter = IRouterClient(router);
-        feePerDestination = new uint256[](destSelectors.length);
-        for (uint256 i = 0; i < destSelectors.length; i++) {
-            uint256 fee = ccipRouter.getFee(destSelectors[i], message);
-            feePerDestination[i] = fee;
-            totalFee += fee;
-        }
-    }
-
-    /// @dev Shared CCIP fan-out: builds the (loop-invariant) message once, sums the per-destination
-    ///      fees, checks the aggregate against the native value the CALLER sent, then sends each
-    ///      message paying its fee in native from `msg.value`. Any excess `msg.value` is refunded to
-    ///      the caller at the end (checks-effects-interactions: refund is the final action). The
-    ///      `StackConfig` payload comes from `factory.oivToStackConfig` so it cannot drift from
-    ///      `deployOiv`'s mapping.
-    function _dispatch(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
-        internal
-        returns (bytes32[] memory messageIds)
-    {
-        if (router == address(0)) revert NotConfigured();
-
-        Client.EVM2AnyMessage memory message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
-        IRouterClient ccipRouter = IRouterClient(router);
-
         uint256 n = destSelectors.length;
-        messageIds = new bytes32[](n);
-        uint256[] memory fees = new uint256[](n);
-        uint256 totalFee;
+        fees = new uint256[](n);
         for (uint256 i = 0; i < n; i++) {
             fees[i] = ccipRouter.getFee(destSelectors[i], message);
             totalFee += fees[i];
         }
+    }
 
-        // The caller funds the fees in native; no shared balance to drain, so this is safe to expose
-        // permissionlessly. We require enough up front and refund any surplus below.
-        if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
-
+    /// @dev Sends one CCIP message per destination, paying each fee in native from `msg.value`, then
+    ///      refunds the surplus to the caller (checks-effects-interactions: refund is the final action).
+    ///      Callers MUST have verified `msg.value >= totalFee` before calling.
+    function _send(
+        Client.EVM2AnyMessage memory message,
+        uint64[] memory destSelectors,
+        uint256[] memory fees,
+        uint256 totalFee
+    ) internal returns (bytes32[] memory messageIds) {
+        IRouterClient ccipRouter = IRouterClient(router);
+        uint256 n = destSelectors.length;
+        messageIds = new bytes32[](n);
         for (uint256 i = 0; i < n; i++) {
             bytes32 messageId = ccipRouter.ccipSend{value: fees[i]}(destSelectors[i], message);
             messageIds[i] = messageId;
@@ -487,12 +507,20 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
     /// @dev Resolves caller-supplied destination chain ids to their CCIP selectors via the
     ///      owner-managed `chainSelectorOf` registry, reverting `UnknownChain` for any unconfigured id.
+    ///      The local chain is skipped (you never CCIP-message your own chain) — same rule as
+    ///      `_allConfiguredSelectors`, so the explicit-subset and all-chains paths behave consistently.
     function _resolveSelectors(uint256[] calldata chainIds) internal view returns (uint64[] memory selectors) {
-        selectors = new uint64[](chainIds.length);
+        uint256 count;
         for (uint256 i = 0; i < chainIds.length; i++) {
+            if (chainIds[i] != block.chainid) count++;
+        }
+        selectors = new uint64[](count);
+        uint256 j;
+        for (uint256 i = 0; i < chainIds.length; i++) {
+            if (chainIds[i] == block.chainid) continue;
             uint64 selector = chainSelectorOf[chainIds[i]];
             if (selector == 0) revert UnknownChain(chainIds[i]);
-            selectors[i] = selector;
+            selectors[j++] = selector;
         }
     }
 

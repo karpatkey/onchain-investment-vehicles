@@ -186,9 +186,42 @@ contract CcipOivDeployerTest is Test {
 
     function test_deployEverywhere_revertsWhenNotConfigured() public {
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
+        // Seed the chains in _dests() so resolution succeeds and we hit the router (NotConfigured) check.
+        fresh.setChainSelector(ARBITRUM_CHAIN_ID, ARBITRUM_SELECTOR);
+        fresh.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
         uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
         fresh.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+    }
+
+    function test_deployEverywhere_revertsOffSourceChain() public {
+        vm.chainId(10); // pretend we're on Optimism, not the source
+        uint256[] memory dests = _dests();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(10)));
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+    }
+
+    function test_deployEverywhere_allConfigured_revertsOffSourceChain() public {
+        vm.chainId(8453);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(8453)));
+        orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
+    }
+
+    function test_dispatchTo_revertsOffSourceChain() public {
+        vm.chainId(42161);
+        uint256[] memory dests = _dests();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(42161)));
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+    }
+
+    /// @dev Explicit-list path skips the local chain, same as the all-configured path — never self-sends.
+    function test_deployEverywhere_explicitListSkipsLocalChain() public {
+        uint256[] memory dests = new uint256[](2);
+        dests[0] = ARBITRUM_CHAIN_ID;
+        dests[1] = block.chainid; // local (mainnet); must be dropped, not resolved/self-sent
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+        assertEq(ids.length, 1, "local chain dropped from explicit list");
+        assertEq(router.sentCount(), 1, "only the remote chain dispatched");
     }
 
     function test_deployEverywhere_revertsOnNoDestinations() public {
@@ -267,6 +300,17 @@ contract CcipOivDeployerTest is Test {
         orchestrator.configure(address(router), address(link), 0);
     }
 
+    /// @dev Native fees mean LINK is optional: configuring with a zero linkToken must succeed (it just
+    ///      disables the withdrawLink sweep). Lets the orchestrator work on lanes without a LINK token.
+    function test_configure_allowsZeroLinkToken() public {
+        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR);
+        assertEq(orchestrator.linkToken(), address(0), "zero linkToken accepted");
+        // Deploy still works (fees are native, not LINK).
+        uint256[] memory dests = _dests();
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+        assertEq(ids.length, 2, "deploy works without a LINK token");
+    }
+
     function test_constructor_revertsOnZeroFactory() public {
         vm.expectRevert(CcipOivDeployer.ZeroAddress.selector);
         new CcipOivDeployer(address(this), address(0));
@@ -309,6 +353,8 @@ contract CcipOivDeployerTest is Test {
 
     function test_dispatchTo_revertsWhenNotConfigured() public {
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
+        fresh.setChainSelector(ARBITRUM_CHAIN_ID, ARBITRUM_SELECTOR);
+        fresh.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
         uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
         fresh.dispatchTo(oivConfig, dests, GAS_LIMIT);

@@ -82,9 +82,15 @@ the salt from the **whole config** — `salt = keccak256(abi.encode(config))`. A
 (notably `admin`) changes *every* deployed address, so an attacker cannot land a fund at another
 config's addresses; an identical config still yields identical addresses on every chain. **Off-chain
 code must predict via the orchestrator's `predictOiv(config)`** (which applies this derivation), not
-the factory's raw `predictOivAddresses`. The orchestrator never holds a privileged role on any deployed
-fund — the exec Roles Modifier (owned by `config.admin`) remains the authoritative gatekeeper of Avatar
-Safe execution.
+the factory's raw `predictOivAddresses`.
+
+**Source-chain only.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
+fan-out, so they are restricted to the source chain (Ethereum mainnet, `SOURCE_CHAIN_ID = 1`) and
+revert `NotSourceChain` elsewhere. Without this, a permissionless caller could run the full `deployOiv`
+directly on a *destination* chain and pre-occupy the deterministic stack addresses — the later CCIP
+`deployStack` would then collide and stick in `FAILED`, leaving a stray shares token behind. The
+orchestrator never holds a privileged role on any deployed fund — the exec Roles Modifier (owned by
+`config.admin`) remains the authoritative gatekeeper of Avatar Safe execution.
 
 ## Operational model (important)
 
