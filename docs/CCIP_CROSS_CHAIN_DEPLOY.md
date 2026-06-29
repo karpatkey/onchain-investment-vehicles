@@ -221,27 +221,36 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
 `mainnetSelector` (`5009297550715157269`) is the same on every chain — it identifies the trusted
 *source* (Ethereum mainnet), not the chain being deployed to.
 
-### Destination chain registry
+### Destination chain registry ("selected chains")
 
 Callers target chains by **chain ID**; the mainnet orchestrator resolves each id to its CCIP selector
-via the owner-managed `chainSelectorOf` mapping:
+via an owner-managed, **enumerable** registry:
 
 - `setChainSelector(chainId, ccipChainSelector)` / `setChainSelectors(chainIds[], selectors[])` — owner
   adds or corrects entries (e.g. a selector migration, or a newly-wired chain).
 - `removeChainSelector(chainId)` — owner removes a chain.
-- Seed it from the canonical registry in one call:
-  `forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere --rpc-url ethereum --broadcast
-  --sig "setChainSelectors(address,string)" <ORCHESTRATOR> script/ccip-networks.json` (owner key).
+- `getChainIds()` / `getChainIdCount()` — read the current selected set (e.g. on a block explorer).
 
+The set defines the "selected chains" the no-array `deployEverywhere(config, gasLimit)` fans out to.
 An unmapped chain id reverts `UnknownChain(chainId)`, so a fund can never be dispatched to a chain the
 owner hasn't approved.
 
-## Usage
+## Usage — from a block explorer (no script needed)
 
-1. Deploy + configure the orchestrator on mainnet and all target sidechains (above).
-2. Seed the mainnet orchestrator's chain registry (`setChainSelectors` from `ccip-networks.json`).
-3. Size the native fee via `quoteDeployEverywhere` (no pre-funding — the caller pays from `msg.value`).
-4. Ensure `EMPTY_CONTRACT` is present on every target chain.
-5. From any account, call `deployEverywhere(oivConfig, destChainIds, gasLimit)` on mainnet (chain IDs,
-   not selectors), sending the quoted native fee as `msg.value` (surplus is refunded).
-6. Watch CCIP Explorer; manually re-execute any failed destination message.
+Everything is a direct contract call on the mainnet orchestrator; no Foundry script is required.
+
+1. Deploy + configure the orchestrator on mainnet and all target sidechains (above), and ensure
+   `EMPTY_CONTRACT` is present on every target chain.
+2. **Owner**, once: seed the selected chains — **Write** `setChainSelectors([chainIds], [selectors])`
+   (values from `script/ccip-networks.json`). Confirm with **Read** `getChainIds()`.
+3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
+4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
+   the quoted fee (a little extra is fine; surplus is refunded). This deploys the OIV on mainnet and
+   fans the stack out to every selected chain in one transaction. To target only a subset, use the
+   `deployEverywhere(config, destChainIds, gasLimit)` overload with an explicit chain-ID array.
+5. Watch the [CCIP Explorer](https://ccip.chain.link); manually re-execute any failed destination
+   message. To add a chain later (or re-send a permanently-failed one), call `dispatchTo`.
+
+> A Foundry script (`script/CcipDeployEverywhere.s.sol`) is still provided for CLI users — it can seed
+> the registry from `ccip-networks.json` and quote+forward the fee automatically — but it is optional;
+> the steps above are entirely explorer-driven.

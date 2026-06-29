@@ -420,6 +420,63 @@ contract CcipOivDeployerTest is Test {
         assertEq(destSel, 99999, "dispatched with the updated selector");
     }
 
+    // ── Enumerable registry + all-configured fan-out ──────────────────────────────
+
+    function test_getChainIds_returnsConfiguredSet() public view {
+        // setUp configured Arbitrum, Base, Optimism.
+        uint256[] memory ids = orchestrator.getChainIds();
+        assertEq(ids.length, 3, "three configured");
+        assertEq(orchestrator.getChainIdCount(), 3, "count getter");
+    }
+
+    function test_setChainSelector_updateDoesNotDuplicate() public {
+        orchestrator.setChainSelector(BASE_CHAIN_ID, 12345); // already configured in setUp
+        assertEq(orchestrator.getChainIdCount(), 3, "update must not grow the set");
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), 12345, "selector updated");
+    }
+
+    function test_removeChainSelector_shrinksEnumerableSet() public {
+        orchestrator.removeChainSelector(BASE_CHAIN_ID);
+        assertEq(orchestrator.getChainIdCount(), 2, "set shrank");
+        uint256[] memory ids = orchestrator.getChainIds();
+        for (uint256 i = 0; i < ids.length; i++) {
+            assertTrue(ids[i] != BASE_CHAIN_ID, "removed id still present");
+        }
+        // Remaining chains still resolve.
+        assertEq(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), ARBITRUM_SELECTOR);
+        assertEq(orchestrator.chainSelectorOf(OPTIMISM_CHAIN_ID), OPTIMISM_SELECTOR);
+    }
+
+    function test_deployEverywhere_allConfigured_fansOutToEveryChain() public {
+        // No array: fans out to all configured chains (3 in setUp).
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, 3, "one message per configured chain");
+        assertEq(router.sentCount(), 3, "dispatched to all configured");
+    }
+
+    function test_quoteDeployEverywhere_allConfigured_sumsAllChains() public view {
+        (uint256 total, uint256[] memory per) = orchestrator.quoteDeployEverywhere(oivConfig, GAS_LIMIT);
+        assertEq(per.length, 3, "per-destination length");
+        assertEq(total, 3 * FEE, "total fee across all configured chains");
+    }
+
+    function test_deployEverywhere_allConfigured_skipsLocalChain() public {
+        // Configuring the local chain (fork is mainnet, id 1) must not cause a self-send.
+        orchestrator.setChainSelector(block.chainid, MAINNET_SELECTOR);
+        assertEq(orchestrator.getChainIdCount(), 4, "local chain added to set");
+
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, 3, "local chain skipped - still only 3 remote dispatches");
+        assertEq(router.sentCount(), 3, "no self-send");
+    }
+
+    function test_deployEverywhere_allConfigured_revertsWhenNoneConfigured() public {
+        CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
+        fresh.configure(address(router), address(link), MAINNET_SELECTOR); // router set, but no chains
+        vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
+        fresh.deployEverywhere{value: 0}(oivConfig, GAS_LIMIT);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     function _dests() internal pure returns (uint256[] memory dests) {
