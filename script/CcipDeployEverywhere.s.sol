@@ -10,16 +10,17 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
 /**
  * Purpose: Drive an already-deployed `CcipOivDeployer` to deploy a full OIV on mainnet and fan the
  *          operational stack out to sidechains over Chainlink CCIP, from a JSON config file.
- * Inputs:  The orchestrator address, a config path (same format as DeployOiv), CCIP destination
- *          selectors, and a destination gas limit. PRIVATE_KEY env var for broadcasting.
+ * Inputs:  The orchestrator address, a config path (same format as DeployOiv), destination CHAIN IDs
+ *          (resolved to CCIP selectors by the orchestrator), and a destination gas limit. PRIVATE_KEY
+ *          env var for broadcasting.
  * Entry points:
  *   - predict(orchestrator, configPath): view. Prints the 7 OIV addresses the orchestrator would
  *     produce. CALLER IS THE ORCHESTRATOR (not the EOA) — it is the factory's msg.sender on every
  *     chain — so this is the correct prediction for the CCIP flow.
- *   - quote(orchestrator, configPath, selectors, gasLimit): view. Prints total + per-destination
+ *   - quote(orchestrator, configPath, destChainIds, gasLimit): view. Prints total + per-destination
  *     NATIVE fee, to size the msg.value to send.
- *   - deployEverywhere(orchestrator, configPath, selectors, gasLimit): broadcast. Deploys the full
- *     OIV locally (intended for mainnet) and dispatches one CCIP message per selector.
+ *   - deployEverywhere(orchestrator, configPath, destChainIds, gasLimit): broadcast. Deploys the full
+ *     OIV locally (intended for mainnet) and dispatches one CCIP message per destination chain.
  * Notes:
  *   - The config parsing lives in the shared OivConfigReader base (same as DeployOiv).
  *   - deployEverywhere is PERMISSIONLESS; any PRIVATE_KEY can broadcast it (no owner requirement).
@@ -120,9 +121,11 @@ contract CcipDeployEverywhere is OivConfigReader {
     }
 
     /// @notice Owner helper: seed the orchestrator's chainId → CCIP-selector mapping from the canonical
-    ///         `script/ccip-networks.json` registry, for every wired chain (verdict READY /
+    ///         `script/ccip-networks.json` registry, for every wired DESTINATION chain (verdict READY /
     ///         READY-AFTER-EMPTY). Broadcasts `setChainSelectors` from PRIVATE_KEY, which must be the
-    ///         orchestrator owner. Run once per chain after deploying the orchestrator there.
+    ///         orchestrator owner. Run only on the SOURCE orchestrator (typically mainnet) — the chain
+    ///         you will call `deployEverywhere` on; sidechains resolve nothing locally (they receive a
+    ///         `StackConfig` over CCIP), so they never need this mapping.
     function setChainSelectors(address orchestrator, string calldata registryPath) external {
         string memory json = vm.readFile(registryPath);
 
@@ -143,8 +146,11 @@ contract CcipDeployEverywhere is OivConfigReader {
             if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
             if (!_seedable(json, base)) continue;
             chainIds[w] = json.readUint(string.concat(base, ".chainId"));
-            // ccipChainSelector is stored as a string in the registry.
-            selectors[w] = uint64(vm.parseUint(json.readString(string.concat(base, ".ccipChainSelector"))));
+            // ccipChainSelector is stored as a string in the registry. Bounds-check before the uint64
+            // cast so a malformed registry value can't silently truncate into a wrong selector.
+            uint256 selector = vm.parseUint(json.readString(string.concat(base, ".ccipChainSelector")));
+            require(selector <= type(uint64).max, "ccipChainSelector exceeds uint64");
+            selectors[w] = uint64(selector);
             w++;
         }
 
