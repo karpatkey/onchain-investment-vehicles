@@ -253,3 +253,7 @@ forge coverage --match-path test/kpkShares.Main.sol
 ---
 
 This organization provides a clean, maintainable, and scalable test structure that makes it easy to add new tests, maintain existing ones, and understand the overall test coverage for the `kpkShares` contract. Foundry's built-in `forge coverage` provides insights into test coverage and helps identify areas for improvement.
+
+### Factory Registry Tests
+- **`KpkOivFactoryRegistry.t.sol`** - Registry functionality tests for tracking deployed OIVs
+- **`WatermarkFee.t.sol`** - Unit tests for the high-watermark performance fee module
