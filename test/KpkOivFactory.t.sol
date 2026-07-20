@@ -24,7 +24,10 @@ contract KpkOivFactoryTest is Test {
 
     // Zodiac
     address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+    // Patched Roles Modifier v2.1.1 — the mastercopy the deploy path bakes in
+    // (script/base/OivChainDeploy.sol, script/ccip-networks.json). v2.1.0 (0x9646fDAD…D337) had the
+    // June-2026 ERC-1271 auth-bypass, so the suite must validate against v2.1.1, not the old one.
+    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
 
     // ── Test accounts ───────────────────────────────────────────────────────────
 
@@ -851,7 +854,8 @@ contract KpkOivFactoryUnitTest is Test {
     address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
     address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
     address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    address constant ROLES_MODIFIER_MASTERCOPY = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
+    // Patched Roles Modifier v2.1.1 (see note above); v2.1.0 0x9646fDAD…D337 had the ERC-1271 bypass.
+    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
 
     KpkOivFactoryHarness harness;
 
