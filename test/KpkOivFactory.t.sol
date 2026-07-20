@@ -9,25 +9,25 @@ import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
+import {OivInfraConstants} from "src/OivInfraConstants.sol";
 
 /// @notice Fork tests for KpkOivFactory against mainnet Safe and Zodiac contracts.
 ///         Run with: forge test --match-contract KpkOivFactoryTest --fork-url $MAINNET_URL -vvv
+///         Fork prerequisite: the Roles Modifier v2.1.1 mastercopy (OivInfraConstants) must have
+///         bytecode at the forked block — proxy deployment reverts TargetHasNoCode otherwise. It is
+///         live on mainnet, so a latest fork is fine; only a fork pinned before its deploy block fails.
 contract KpkOivFactoryTest is Test {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
-    // Safe v1.4.1
-    address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
-    address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
-    address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
-
-    // Zodiac
-    address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    // Patched Roles Modifier v2.1.1 — the mastercopy the deploy path bakes in
-    // (script/base/OivChainDeploy.sol, script/ccip-networks.json). v2.1.0 (0x9646fDAD…D337) had the
-    // June-2026 ERC-1271 auth-bypass, so the suite must validate against v2.1.1, not the old one.
-    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
+    // Canonical Safe/Zodiac infra — single source in OivInfraConstants (same values the deploy path
+    // bakes into CREATE2 init-code), so the suite always validates the mastercopy that actually ships.
+    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
+    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
+    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
+    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
+    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
+    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
 
     // ── Test accounts ───────────────────────────────────────────────────────────
 
@@ -858,14 +858,14 @@ contract KpkOivFactoryHarness is KpkOivFactory {
 /// @notice Pure unit tests for the execTransactionFromModule return-value checks.
 ///         No fork required — uses vm.mockCall to simulate Safe responses.
 contract KpkOivFactoryUnitTest is Test {
-    // Safe v1.4.1 — addresses kept so harness constructor is valid; not called in unit tests.
-    address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
-    address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
-    address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
-    address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    // Patched Roles Modifier v2.1.1 (see note above); v2.1.0 0x9646fDAD…D337 had the ERC-1271 bypass.
-    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
+    // Safe v1.4.1 / Zodiac — single source in OivInfraConstants; kept so harness constructor is
+    // valid; not called in unit tests.
+    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
+    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
+    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
+    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
+    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
+    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
 
     KpkOivFactoryHarness harness;
 

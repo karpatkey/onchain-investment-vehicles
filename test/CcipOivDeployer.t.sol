@@ -6,6 +6,7 @@ import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
+import {OivInfraConstants} from "src/OivInfraConstants.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {MockCcipRouter} from "test/mocks/MockCcipRouter.sol";
 import {Mock_ERC20} from "test/mocks/tokens.sol";
@@ -21,21 +22,21 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         predictions key on `address(orchestrator)`.
 ///
 ///         Run with: forge test --match-contract CcipOivDeployerTest --fork-url $MAINNET_URL
+///         Fork prerequisite: the Roles Modifier v2.1.1 mastercopy (OivInfraConstants) must have
+///         bytecode at the forked block — the factory has ModuleProxyFactory deploy a proxy against
+///         it, which reverts TargetHasNoCode otherwise. It is live on mainnet, so a latest fork is
+///         fine; only a fork pinned before its deployment block would fail.
 contract CcipOivDeployerTest is Test {
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
-    // Safe v1.4.1
-    address constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
-    address constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
-    address constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
-
-    // Zodiac
-    address constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    // Patched Roles Modifier v2.1.1 — the mastercopy the deploy path bakes in
-    // (script/base/OivChainDeploy.sol, script/ccip-networks.json). v2.1.0 (0x9646fDAD…D337) had the
-    // June-2026 ERC-1271 auth-bypass, so the suite must validate against v2.1.1, not the old one.
-    address constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
+    // Canonical Safe/Zodiac infra — single source in OivInfraConstants (same values the deploy path
+    // bakes into CREATE2 init-code), so the suite always validates the mastercopy that actually ships.
+    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
+    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
+    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
+    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
+    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
+    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
 
     // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
