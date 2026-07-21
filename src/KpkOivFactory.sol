@@ -99,6 +99,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         hash is a constant. Deploys assert the occupant matches this rather than merely having
     ///         code: CREATE2 address-binding already makes a hostile substitute infeasible, but this
     ///         fails closed if anything other than the canonical `Empty` ever occupies the address.
+    ///         COUPLING: must equal keccak256 of the canonical `Empty` runtime the deploy tooling lands
+    ///         (`OivChainDeploy.EMPTY_RUNTIME` / `emptyDeployCalldata` in `ccip-networks.json`). The two
+    ///         are cross-checked fork-independently by `test/EmptyCodehashSync.t.sol`, so recompiling
+    ///         `Empty` and updating one side but not the other fails CI instead of bricking deploys.
     bytes32 internal constant EXPECTED_EMPTY_CODEHASH =
         0x43e02797734360da7ebc3a304cb0e9d6cbce443548d8095bd757080788e14495;
 
@@ -352,10 +356,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         reverting `Empty`, breaking the Roles-Modifier-only execution invariant.
     error EmptyContractMissing();
 
-    /// @notice Thrown by `registerFund` when the supplied fund's Avatar Safe exists on this chain but
-    ///         is not wired to the OIV invariant (its sole owner is not `EMPTY_CONTRACT`).
-    error FundWiringInvalid();
-
     /// @notice Thrown when `deployOiv` is called before `setKpkSharesDeployer` has wired the
     ///         deployer post-construction. This is only reachable in the brief window between
     ///         factory deployment and the post-deploy `setKpkSharesDeployer` call (see the
@@ -605,12 +605,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         addresses must be non-zero, and the fund (keyed by `kpkSharesProxy`) must not already
     ///         be registered.
     ///
-    ///         SECURITY — this registry is NOT proof of factory-deployment. An on-chain consumer that
-    ///         wants a trustless list of funds this factory actually deployed MUST read `instances` /
-    ///         `stacks`, not `registeredFunds`. As defense-in-depth, when the fund's Avatar Safe has
-    ///         code on THIS chain, registration verifies the core OIV invariant (Avatar's sole signer
-    ///         == `EMPTY_CONTRACT`) and reverts `FundWiringInvalid` otherwise; but on a chain where the
-    ///         Avatar is not deployed, that check cannot run and the entry is purely owner-attested.
+    ///         SECURITY — every entry is OWNER-ASSERTED and NOT verified on-chain: registration stores
+    ///         the supplied addresses as-is, with NO proof they form a genuine, correctly-wired OIV. In
+    ///         particular the recorded `avatarSafe` is NOT checked to belong to the recorded
+    ///         `kpkSharesProxy`, so a mis-entered or malicious pairing is possible. An on-chain consumer
+    ///         that wants a trustless list of funds this factory actually deployed MUST read `instances`
+    ///         / `stacks` (the append-only deployment logs), never `registeredFunds`.
     ///         The full `OivInstance` is stored on-chain (not just `kpkSharesProxy`) by design, so an
     ///         on-chain consumer can read a registered fund's seven component addresses directly via the
     ///         `registeredFunds`/`getFund` getter without replaying `FundRegistered` events. The extra
@@ -625,15 +625,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
                 || instance.kpkSharesProxy == address(0)
         ) revert ZeroAddress();
         if (isFundRegistered[instance.kpkSharesProxy]) revert FundAlreadyRegistered();
-
-        // Defense-in-depth: if the fund's Avatar Safe exists on THIS chain, verify it follows the OIV
-        // invariant — sole signer == EMPTY_CONTRACT — so a hostile or mistaken proxy cannot be listed
-        // as an "official" fund. Skipped when the Avatar has no code here (e.g. recording a fund whose
-        // stack lives on another chain), where the entry necessarily stays owner-attested only.
-        if (instance.avatarSafe.code.length > 0) {
-            address[] memory avatarOwners = ISafe(instance.avatarSafe).getOwners();
-            if (avatarOwners.length != 1 || avatarOwners[0] != EMPTY_CONTRACT) revert FundWiringInvalid();
-        }
 
         registeredFundId = registeredFundCount++;
         registeredFunds[registeredFundId] = instance;
@@ -882,7 +873,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // If absent — or if a different contract squats the address — the Avatar Safe's sole owner
         // would not be the always-reverting `Empty`, breaking the Roles-Modifier-only execution
         // invariant the entire fund stack depends on. Assert the exact codehash (not merely presence)
-        // so a non-`Empty` occupant fails closed. `.codehash` is 0 when the address has no code.
+        // so a non-`Empty` occupant fails closed. (A never-touched address has codehash 0 and an
+        // existing codeless one has keccak256(""); both differ from EXPECTED, so "missing" is covered.)
         if (EMPTY_CONTRACT.codehash != EXPECTED_EMPTY_CODEHASH) revert EmptyContractMissing();
 
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =

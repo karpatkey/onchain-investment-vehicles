@@ -151,59 +151,6 @@ contract KpkOivFactoryRegistryTest is Test {
         assertEq(factory.stackCount(), 0, "stackCount");
     }
 
-    // ── registerFund wiring check (defense-in-depth) ───────────────────────────────
-
-    /// @dev Give the Avatar Safe code on this chain so the wiring check runs, and mock getOwners() to
-    ///      the given owner set.
-    function _avatarWithOwners(address avatarSafe, address[] memory owners) internal {
-        vm.etch(avatarSafe, hex"00"); // any non-empty code so `avatarSafe.code.length > 0`
-        vm.mockCall(avatarSafe, abi.encodeWithSignature("getOwners()"), abi.encode(owners));
-    }
-
-    function test_registerFund_passesWiringCheckWhenSoleOwnerIsEmpty() public {
-        KpkOivFactory.OivInstance memory inst = _instance(1);
-        address[] memory owners = new address[](1);
-        owners[0] = factory.EMPTY_CONTRACT();
-        _avatarWithOwners(inst.avatarSafe, owners);
-
-        vm.prank(owner);
-        factory.registerFund(inst);
-        assertTrue(factory.isFundRegistered(inst.kpkSharesProxy), "registered");
-    }
-
-    function test_registerFund_revertsWhenAvatarOwnerIsNotEmpty() public {
-        KpkOivFactory.OivInstance memory inst = _instance(2);
-        address[] memory owners = new address[](1);
-        owners[0] = address(0xBAD);
-        _avatarWithOwners(inst.avatarSafe, owners);
-
-        vm.prank(owner);
-        vm.expectRevert(KpkOivFactory.FundWiringInvalid.selector);
-        factory.registerFund(inst);
-    }
-
-    function test_registerFund_revertsWhenAvatarHasMultipleOwners() public {
-        KpkOivFactory.OivInstance memory inst = _instance(3);
-        address[] memory owners = new address[](2);
-        owners[0] = factory.EMPTY_CONTRACT();
-        owners[1] = address(0xBEEF);
-        _avatarWithOwners(inst.avatarSafe, owners);
-
-        vm.prank(owner);
-        vm.expectRevert(KpkOivFactory.FundWiringInvalid.selector);
-        factory.registerFund(inst);
-    }
-
-    function test_registerFund_skipsWiringCheckWhenAvatarCodeless() public {
-        // The default _instance avatar has no code, so the check cannot run and the fund still
-        // registers (owner-attested) — e.g. recording a fund whose stack lives on another chain.
-        KpkOivFactory.OivInstance memory inst = _instance(4);
-        assertEq(inst.avatarSafe.code.length, 0, "precondition: codeless avatar");
-        vm.prank(owner);
-        factory.registerFund(inst);
-        assertTrue(factory.isFundRegistered(inst.kpkSharesProxy), "registered without wiring check");
-    }
-
     // ── unregisterFund ───────────────────────────────────────────────────────────
 
     function test_unregisterFund_clearsEntryAndEmits() public {
