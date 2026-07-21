@@ -22,10 +22,10 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         predictions key on `address(orchestrator)`.
 ///
 ///         Run with: forge test --match-contract CcipOivDeployerTest --fork-url $MAINNET_URL
-///         Fork prerequisite: the Roles Modifier v2.1.1 mastercopy (OivInfraConstants) must have
-///         bytecode at the forked block — the factory has ModuleProxyFactory deploy a proxy against
-///         it, which reverts TargetHasNoCode otherwise. It is live on mainnet, so a latest fork is
-///         fine; only a fork pinned before its deployment block would fail.
+///         Fork prerequisite: OivInfraConstants.ROLES_MODIFIER_MASTERCOPY (the Roles Modifier v2.1.1
+///         mastercopy) must have bytecode at the forked block — the factory has ModuleProxyFactory
+///         deploy a proxy against it, which reverts TargetHasNoCode otherwise. It is live on mainnet,
+///         so a latest fork is fine; only a fork pinned before its deployment block would fail.
 contract CcipOivDeployerTest is Test {
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 

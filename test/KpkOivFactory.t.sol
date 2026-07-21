@@ -13,9 +13,10 @@ import {OivInfraConstants} from "src/OivInfraConstants.sol";
 
 /// @notice Fork tests for KpkOivFactory against mainnet Safe and Zodiac contracts.
 ///         Run with: forge test --match-contract KpkOivFactoryTest --fork-url $MAINNET_URL -vvv
-///         Fork prerequisite: the Roles Modifier v2.1.1 mastercopy (OivInfraConstants) must have
-///         bytecode at the forked block — proxy deployment reverts TargetHasNoCode otherwise. It is
-///         live on mainnet, so a latest fork is fine; only a fork pinned before its deploy block fails.
+///         Fork prerequisite: OivInfraConstants.ROLES_MODIFIER_MASTERCOPY (the Roles Modifier v2.1.1
+///         mastercopy) must have bytecode at the forked block — proxy deployment reverts
+///         TargetHasNoCode otherwise. It is live on mainnet, so a latest fork is fine; only a fork
+///         pinned before its deploy block fails.
 contract KpkOivFactoryTest is Test {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
