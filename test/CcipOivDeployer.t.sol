@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Test} from "forge-std/Test.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
-import {OivInfraConstants} from "src/OivInfraConstants.sol";
+import {OivTestConstants} from "test/OivTestConstants.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {MockCcipRouter} from "test/mocks/MockCcipRouter.sol";
 import {Mock_ERC20} from "test/mocks/tokens.sol";
@@ -26,17 +25,10 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         mastercopy) must have bytecode at the forked block — the factory has ModuleProxyFactory
 ///         deploy a proxy against it, which reverts TargetHasNoCode otherwise. It is live on mainnet,
 ///         so a latest fork is fine; only a fork pinned before its deployment block would fail.
-contract CcipOivDeployerTest is Test {
+contract CcipOivDeployerTest is OivTestConstants {
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-
-    // Canonical Safe/Zodiac infra — single source in OivInfraConstants (same values the deploy path
-    // bakes into CREATE2 init-code), so the suite always validates the mastercopy that actually ships.
-    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
-    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
-    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
-    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
-    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
-    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
+    // Safe/Zodiac infra (SAFE_*, MODULE_PROXY_FACTORY, ROLES_MODIFIER_MASTERCOPY) are inherited from
+    // OivTestConstants — the single test-side alias of OivInfraConstants.
 
     // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
@@ -69,6 +61,7 @@ contract CcipOivDeployerTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
+        _requireInfraDeployed();
 
         uint256 nextNonce = vm.getNonce(address(this));
         address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 1);

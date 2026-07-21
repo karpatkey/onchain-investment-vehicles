@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
@@ -9,7 +8,7 @@ import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
-import {OivInfraConstants} from "src/OivInfraConstants.sol";
+import {OivTestConstants} from "test/OivTestConstants.sol";
 
 /// @notice Fork tests for KpkOivFactory against mainnet Safe and Zodiac contracts.
 ///         Run with: forge test --match-contract KpkOivFactoryTest --fork-url $MAINNET_URL -vvv
@@ -17,18 +16,11 @@ import {OivInfraConstants} from "src/OivInfraConstants.sol";
 ///         mastercopy) must have bytecode at the forked block — proxy deployment reverts
 ///         TargetHasNoCode otherwise. It is live on mainnet, so a latest fork is fine; only a fork
 ///         pinned before its deploy block fails.
-contract KpkOivFactoryTest is Test {
+contract KpkOivFactoryTest is OivTestConstants {
     // USDC on mainnet — used as the shares asset in tests.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-
-    // Canonical Safe/Zodiac infra — single source in OivInfraConstants (same values the deploy path
-    // bakes into CREATE2 init-code), so the suite always validates the mastercopy that actually ships.
-    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
-    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
-    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
-    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
-    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
-    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
+    // Safe/Zodiac infra (SAFE_*, MODULE_PROXY_FACTORY, ROLES_MODIFIER_MASTERCOPY) are inherited from
+    // OivTestConstants — the single test-side alias of OivInfraConstants.
 
     // ── Test accounts ───────────────────────────────────────────────────────────
 
@@ -48,6 +40,7 @@ contract KpkOivFactoryTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
+        _requireInfraDeployed();
 
         // KpkSharesDeployer is now factory-locked. Pre-compute the factory address so the
         // deployer can be constructed with it: this contract's next nonce produces the
@@ -858,15 +851,9 @@ contract KpkOivFactoryHarness is KpkOivFactory {
 
 /// @notice Pure unit tests for the execTransactionFromModule return-value checks.
 ///         No fork required — uses vm.mockCall to simulate Safe responses.
-contract KpkOivFactoryUnitTest is Test {
-    // Safe v1.4.1 / Zodiac — single source in OivInfraConstants; kept so harness constructor is
-    // valid; not called in unit tests.
-    address constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
-    address constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
-    address constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
-    address constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
-    address constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
-    address constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
+contract KpkOivFactoryUnitTest is OivTestConstants {
+    // Safe/Zodiac infra inherited from OivTestConstants; available for the harness constructor, not
+    // called in these (non-fork) unit tests.
 
     KpkOivFactoryHarness harness;
 

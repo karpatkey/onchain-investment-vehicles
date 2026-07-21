@@ -10,11 +10,11 @@ pragma solidity ^0.8.0;
 ///         hand-maintained literal in five places, so a single version bump had to touch each by
 ///         hand and a miss would silently validate against a stale mastercopy.
 ///
-///         NOTE: `script/ccip-networks.json` keeps its own copy of some of these (notably
-///         `rolesModifierMastercopy`) for operator reference. It is a data file, not Solidity, and
-///         is NOT cross-checked against this library by any test — `test/CcipNetworksSync.t.sol`
-///         validates only the registry's per-chain router/LINK/selector/verdict, not these infra
-///         addresses. So when bumping a value here, update `ccip-networks.json` by hand in lockstep.
+///         NOTE: `script/ccip-networks.json` keeps its own copy of these (its `.infra` block) for
+///         operator reference. It is a data file, not Solidity, but it is cross-checked against this
+///         library by `test/CcipNetworksSync.t.sol::test_infraAddressesMatchLibrary`, so a one-sided
+///         edit (bumping a value here without the JSON, or vice versa) fails CI rather than silently
+///         drifting. Update both when changing a value.
 library OivInfraConstants {
     // ── Safe v1.4.1 ─────────────────────────────────────────────────────────────
     address internal constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
