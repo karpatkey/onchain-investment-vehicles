@@ -16,8 +16,8 @@ import {OivInfraConstants} from "../../src/OivInfraConstants.sol";
 ///         invariant (which `CcipOivDeployer.ccipReceive` trusts) cannot drift between the
 ///         standalone and per-chain paths.
 ///
-/// @dev    Roles Modifier mastercopy is the PATCHED v2.1.1 (`0xF2964CE6…83D5`); v2.1.0
-///         (`0x9646fDAD…D337`) had the June-2026 ERC-1271 auth-bypass.
+/// @dev    Canonical Safe/Zodiac infra values (incl. the patched Roles v2.1.1 mastercopy) come from
+///         `OivInfraConstants` — see there for the single-source rationale (why v2.1.0 is forbidden).
 abstract contract OivChainDeploy is Script {
     // ── Canonical infra (same address on every chain) ──────────────────────────
     address internal constant CANONICAL_CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;

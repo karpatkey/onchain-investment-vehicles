@@ -26,9 +26,8 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         deploy a proxy against it, which reverts TargetHasNoCode otherwise. It is live on mainnet,
 ///         so a latest fork is fine; only a fork pinned before its deployment block would fail.
 contract CcipOivDeployerTest is OivTestConstants {
-    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    // Safe/Zodiac infra (SAFE_*, MODULE_PROXY_FACTORY, ROLES_MODIFIER_MASTERCOPY) are inherited from
-    // OivTestConstants — the single test-side alias of OivInfraConstants.
+    // USDC + Safe/Zodiac infra (SAFE_*, MODULE_PROXY_FACTORY, ROLES_MODIFIER_MASTERCOPY) are inherited
+    // from OivTestConstants — the single test-side source.
 
     // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
