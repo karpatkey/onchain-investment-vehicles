@@ -10,7 +10,14 @@ import {OivChainDeploy} from "../script/base/OivChainDeploy.sol";
 contract FactoryCodehashExposer is KpkOivFactory {
     constructor()
         KpkOivFactory(
-            address(0x1), address(0x2), address(0x3), address(0x4), address(0x5), address(0x6), address(0x7), address(0x8)
+            address(0x1),
+            address(0x2),
+            address(0x3),
+            address(0x4),
+            address(0x5),
+            address(0x6),
+            address(0x7),
+            address(0x8)
         )
     {}
 
