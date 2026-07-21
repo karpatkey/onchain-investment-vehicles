@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {OivInfraConstants} from "../src/OivInfraConstants.sol";
+import {OivInfraConstants} from "src/OivInfraConstants.sol";
 import {Deploy_Ethereum} from "../script/chains/Deploy_Ethereum.s.sol";
 import {Deploy_Optimism} from "../script/chains/Deploy_Optimism.s.sol";
 import {Deploy_Gnosis} from "../script/chains/Deploy_Gnosis.s.sol";
