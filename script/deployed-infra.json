@@ -145,7 +145,7 @@
       "txHash": "0x75924250cc615ce9b68517ac5bb3e367059ac88b26128c7059ac6353342a7772",
       "explorerVerified": false,
       "owner": "safe",
-      "note": "required HyperEVM big blocks enabled for the deployer (usingBigBlocks) \u2014 the ~7.6M-gas factory deploy exceeds the ~3M small-block cap; big blocks disabled again after deploy"
+      "note": "required HyperEVM big blocks enabled for the deploy (disabled after). Added to the mainnet selector registry via an OIV Safe tx (script/safe-txs/hyperevm-selector.json)."
     },
     {
       "name": "mantle",
@@ -198,8 +198,19 @@
   ],
   "saltVersion": 2,
   "mainnetSelectorRegistry": {
-    "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
-    "seededBeforeHandover": true,
-    "destinationChainIdCount": 17
+    "destinationChainIdCount": 18,
+    "seededBeforeHandover": {
+      "count": 17,
+      "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+    },
+    "addedAfterHandover": [
+      {
+        "name": "hyperevm",
+        "chainId": 999,
+        "selector": "2442541497099098535",
+        "via": "OIV Safe tx on mainnet (setChainSelector) \u2014 see script/safe-txs/hyperevm-selector.json",
+        "pendingExecution": true
+      }
+    ]
   }
 }
