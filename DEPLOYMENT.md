@@ -232,4 +232,4 @@ The current **v2.1.1** `KpkOivFactory` (and `KpkSharesDeployer`) is deployed at 
 | `KpkOivFactory`  | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
 | `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
 
-Deployed on 18 chains, owned by the OIV governance Safe. For the authoritative per-chain address / tx / block record — and the superseded legacy `0x0d94…d420` (pre-patch v2.1.0) build — see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).
+Deployed on 19 chains, owned by the OIV governance Safe. For the authoritative per-chain address / tx / block record — and the superseded legacy `0x0d94…d420` (pre-patch v2.1.0) build — see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).
