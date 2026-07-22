@@ -26,12 +26,20 @@ abstract contract OivTestConstants is Test {
     ///         lives in one place rather than being re-declared per suite.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
-    /// @dev Assert EVERY canonical Safe/Zodiac contract the factory delegates to actually has bytecode
+    /// @notice Canonical `Empty` contract (the Avatar Safe's sole signer), mirroring
+    ///         `KpkOivFactory.EMPTY_CONTRACT`. Kept local (not in `OivInfraConstants`) because the
+    ///         factory bakes its own copy and enforces the exact codehash at deploy; the preflight
+    ///         only needs a presence check to convert "Empty absent on this fork" into a clear early
+    ///         failure rather than an opaque `EmptyContractMissing` deep inside `deployStack`.
+    address constant EMPTY_CONTRACT = 0xA4703438f8cc4fc2C2503a7e43935Da16BA74652;
+
+    /// @dev Assert EVERY canonical contract the factory delegates to / requires actually has bytecode
     ///      on the current (forked) chain. Call at the top of a fork-based `setUp` after
     ///      `createSelectFork`. The Roles v2.1.1 mastercopy is the load-bearing one (a fork pinned
     ///      before its mainnet deploy block fails deep inside proxy deployment with `TargetHasNoCode`),
-    ///      but all six are checked so a missing Safe module-setup / fallback handler also surfaces as
-    ///      an explanatory message here instead of an opaque revert inside the Safe setup delegatecall.
+    ///      and `EMPTY_CONTRACT` is now checked too since `deployOiv`/`deployStack` hard-require the
+    ///      canonical Empty — so both surface as explanatory messages here instead of opaque mid-deploy
+    ///      reverts.
     function _requireInfraDeployed() internal view {
         require(
             ROLES_MODIFIER_MASTERCOPY.code.length > 0,
@@ -42,5 +50,9 @@ abstract contract OivTestConstants is Test {
         require(SAFE_SINGLETON.code.length > 0, "OivTestConstants: Safe singleton has no code");
         require(SAFE_MODULE_SETUP.code.length > 0, "OivTestConstants: Safe module setup has no code");
         require(SAFE_FALLBACK_HANDLER.code.length > 0, "OivTestConstants: Safe fallback handler has no code");
+        require(
+            EMPTY_CONTRACT.code.length > 0,
+            "OivTestConstants: canonical Empty (Avatar sole signer) has no code at the forked block"
+        );
     }
 }
