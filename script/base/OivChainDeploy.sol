@@ -51,9 +51,13 @@ abstract contract OivChainDeploy is Script {
         hex"60806040525f5ffdfea2646970667358221220dddfa414d3e674246761d7c4ce7ba241adbe729cb02d75a50b9cac1086c72cdf64736f6c634300081b0033";
 
     // ── Deterministic salts ────────────────────────────────────────────────────
-    bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(1)));
-    bytes32 internal constant SALT_DEPLOYER = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(1)));
-    bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(1)));
+    // Version 2: fresh addresses for the EOA-owned-then-handover rollout. Version 1 (factory
+    // 0xfb76…25f0) was deployed with ownership handed to the Safe at deploy time, which left
+    // owner-only setup (setChainSelectors) behind the multisig; v2 is deployed EOA-owned so all
+    // config runs from the deployer, then ownership is transferred to the Safe afterwards.
+    bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(2)));
+    bytes32 internal constant SALT_DEPLOYER = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(2)));
+    bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(2)));
 
     /// @notice CCIP selector of Ethereum mainnet — the trusted source on every chain.
     uint64 internal constant MAINNET_SELECTOR = 5009297550715157269;

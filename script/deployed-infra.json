@@ -1,13 +1,13 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (Empty + KpkOivFactory + KpkSharesDeployer + CcipOivDeployer). The four `canonical` contracts share one address on every chain (deterministic CREATE2, keyed to eoaOwner). `chains[]` tracks per-chain rollout status: flip deployed=true and fill block/txHash/verified as each chain is deployed via script/deploy-chain.sh. `excluded[]` records chains intentionally skipped and why. Human-readable companion: docs/DEPLOYED_ADDRESSES.md.",
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = per-chain rollout status. Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md.",
   "version": "2.1.1",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
   "canonical": {
-    "_comment": "Same address on every chain. Verified via deploy-chain.sh dry-run predict.",
-    "kpkOivFactory": "0xfb762083839AaED43Af0d37e67d7EE62340D25f0",
-    "kpkSharesDeployer": "0x3Bc6cf9f825348Bee937f084f46E6655184F26C9",
-    "ccipOivDeployer": "0x037B800C05950e5152D946bD5C93444937532ca5",
+    "_comment": "Same address on every chain (deterministic CREATE2, salt v2). owner()==finalOwner (Safe) post-handover.",
+    "kpkOivFactory": "0xfff31e9948E2afF718Ca0f80C349ebE90F50f965",
+    "kpkSharesDeployer": "0x04F61ea9F320473aC1439F025D014DC39e0652B0",
+    "ccipOivDeployer": "0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc",
     "emptyContract": "0xA4703438f8cc4fc2C2503a7e43935Da16BA74652"
   },
   "chains": [
@@ -15,9 +15,10 @@
       "name": "ethereum",
       "chainId": 1,
       "deployed": true,
-      "block": 25589349,
-      "txHash": "0x10e8515ec9834fa9825cfca4d564cccea8c4ce1dbcf5fda0de306863e96e65df",
-      "verified": false
+      "block": 25575540,
+      "txHash": "0xe4d80eabd81e21a71007eeb8a992dac7f6c09a41b966c4867e59ec2fe6de741c",
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "optimism",
@@ -25,7 +26,8 @@
       "deployed": true,
       "block": 154568805,
       "txHash": "0x8b3d8bd5535a159e8aab12c20259135f310fea5508ea4d4dade65082fa2121d1",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "gnosis",
@@ -33,15 +35,17 @@
       "deployed": true,
       "block": 47335819,
       "txHash": "0x8657748033163577eb4275b25f15608a4e0eb0d92d7f5fba12a0fa34852f69fd",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "base",
       "chainId": 8453,
       "deployed": true,
-      "block": 48973536,
-      "txHash": "0x3bc7db061b5aa918baf61058981de19d607b88dd73e2bce2532ac50547211b15",
-      "verified": false
+      "block": 48890346,
+      "txHash": "0x07be90d192c034ad2404ee08f1b011853cbc0d81f6fb31c182566d760e857779",
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "arbitrum",
@@ -49,7 +53,8 @@
       "deployed": true,
       "block": 486581318,
       "txHash": "0x867a001b1605e118963298e22cd96e91bf820214b328826766e46ee5a8414028",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "bnb",
@@ -57,7 +62,8 @@
       "deployed": true,
       "block": 111504023,
       "txHash": "0xa6c00a2a961aa763c76f13abec3756f8344bc7568acbaf9033adec638e7c9539",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "polygon",
@@ -65,7 +71,8 @@
       "deployed": true,
       "block": 90687647,
       "txHash": "0x8d12e274b69e07141580ccce505534527f99605c79bce5a062d4bd00291f1edf",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "avalanche",
@@ -73,7 +80,8 @@
       "deployed": true,
       "block": 90970564,
       "txHash": "0x15dd47b1f95b7c1f2e860b1ee05461124d51dbfebb5187808771ad5ac8b79029",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "celo",
@@ -81,7 +89,8 @@
       "deployed": true,
       "block": 72835737,
       "txHash": "0x11956a97a5d2e5ac635676fae671bb67973eadaefdf7f55ec5826213d8ae731d",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "linea",
@@ -89,7 +98,8 @@
       "deployed": true,
       "block": 31479671,
       "txHash": "0xc2341306977c1cbabe83a606ec5348d022975fb1a64901ca700933057a9467cc",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "scroll",
@@ -97,7 +107,8 @@
       "deployed": true,
       "block": 34442509,
       "txHash": "0x9a676bd958674148df423393930c3e12f25b592a3ca47ea1c6505c1fbef9091f",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "sonic",
@@ -105,7 +116,8 @@
       "deployed": true,
       "block": 76339891,
       "txHash": "0x3c969c5d937019eb094427335f2a6cbfd94939413d4f3fb79b7596f7086a0d5a",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "unichain",
@@ -113,7 +125,8 @@
       "deployed": true,
       "block": 53988189,
       "txHash": "0xf0cf8ab7ed7ece4366ff18146cb3da45e69dac8a3860cde966a840cf595948bc",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "worldchain",
@@ -121,7 +134,8 @@
       "deployed": true,
       "block": 32700462,
       "txHash": "0x315fef87863c3de0b8153628d4a0326d6e39cc8b3715c5c803e1bad6c7ea1f17",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "hyperevm",
@@ -138,7 +152,8 @@
       "deployed": true,
       "block": 98303146,
       "txHash": "0xc5663624d3ad19301b10c73a1b67f1a3318bb0f2d24616537d78b0346c3cc562",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "plasma",
@@ -146,7 +161,8 @@
       "deployed": true,
       "block": 27796294,
       "txHash": "0x58675ce6836c02d7f87b99cfd22b8f05dbd3d4b84797656f10beb228494d4050",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "ink",
@@ -154,7 +170,8 @@
       "deployed": true,
       "block": 51238251,
       "txHash": "0xe72e471d19375e66d0956d2dadb9930d178625374760261d465eb5478e80ee6e",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     },
     {
       "name": "berachain",
@@ -162,7 +179,8 @@
       "deployed": true,
       "block": 23860979,
       "txHash": "0xa4ae231ca48da91a8ffb1c0050d0eb1c0a4123ac0e1d44ce21622c97aa97be38",
-      "verified": false
+      "verified": false,
+      "owner": "safe"
     }
   ],
   "excluded": [
@@ -176,5 +194,10 @@
       "chainId": 747474,
       "reason": "deployer 0xAa5A\u20264F72 had 0 gas on 2026-07-22; otherwise READY-AFTER-EMPTY"
     }
-  ]
+  ],
+  "saltVersion": 2,
+  "mainnetSelectorRegistry": {
+    "seededBy": "eoa (0xAa5A...4F72) before handover",
+    "destinationChainIdCount": 17
+  }
 }
