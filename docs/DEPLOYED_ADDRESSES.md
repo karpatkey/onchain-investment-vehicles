@@ -4,7 +4,32 @@ Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonic
 
 Source of truth: each chain's commit on this branch lists addresses, broadcast tx hashes, and explorer links. Once all chains are merged, this doc reflects the final state.
 
+> ⚠️ The **current** infra is the patched **v2.1.1** build (next section). The `0x0d94…d420` factory
+> documented further down is the **legacy, pre-patch v2.1.0** build (had the June-2026 ERC-1271 bypass)
+> and is **superseded** — kept below only as historical record.
+
 ---
+
+## Current — v2.1.1 CCIP infra (canonical, same address on every chain)
+
+The patched build (Roles Modifier v2.1.1), **salt v2**, deployed via the canonical CREATE2 deployer, so the four contracts share one address on every chain. Addresses are keyed to the deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72`. Rolled out **EOA-owned first** (so the mainnet orchestrator's selector registry was seeded by the deployer), then `Ownable.owner` on the factory + orchestrator was transferred to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`. Machine-readable per-chain status: [`script/deployed-infra.json`](../script/deployed-infra.json).
+
+| Contract | Address |
+|---|---|
+| `KpkOivFactory` | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
+| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
+| `CcipOivDeployer` (orchestrator) | `0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
+
+**Deployed on 18 chains, owned by the Safe, verified on-chain** (owner()/wiring invariants checked post-deploy; note these are **not** block-explorer source-verified — deployed without `--verify`, so `explorerVerified` is `false` in `deployed-infra.json`): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll, sonic, unichain, worldchain, mantle, plasma, ink, berachain. The mainnet orchestrator's selector registry is seeded for all 17 destinations. **Excluded (decision 2026-07-22 — 18 chains is the final production set, these are not pursued):** `hyperevm` (would need HyperEVM "big blocks" enabled — the ~7.6M-gas factory deploy exceeds the ~2M small-block cap), `bob` + `katana` (unfunded). Per-chain deploy block / tx in [`script/deployed-infra.json`](../script/deployed-infra.json).
+
+> **Note — salt v1 superseded.** An earlier salt-v1 build (factory `0xfb762083839AaED43Af0d37e67d7EE62340D25f0`) was deployed on these chains with ownership handed to the Safe *at deploy time*, which left owner-only setup behind the multisig. It was redeployed at **salt v2** (addresses above) so all config runs from the EOA before handover. The v1 contracts remain on-chain but are abandoned/unused.
+
+---
+
+## Legacy (superseded, pre-v2.1.1) — factory `0x0d94…d420`
+
+> **Superseded.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It remains deployed on mainnet + Optimism/Gnosis/Base/Arbitrum and the kUSD fund below lives on it, but new funds use the **v2.1.1** infra above. Kept as historical record.
 
 ## Common (CREATE2 — same address on every chain)
 
