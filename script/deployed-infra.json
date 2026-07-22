@@ -1,5 +1,5 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = per-chain rollout status. Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md.",
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = the 18 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued (decision 2026-07-22). Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md.",
   "version": "2.1.1",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
@@ -138,15 +138,6 @@
       "owner": "safe"
     },
     {
-      "name": "hyperevm",
-      "chainId": 999,
-      "deployed": false,
-      "block": null,
-      "txHash": null,
-      "verified": false,
-      "note": "broadcast FAILED: exceeds block gas limit \u2014 HyperEVM small-block cap (~2M) < ~7.6M factory deploy; deployer must enable big blocks first, then re-run"
-    },
-    {
       "name": "mantle",
       "chainId": 5000,
       "deployed": true,
@@ -185,14 +176,19 @@
   ],
   "excluded": [
     {
+      "name": "hyperevm",
+      "chainId": 999,
+      "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Would need HyperEVM 'big blocks' enabled for the deployer \u2014 the ~7.6M-gas factory deploy exceeds the ~2M small-block cap."
+    },
+    {
       "name": "bob",
       "chainId": 60808,
-      "reason": "deployer 0xAa5A\u20264F72 had 0 gas on 2026-07-22; otherwise READY-AFTER-EMPTY"
+      "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
     },
     {
       "name": "katana",
       "chainId": 747474,
-      "reason": "deployer 0xAa5A\u20264F72 had 0 gas on 2026-07-22; otherwise READY-AFTER-EMPTY"
+      "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
     }
   ],
   "saltVersion": 2,
