@@ -7,17 +7,18 @@ supported-network list, see [CCIP_CROSS_CHAIN_DEPLOY.md](CCIP_CROSS_CHAIN_DEPLOY
 
 > **Assumed already deployed & configured** on every target chain (all at the same address):
 > `KpkOivFactory`, `KpkSharesDeployer`, the `Empty` contract, and `CcipOivDeployer` — the latter
-> `configure`d with each chain's CCIP router + LINK token and **pre-funded with LINK** on mainnet.
-> This doc is only about deploying a **fund** through them.
+> `configure`d with each chain's CCIP router and the mainnet chain selector (the LINK token is
+> optional). CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
+> pre-funding is required. This doc is only about deploying a **fund** through them.
 
 ## End-to-end overview
 
 ```mermaid
 flowchart LR
-    Op["Operator (owner)"] -->|"deployEverywhere(config, destSelectors, gasLimit)"| Orc["CcipOivDeployer (mainnet)"]
+    Op["Operator (caller)"] -->|"deployEverywhere{value}(config, destChainIds, gasLimit)"| Orc["CcipOivDeployer (mainnet)"]
     Orc -->|"factory.deployOiv(config)"| F["KpkOivFactory (mainnet)"]
     F --> Fund["Full OIV on mainnet<br/>(stack + kpkShares)"]
-    Orc -->|"ccipSend × N (LINK fee)"| R["CCIP Router (mainnet)"]
+    Orc -->|"ccipSend × N (native fee)"| R["CCIP Router (mainnet)"]
     R -->|"CCIP network (~15 min)"| R2["CCIP Router (sidechain)"]
     R2 -->|"ccipReceive"| Orc2["CcipOivDeployer (sidechain,<br/>same address)"]
     Orc2 -->|"factory.deployStack(stackConfig)"| F2["KpkOivFactory (sidechain)"]
@@ -33,26 +34,24 @@ addresses across all chains.
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Op as Operator (owner)
+    actor Op as Operator (caller)
     participant O as CcipOivDeployer (mainnet)
     participant F as KpkOivFactory (mainnet)
-    participant L as LINK
     participant R as CCIP Router (mainnet)
     participant N as CCIP network
     participant O2 as CcipOivDeployer (sidechain)
     participant F2 as KpkOivFactory (sidechain)
 
-    Op->>O: deployEverywhere(config, destSelectors, gasLimit)
+    Op->>O: deployEverywhere{value}(config, destChainIds, gasLimit)
     Note over O: require configured + non-empty destinations
+    Note over O: payload = abi.encode(factory.oivToStackConfig(config)),<br/>sum getFee over destinations, require msg.value >= total
     O->>F: deployOiv(config)
     F-->>O: full OIV deployed on mainnet (emit LocalOivDeployed)
-    Note over O: payload = abi.encode(factory.oivToStackConfig(config)),<br/>sum getFee over destinations, check LINK balance >= total
-    O->>L: forceApprove(router, totalFee)
     loop each destination chain
-        O->>R: ccipSend(destSelector, message) [receiver = this address]
+        O->>R: ccipSend{value: fee}(destSelector, message) [receiver = this address]
         R-->>O: messageId (emit StackDispatched)
     end
-    O-->>Op: OivInstance + messageIds (tx confirmed)
+    O-->>Op: OivInstance + messageIds (surplus refunded, tx confirmed)
 
     Note over R,N: ~15 min — Ethereum finality + CCIP delivery
     N->>O2: ccipReceive(message)
@@ -65,9 +64,10 @@ sequenceDiagram
 
 - The mainnet transaction returns once the messages are **dispatched**; each sidechain stack
   materialises later, after source finality.
-- CCIP fees are paid in **LINK from the orchestrator's balance** — size funding up front with
-  `quoteDeployEverywhere(config, destSelectors, gasLimit)`. The aggregate fee is checked once and the
-  router approved once for the total.
+- CCIP fees are paid in **native gas from the caller's `msg.value`** — size it up front with
+  `quoteDeployEverywhere(config, destChainIds, gasLimit)` (or the no-array
+  `quoteDeployEverywhere(config, gasLimit)` for all configured chains). The aggregate fee is checked
+  once against `msg.value`, each message pays its own fee in native, and any surplus is refunded.
 - `ccipReceive` deploys only the **operational stack** (`deployStack`); the `kpkShares` token exists
   on mainnet only.
 
@@ -80,7 +80,7 @@ wasn't in the original set, or to re-send to one whose delivery permanently fail
 
 ```mermaid
 flowchart TD
-    A["Sidechain message failed,<br/>or new chain to add"] --> B["owner calls dispatchTo(config, destSelectors, gasLimit)"]
+    A["Sidechain message failed,<br/>or new chain to add"] --> B["caller calls dispatchTo{value}(config, destChainIds, gasLimit)"]
     B --> C["ccipSend × N (no local deployOiv)"]
     C --> D["sidechain ccipReceive → factory.deployStack"]
     D --> E["stack at the fund's existing addresses"]

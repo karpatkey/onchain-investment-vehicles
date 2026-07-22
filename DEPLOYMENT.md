@@ -136,7 +136,7 @@ Requires `--rpc-url` pointing to a chain where the factory is deployed. Does not
 ```bash
 forge script script/DeployOiv.s.sol \
   --sig "predict(string)" "script/my-fund-config.json" \
-  --rpc-url $MAINNET_RPC_URL
+  --rpc-url mainnet
 ```
 
 **Note:** The `kpkShares` implementation and proxy are deployed via `CREATE2`, so their addresses are deterministic from the deployer, salt, and config. The `predict` entry point prints them, and `KpkOivFactory.predictOivAddresses()` returns them (`kpkSharesImpl` and `kpkSharesProxy`).
@@ -148,7 +148,7 @@ Calls `factory.deployOiv()`. Deploys the full fund: infrastructure + shares toke
 ```bash
 forge script script/DeployOiv.s.sol \
   --sig "deployOiv(string)" "script/my-fund-config.json" \
-  --rpc-url $MAINNET_RPC_URL \
+  --rpc-url mainnet \
   --broadcast
 ```
 
@@ -159,22 +159,24 @@ Calls `factory.deployStack()`. Deploys infrastructure only (no shares token). In
 ```bash
 forge script script/DeployOiv.s.sol \
   --sig "deployStack(string)" "script/my-fund-config.json" \
-  --rpc-url $ARBITRUM_RPC_URL \
+  --rpc-url arbitrum \
   --broadcast
 ```
 
 ### Environment variables
 
-| Variable          | Required for                    |
-|-------------------|---------------------------------|
-| `PRIVATE_KEY`     | All operations                  |
-| `MAINNET_RPC_URL` | Mainnet deployment or predict   |
-| `ARBITRUM_RPC_URL`| Arbitrum deployment             |
-| `BASE_RPC_URL`    | Base deployment                 |
-| `OPTIMISM_RPC_URL`| Optimism deployment             |
-| `GNOSIS_RPC_URL`  | Gnosis deployment               |
+| Variable       | Required for                  |
+|----------------|-------------------------------|
+| `PRIVATE_KEY`  | All operations                |
+| `MAINNET_URL`  | Mainnet deployment or predict |
+| `ARBITRUM_URL` | Arbitrum deployment           |
+| `BASE_URL`     | Base deployment               |
+| `OP_URL`       | Optimism deployment           |
+| `GNOSIS_URL`   | Gnosis deployment             |
 
-Set these in a `.env` file at the project root (already in `.gitignore`).
+Set these in a `.env` file at the project root (already in `.gitignore`); copy `.env.sample` as a
+starting point. `foundry.toml` maps each chain-name alias (`mainnet`, `arbitrum`, `base`, `optimism`,
+`gnosis`, …) to its `*_URL` variable, so the `--rpc-url <chain>` flags above resolve automatically.
 
 ---
 
@@ -223,11 +225,11 @@ Fee rates are in basis points (100 bps = 1%). The skill handles the conversion f
 
 ## Deployed factory addresses
 
-The `KpkOivFactory` is deployed at the same address on all chains:
+The current **v2.1.1** `KpkOivFactory` (and `KpkSharesDeployer`) is deployed at the same address on every chain via the canonical CREATE2 deployer:
 
 | Contract         | Address                                      |
 |------------------|----------------------------------------------|
-| `KpkOivFactory`  | `0x0d94255fdE65D302616b02A2F070CdB21190d420` |
-| `KpkSharesDeployer` | `0xA4B485Efe30F2b1D277b7A2279310239B26775F0` |
+| `KpkOivFactory`  | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
+| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
 
-Supported chains: Mainnet (1), Arbitrum (42161), Base (8453), Optimism (10), Gnosis (100).
+Deployed on 19 chains, owned by the OIV governance Safe. For the authoritative per-chain address / tx / block record — and the superseded legacy `0x0d94…d420` (pre-patch v2.1.0) build — see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).

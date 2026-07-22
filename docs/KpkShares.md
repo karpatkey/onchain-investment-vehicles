@@ -27,7 +27,7 @@ KpkShares
 ## Dependencies
 
 ### External Libraries
-- **OpenZeppelin Contracts Upgradeable** (`5.0.2` - pinned version)
+- **OpenZeppelin Contracts Upgradeable** (`5.4.0` - pinned version)
   - `ERC20Upgradeable`: Standard ERC20 token functionality
   - `AccessControlUpgradeable`: Role-based access control
   - `UUPSUpgradeable`: Upgradeable proxy pattern
@@ -118,7 +118,7 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 - **Watermark Mechanism**: Tracks the highest share price achieved
 - **Profit-Only Charging**: Fees only charged on gains above the watermark
 - **Modular Architecture**: Fee calculation logic can be upgraded via module replacement
-- **Time-Based Calculation**: Performance fees calculated based on time elapsed and price appreciation
+- **Time-Gated, Price-Based Calculation**: Fees are only assessed after `MIN_TIME_ELAPSED` (6 hours) has passed, but the fee amount itself is based purely on price appreciation above the watermark — `timeElapsed` is passed to the module for transparency and does not affect the watermark fee math
 - **Automatic Watermark Updates**: Watermark is updated when new high prices are achieved
 
 ### 6. Request Lifecycle
@@ -368,7 +368,7 @@ Security audit reports are published in the repository's `audit-reports/` folder
 ## Gas Optimization
 
 ### Efficient Operations
-- **Batch Processing**: Processing 5 requests costs ~29,851 gas per subscription and ~21,561 gas per redemption (vs ~101,655 and ~47,346 for single requests)
+- **Batch Processing**: Processing 5 requests costs ~30,533 gas per subscription and ~22,238 gas per redemption (vs ~102,334 and ~48,021 for single requests)
 - **Optimized Storage Layout**: Efficient struct packing and storage access patterns
 - **Minimal External Calls**: Reduced oracle calls and token transfers
 - **Efficient Loop Implementations**: Optimized batch processing algorithms
@@ -378,19 +378,19 @@ Security audit reports are published in the repository's `audit-reports/` folder
 *Based on actual gas measurements from test suite*
 
 #### Core Operations
-- **Subscription request**: 250,117 gas
+- **Subscription request**: 250,756 gas
 - **Redemption request**: 186,385 gas
-- **Subscription processing (approve)**: 101,655 gas
-- **Subscription processing (reject)**: 46,811 gas
-- **Redemption processing (approve)**: 47,346 gas
+- **Subscription processing (approve)**: 102,334 gas
+- **Subscription processing (reject)**: 47,448 gas
+- **Redemption processing (approve)**: 48,021 gas
 - **Redemption processing (reject)**: 12,157 gas
 
 #### Batch Operations
-- **Process 5 subscription requests**: 149,259 gas (29,851 gas per request)
-- **Process 5 redemption requests**: 107,805 gas (21,561 gas per request)
+- **Process 5 subscription requests**: 152,667 gas (30,533 gas per request)
+- **Process 5 redemption requests**: 111,191 gas (22,238 gas per request)
 
 #### Request Cancellation
-- **Cancel subscription**: 9,203 gas
+- **Cancel subscription**: 9,840 gas
 - **Cancel redemption**: 8,649 gas
 
 #### Asset Management
@@ -406,8 +406,8 @@ Security audit reports are published in the repository's `audit-reports/` folder
 
 #### View Functions
 - **Get request details**: 4,395 gas
-- **Convert assets to shares**: 21,204 gas
-- **Convert shares to assets**: 20,296 gas
+- **Convert assets to shares**: 21,246 gas
+- **Convert shares to assets**: 20,332 gas
 - **Get approved assets list**: 15,998 gas
 - **Get approved asset details**: 21,445 gas
 
@@ -422,8 +422,8 @@ Security audit reports are published in the repository's `audit-reports/` folder
   - Returns assets after redemption fees (fees are deducted in preview)
 
 #### Fee Collection
-- **Process requests (with management fee)**: 143,699 gas
-- **Process requests (with redemption fee)**: 47,346 gas
+- **Process requests (with management fee)**: 144,834 gas
+- **Process requests (with redemption fee)**: 48,021 gas
 
 ### Running Gas Tests
 To get current gas measurements, run the gas test suite:

@@ -68,13 +68,14 @@ Full reference: **[docs/KpkOivFactory.md](docs/KpkOivFactory.md)**.
 
 Because `KpkOivFactory` mixes `msg.sender` into its salts, identical addresses across chains require the **same caller** on every chain. The orchestrator is deployed at **one identical address on all chains** (deterministic CREATE2, chain-identical creation code) and is therefore the uniform factory caller everywhere — without putting any CCIP logic into the factory's deployment path.
 
-- **`deployEverywhere(config, destSelectors, gasLimit)`** — deploys the full OIV locally (mainnet) and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain.
-- **`dispatchTo(...)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
+- **`deployEverywhere(config, gasLimit)`** (or `deployEverywhere(config, destChainIds, gasLimit)` to target an explicit subset) — deploys the full OIV locally (mainnet) and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain.
+- **`dispatchTo(config, destChainIds, gasLimit)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
+- **Permissionless.** `deployEverywhere` and `dispatchTo` are permissionless; only infrastructure setters (`configure` / `withdraw*`) are owner-gated.
 - **Security.** `ccipReceive` accepts a message only from the configured router, the mainnet source chain, and a source sender equal to its own (sibling) address.
-- **Fees.** Paid in LINK from the orchestrator's balance; size with `quoteDeployEverywhere`.
+- **Fees.** Paid in native gas by the caller via `msg.value` (surplus refunded); size with `quoteDeployEverywhere`.
 - **Async, not atomic.** Sidechain stacks land after Ethereum finality (~15 min); a failed CCIP message is manually re-executable.
 
-**Supported networks:** 23 on-chain-verified mainnets where the full prerequisite stack exists at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2 ∩ canonical CREATE2 deployer ∩ a live CCIP lane from Ethereum). The machine-readable registry is **[`script/ccip-networks.json`](script/ccip-networks.json)**.
+**Supported networks:** 21 on-chain-verified mainnets where the full prerequisite stack exists at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2.1.1 ∩ canonical CREATE2 deployer ∩ a live CCIP lane from Ethereum). The machine-readable registry — 23 chains, the 21 wired plus 2 not-yet-ready — is **[`script/ccip-networks.json`](script/ccip-networks.json)**.
 
 Full reference, the supported-network table, and the new-chain onboarding checklist: **[docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md)**.
 
@@ -123,6 +124,7 @@ script/
   DeployKpkOivFactory.s.sol deterministic factory + deployer deployment
   DeployCcipOivDeployer.s.sol deterministic orchestrator deployment
   ccip-networks.json       CCIP router / LINK / selector registry (23 chains)
+  README.md                script usage guide (kpkShares management scripts)
 docs/
   KpkShares.md             kpkShares contract reference
   KpkOivFactory.md         factory reference
@@ -131,6 +133,7 @@ docs/
   CCIP_FUND_DEPLOYMENT_FLOW.md fund deployment flow diagrams (one-tx multichain)
   DEPLOYED_ADDRESSES.md    production addresses
 test/                      Foundry tests (fork-based for factory/CCIP)
+  README.md                test-suite breakdown
 ```
 
 ## Build & test
@@ -141,7 +144,7 @@ forge test                                   # unit tests
 forge test --fork-url $MAINNET_URL           # factory + CCIP tests run against a mainnet fork
 ```
 
-The `KpkOivFactory`, `CcipOivDeployer`, and several `kpkShares` suites fork mainnet to use the canonical Safe/Zodiac infrastructure; set `MAINNET_URL` (see `.env.sample`). Coverage is summarized in [COVERAGE_REPORT.md](COVERAGE_REPORT.md).
+The `KpkOivFactory`, `CcipOivDeployer`, and several `kpkShares` suites fork mainnet to use the canonical Safe/Zodiac infrastructure; set `MAINNET_URL` (see `.env.sample`). The full suite breakdown lives in [test/README.md](test/README.md), and coverage is summarized in [COVERAGE_REPORT.md](COVERAGE_REPORT.md).
 
 ## Security
 

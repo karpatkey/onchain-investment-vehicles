@@ -33,12 +33,17 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`kpkShares.ParameterizedExample.sol`** - Example of parameterized/table-driven tests (`kpkSharesParameterizedExampleTest`)
 - **`CcipOivDeployer.t.sol`** - Tests for the CCIP OIV deployer (`CcipOivDeployerTest`)
 - **`KpkOivFactory.t.sol`** - Tests for the OIV factory (`KpkOivFactoryTest`, `KpkOivFactoryUnitTest`)
+- **`KpkOivFactoryRegistry.t.sol`** - Tests for the curated external-fund registry (`KpkOivFactoryRegistryTest`)
+- **`WatermarkFee.t.sol`** - Tests for the `WatermarkFee` performance-fee module (`WatermarkFeeTest`)
+- **`CcipNetworksSync.t.sol`** - Guards the hardcoded per-chain CCIP constants against `script/ccip-networks.json` (`CcipNetworksSyncTest`)
+- **`EmptyCodehashSync.t.sol`** - Guards the copies of the canonical `Empty` bytecode against drift (`EmptyCodehashSyncTest`)
 
-These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones) or directly from Forge's `Test`, and are run by `forge test` independently of `kpkShares.Main.sol`.
+These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones), from `OivTestConstants` (the OIV factory/deployer suites), or directly from Forge's `Test`, and are run by `forge test` independently of `kpkShares.Main.sol`.
 
 ### Support Files
 - **`constants.sol`** - Shared test constants
 - **`errors.sol`** - Shared custom error definitions used in tests
+- **`OivTestConstants.sol`** - Shared base (`OivTestConstants`) aliasing the canonical Safe/Zodiac infra addresses for the OIV suites
 - **`mocks/tokens.sol`** - `Mock_ERC20` token used across the suite
 - **`mocks/MockCcipRouter.sol`** - Mock CCIP router used by deployer/factory tests
 
