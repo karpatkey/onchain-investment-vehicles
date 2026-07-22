@@ -11,8 +11,8 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  * Purpose: Drive an already-deployed `CcipOivDeployer` to deploy a full OIV on mainnet and fan the
  *          operational stack out to sidechains over Chainlink CCIP, from a JSON config file.
  * Inputs:  The orchestrator address, a config path (same format as DeployOiv), destination CHAIN IDs
- *          (resolved to CCIP selectors by the orchestrator), and a destination gas limit. PRIVATE_KEY
- *          env var for broadcasting.
+ *          (resolved to CCIP selectors by the orchestrator), and a destination gas limit. Broadcast
+ *          with the forge CLI signer: `--account <keystore>` (preferred) or `--private-key`.
  * Entry points:
  *   - predict(orchestrator, configPath): view. Prints the 7 OIV addresses the orchestrator would
  *     produce. CALLER IS THE ORCHESTRATOR (not the EOA) — it is the factory's msg.sender on every
@@ -23,7 +23,7 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  *     OIV locally (intended for mainnet) and dispatches one CCIP message per destination chain.
  * Notes:
  *   - The config parsing lives in the shared OivConfigReader base (same as DeployOiv).
- *   - deployEverywhere is PERMISSIONLESS; any PRIVATE_KEY can broadcast it (no owner requirement).
+ *   - deployEverywhere is PERMISSIONLESS; any signer can broadcast it (no owner requirement).
  *   - CCIP fees are paid in NATIVE gas from msg.value; this script quotes the fee and forwards it
  *     (with a small buffer) automatically, so the broadcasting EOA just needs enough native balance.
  *     Surplus is refunded to that EOA.
@@ -91,8 +91,9 @@ contract CcipDeployEverywhere is OivConfigReader {
         uint256 bufferPct = vm.envOr("FEE_BUFFER_PCT", uint256(10));
         uint256 valueToSend = totalFee + (totalFee * bufferPct) / 100;
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        vm.startBroadcast(deployerKey);
+        // Broadcaster comes from the forge CLI signer (`--account <keystore>` preferred, or
+        // `--private-key`); no raw key is read from the environment here.
+        vm.startBroadcast();
         (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) =
             orch.deployEverywhere{value: valueToSend}(config, destChainIds, gasLimit);
         vm.stopBroadcast();
@@ -146,8 +147,9 @@ contract CcipDeployEverywhere is OivConfigReader {
             selectors[i] = selBuf[i];
         }
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        vm.startBroadcast(deployerKey);
+        // Broadcaster comes from the forge CLI signer (`--account <keystore>` preferred, or
+        // `--private-key`); no raw key is read from the environment here.
+        vm.startBroadcast();
         CcipOivDeployer(payable(orchestrator)).setChainSelectors(chainIds, selectors);
         vm.stopBroadcast();
 
