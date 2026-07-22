@@ -1,0 +1,38 @@
+{
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (Empty + KpkOivFactory + KpkSharesDeployer + CcipOivDeployer). The four `canonical` contracts share one address on every chain (deterministic CREATE2, keyed to eoaOwner). `chains[]` tracks per-chain rollout status: flip deployed=true and fill block/txHash/verified as each chain is deployed via script/deploy-chain.sh. `excluded[]` records chains intentionally skipped and why. Human-readable companion: docs/DEPLOYED_ADDRESSES.md.",
+  "version": "2.1.1",
+  "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+  "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+  "canonical": {
+    "_comment": "Same address on every chain. Verified via deploy-chain.sh dry-run predict.",
+    "kpkOivFactory": "0xfb762083839AaED43Af0d37e67d7EE62340D25f0",
+    "kpkSharesDeployer": "0x3Bc6cf9f825348Bee937f084f46E6655184F26C9",
+    "ccipOivDeployer": "0x037B800C05950e5152D946bD5C93444937532ca5",
+    "emptyContract": "0xA4703438f8cc4fc2C2503a7e43935Da16BA74652"
+  },
+  "chains": [
+    { "name": "ethereum",   "chainId": 1,      "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "optimism",   "chainId": 10,     "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "gnosis",     "chainId": 100,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "base",       "chainId": 8453,   "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "arbitrum",   "chainId": 42161,  "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "bnb",        "chainId": 56,     "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "polygon",    "chainId": 137,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "avalanche",  "chainId": 43114,  "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "celo",       "chainId": 42220,  "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "linea",      "chainId": 59144,  "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "scroll",     "chainId": 534352, "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "sonic",      "chainId": 146,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "unichain",   "chainId": 130,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "worldchain", "chainId": 480,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "hyperevm",   "chainId": 999,    "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "mantle",     "chainId": 5000,   "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "plasma",     "chainId": 9745,   "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "ink",        "chainId": 57073,  "deployed": false, "block": null, "txHash": null, "verified": false },
+    { "name": "berachain",  "chainId": 80094,  "deployed": false, "block": null, "txHash": null, "verified": false }
+  ],
+  "excluded": [
+    { "name": "bob",    "chainId": 60808,  "reason": "deployer 0xAa5A…4F72 had 0 gas on 2026-07-22; otherwise READY-AFTER-EMPTY" },
+    { "name": "katana", "chainId": 747474, "reason": "deployer 0xAa5A…4F72 had 0 gas on 2026-07-22; otherwise READY-AFTER-EMPTY" }
+  ]
+}
