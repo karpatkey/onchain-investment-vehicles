@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
+import {OivInfraConstants} from "src/OivInfraConstants.sol";
 import {Deploy_Ethereum} from "../script/chains/Deploy_Ethereum.s.sol";
 import {Deploy_Optimism} from "../script/chains/Deploy_Optimism.s.sol";
 import {Deploy_Gnosis} from "../script/chains/Deploy_Gnosis.s.sol";
@@ -120,5 +121,43 @@ contract CcipNetworksSyncTest is Test {
             ) wired++;
         }
         assertEq(wired, 21, "wired-chain count in registry drifted from per-chain scripts");
+    }
+
+    /// @dev The registry's `.infra` block is a hand-maintained second copy of the canonical infra
+    ///      addresses whose Solidity single source is `OivInfraConstants` (baked into CREATE2
+    ///      init-code by the deploy path). Nothing else cross-checks them, so a one-sided edit — e.g.
+    ///      bumping the Roles mastercopy in the library but not the JSON, or vice versa — would let
+    ///      the operator registry silently advertise a stale address. Assert they stay in lockstep.
+    function test_infraAddressesMatchLibrary() public view {
+        assertEq(
+            json.readAddress(".infra.safeProxyFactory"),
+            OivInfraConstants.SAFE_PROXY_FACTORY,
+            "infra.safeProxyFactory drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.safeSingleton"),
+            OivInfraConstants.SAFE_SINGLETON,
+            "infra.safeSingleton drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.safeModuleSetup"),
+            OivInfraConstants.SAFE_MODULE_SETUP,
+            "infra.safeModuleSetup drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.safeFallbackHandler"),
+            OivInfraConstants.SAFE_FALLBACK_HANDLER,
+            "infra.safeFallbackHandler drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.moduleProxyFactory"),
+            OivInfraConstants.MODULE_PROXY_FACTORY,
+            "infra.moduleProxyFactory drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.rolesModifierMastercopy"),
+            OivInfraConstants.ROLES_MODIFIER_MASTERCOPY,
+            "infra.rolesModifierMastercopy drift (ccip-networks.json vs OivInfraConstants)"
+        );
     }
 }

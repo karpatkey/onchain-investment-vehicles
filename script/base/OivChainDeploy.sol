@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "../../src/KpkSharesDeployer.sol";
 import {CcipOivDeployer} from "../../src/CcipOivDeployer.sol";
+import {OivInfraConstants} from "../../src/OivInfraConstants.sol";
 
 /// @title  OivChainDeploy
 /// @notice Single source of truth for the OIV deploy primitives. Holds the canonical infra
@@ -15,17 +16,19 @@ import {CcipOivDeployer} from "../../src/CcipOivDeployer.sol";
 ///         invariant (which `CcipOivDeployer.ccipReceive` trusts) cannot drift between the
 ///         standalone and per-chain paths.
 ///
-/// @dev    Roles Modifier mastercopy is the PATCHED v2.1.1 (`0xF2964CE6…83D5`); v2.1.0
-///         (`0x9646fDAD…D337`) had the June-2026 ERC-1271 auth-bypass.
+/// @dev    Canonical Safe/Zodiac infra values (incl. the patched Roles v2.1.1 mastercopy) come from
+///         `OivInfraConstants` — see there for the single-source rationale (why v2.1.0 is forbidden).
 abstract contract OivChainDeploy is Script {
     // ── Canonical infra (same address on every chain) ──────────────────────────
     address internal constant CANONICAL_CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-    address internal constant SAFE_PROXY_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
-    address internal constant SAFE_SINGLETON = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address internal constant SAFE_MODULE_SETUP = 0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47;
-    address internal constant SAFE_FALLBACK_HANDLER = 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99;
-    address internal constant MODULE_PROXY_FACTORY = 0x000000000000aDdB49795b0f9bA5BC298cDda236;
-    address internal constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
+    // Canonical Safe/Zodiac infra — sourced from the shared OivInfraConstants so the deploy path and
+    // the test suites can never validate a different value than what actually deploys.
+    address internal constant SAFE_PROXY_FACTORY = OivInfraConstants.SAFE_PROXY_FACTORY;
+    address internal constant SAFE_SINGLETON = OivInfraConstants.SAFE_SINGLETON;
+    address internal constant SAFE_MODULE_SETUP = OivInfraConstants.SAFE_MODULE_SETUP;
+    address internal constant SAFE_FALLBACK_HANDLER = OivInfraConstants.SAFE_FALLBACK_HANDLER;
+    address internal constant MODULE_PROXY_FACTORY = OivInfraConstants.MODULE_PROXY_FACTORY;
+    address internal constant ROLES_MODIFIER_MASTERCOPY = OivInfraConstants.ROLES_MODIFIER_MASTERCOPY;
 
     /// @notice Old, pre-v2.1.1 factory (vulnerable Roles v2.1.0 build). Guarded against so it is
     ///         never wired into a freshly-deployed orchestrator.
