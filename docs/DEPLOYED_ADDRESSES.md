@@ -4,7 +4,30 @@ Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonic
 
 Source of truth: each chain's commit on this branch lists addresses, broadcast tx hashes, and explorer links. Once all chains are merged, this doc reflects the final state.
 
+> ⚠️ The **current** infra is the patched **v2.1.1** build (next section). The `0x0d94…d420` factory
+> documented further down is the **legacy, pre-patch v2.1.0** build (had the June-2026 ERC-1271 bypass)
+> and is **superseded** — kept below only as historical record.
+
 ---
+
+## Current — v2.1.1 CCIP infra (canonical, same address on every chain)
+
+The patched build (Roles Modifier v2.1.1), deployed via the canonical CREATE2 deployer, so the four contracts share one address on every chain. Addresses are keyed to the deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72`; `Ownable.owner` on the factory and orchestrator is handed to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` post-deploy. Machine-readable per-chain status lives in [`script/deployed-infra.json`](../script/deployed-infra.json).
+
+| Contract | Address |
+|---|---|
+| `KpkOivFactory` | `0xfb762083839AaED43Af0d37e67d7EE62340D25f0` |
+| `KpkSharesDeployer` | `0x3Bc6cf9f825348Bee937f084f46E6655184F26C9` |
+| `CcipOivDeployer` (orchestrator) | `0x037B800C05950e5152D946bD5C93444937532ca5` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
+
+**Rollout — 19 of the 21 wired chains:** ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll, sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. **Excluded pending funding:** bob, katana. Per-chain deploy status (block / tx / verified) is tracked in [`script/deployed-infra.json`](../script/deployed-infra.json) and filled in as each chain lands.
+
+---
+
+## Legacy (superseded, pre-v2.1.1) — factory `0x0d94…d420`
+
+> **Superseded.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It remains deployed on mainnet + Optimism/Gnosis/Base/Arbitrum and the kUSD fund below lives on it, but new funds use the **v2.1.1** infra above. Kept as historical record.
 
 ## Common (CREATE2 — same address on every chain)
 
