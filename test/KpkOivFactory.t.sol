@@ -85,6 +85,16 @@ contract KpkOivFactoryTest is Test {
         assertTrue(inst.kpkSharesProxy != address(0), "kpkSharesProxy not deployed");
     }
 
+    function test_deployOiv_revertsWhenEmptyContractIsNotCanonical() public {
+        // Fail-closed guarantee: a contract OTHER than the canonical Empty squatting EMPTY_CONTRACT
+        // must revert. The old `code.length == 0` presence check would have wrongly accepted any
+        // non-empty code here (e.g. a hostile ERC-1271 signer as the Avatar's sole owner); the codehash
+        // guard rejects it.
+        vm.etch(factory.EMPTY_CONTRACT(), hex"60006000fd"); // arbitrary non-Empty bytecode
+        vm.expectRevert(KpkOivFactory.EmptyContractMissing.selector);
+        factory.deployOiv(oivConfig);
+    }
+
     function test_avatarSafe_hasExecModifierAsModule() public {
         KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
