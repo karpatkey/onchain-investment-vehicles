@@ -20,6 +20,9 @@ docs/
 # Dotenv file
 .env
 
+# Keystore password file (KEYSTORE_PASSWORD_FILE default location) — never commit
+.keystore-password
+
 # IDEs
 .idea
 

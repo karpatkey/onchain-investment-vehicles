@@ -5,8 +5,12 @@
 # Usage:
 #   source .env && script/deploy-chain.sh <chain-name>
 #
-# Env:
-#   PRIVATE_KEY          (required) deployer key; its address is used as eoaOwner.
+# Env (signer — prefer a Foundry keystore account, mirroring the gas-replenisher/Wonderland flow):
+#   DEPLOYER_NAME        keystore account to sign with (`cast wallet import <name>`). Its address is
+#                        the eoaOwner baked into the CREATE2 addresses. Preferred over PRIVATE_KEY.
+#   KEYSTORE_PASSWORD_FILE (optional) path to a file holding the keystore password, so a multi-chain
+#                        run is non-interactive instead of prompting once per chain. gitignore it.
+#   PRIVATE_KEY          (fallback) raw deployer key, used only when DEPLOYER_NAME is unset.
 #   DEPLOY_FINAL_OWNER   (optional) owner to hand factory+orchestrator to; defaults to the deployer
 #                        EOA (keep control — recommended for testing; set to a multisig for prod).
 #   DRY_RUN=1            (optional) simulate only (omit --broadcast).
@@ -21,7 +25,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REG="$ROOT/script/ccip-networks.json"
 [ -n "$CHAIN" ] || { echo "usage: deploy-chain.sh <chain-name>"; exit 1; }
 [ -f "$REG" ] || { echo "registry not found: $REG"; exit 1; }
-[ -n "${PRIVATE_KEY:-}" ] || { echo "PRIVATE_KEY not set (source .env)"; exit 1; }
+[ -n "${DEPLOYER_NAME:-}" ] || [ -n "${PRIVATE_KEY:-}" ] || {
+  echo "set DEPLOYER_NAME (keystore account) or PRIVATE_KEY (source .env)"; exit 1;
+}
 command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
 entry=$(jq -c --arg n "$CHAIN" '.networks[] | select(.name==$n)' "$REG")
@@ -43,7 +49,15 @@ file=$(cd "$ROOT/script/chains" 2>/dev/null && ls | grep -i "^Deploy_${CHAIN}\.s
 contract="${file%.s.sol}"
 script="script/chains/${file}:${contract}"
 
-EOA=$(cast wallet address --private-key "$PRIVATE_KEY")
+# Signer: prefer a Foundry keystore account (DEPLOYER_NAME); fall back to a raw PRIVATE_KEY. The same
+# flags drive both `cast wallet address` (to derive eoaOwner) and the `forge script` broadcast below.
+if [ -n "${DEPLOYER_NAME:-}" ]; then
+  signer=(--account "$DEPLOYER_NAME")
+  [ -n "${KEYSTORE_PASSWORD_FILE:-}" ] && signer+=(--password-file "$KEYSTORE_PASSWORD_FILE")
+else
+  signer=(--private-key "$PRIVATE_KEY")
+fi
+EOA=$(cast wallet address "${signer[@]}")
 FINAL="${DEPLOY_FINAL_OWNER:-$EOA}"
 
 bflag="--broadcast"; [ "${DRY_RUN:-0}" = "1" ] && bflag=""
@@ -62,5 +76,5 @@ fi
 echo "=== Deploying OIV infra to $CHAIN (verdict $verdict) ==="
 echo "  eoaOwner=$EOA  finalOwner=$FINAL  dryRun=${DRY_RUN:-0}"
 ( cd "$ROOT" && forge script "$script" \
-    --rpc-url "$CHAIN" --private-key "$PRIVATE_KEY" $bflag $vflag \
+    --rpc-url "$CHAIN" "${signer[@]}" $bflag $vflag \
     --sig "run(address,address)" "$EOA" "$FINAL" )

@@ -5,7 +5,9 @@
 #
 # Usage:
 #   source .env && script/deploy-all.sh
-# Honors the same env as deploy-chain.sh (PRIVATE_KEY, DEPLOY_FINAL_OWNER, DRY_RUN, VERIFY).
+# Honors the same env as deploy-chain.sh: DEPLOYER_NAME (keystore, preferred) [+ KEYSTORE_PASSWORD_FILE
+# so the 21-chain loop is non-interactive] or PRIVATE_KEY (fallback), plus DEPLOY_FINAL_OWNER, DRY_RUN,
+# VERIFY.
 #
 # NOTE: infra deploy is per-chain and idempotent. The actual fund fan-out (deployEverywhere) is a
 # separate, deliberate step you run from mainnet; it is permissionless and the caller pays the CCIP
