@@ -1,5 +1,5 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = the 18 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued (decision 2026-07-22). Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md. NOTE: `explorerVerified` = block-explorer (Etherscan) SOURCE verification \u2014 false everywhere (deployed without --verify); it is DISTINCT from the on-chain owner()/wiring invariants, which WERE checked post-deploy (see DEPLOYED_ADDRESSES.md).",
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = the 18 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued (decision 2026-07-22). Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md. NOTE: `explorerVerified` = block-explorer SOURCE verification \u2014 now TRUE on all 19 (see `verification` block for verifier per chain).",
   "version": "2.1.1",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
@@ -18,7 +18,7 @@
       "block": 25575540,
       "txHash": "0xe4d80eabd81e21a71007eeb8a992dac7f6c09a41b966c4867e59ec2fe6de741c",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "optimism",
@@ -27,7 +27,7 @@
       "block": 154568805,
       "txHash": "0x8b3d8bd5535a159e8aab12c20259135f310fea5508ea4d4dade65082fa2121d1",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "gnosis",
@@ -36,7 +36,7 @@
       "block": 47335819,
       "txHash": "0x8657748033163577eb4275b25f15608a4e0eb0d92d7f5fba12a0fa34852f69fd",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "base",
@@ -45,7 +45,7 @@
       "block": 48890346,
       "txHash": "0x07be90d192c034ad2404ee08f1b011853cbc0d81f6fb31c182566d760e857779",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "arbitrum",
@@ -54,7 +54,7 @@
       "block": 486581318,
       "txHash": "0x867a001b1605e118963298e22cd96e91bf820214b328826766e46ee5a8414028",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "bnb",
@@ -63,7 +63,7 @@
       "block": 111504023,
       "txHash": "0xa6c00a2a961aa763c76f13abec3756f8344bc7568acbaf9033adec638e7c9539",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "polygon",
@@ -72,7 +72,7 @@
       "block": 90687647,
       "txHash": "0x8d12e274b69e07141580ccce505534527f99605c79bce5a062d4bd00291f1edf",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "avalanche",
@@ -81,7 +81,7 @@
       "block": 90970564,
       "txHash": "0x15dd47b1f95b7c1f2e860b1ee05461124d51dbfebb5187808771ad5ac8b79029",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "celo",
@@ -90,7 +90,7 @@
       "block": 72835737,
       "txHash": "0x11956a97a5d2e5ac635676fae671bb67973eadaefdf7f55ec5826213d8ae731d",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "linea",
@@ -99,7 +99,7 @@
       "block": 31479671,
       "txHash": "0xc2341306977c1cbabe83a606ec5348d022975fb1a64901ca700933057a9467cc",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "scroll",
@@ -108,7 +108,7 @@
       "block": 34442509,
       "txHash": "0x9a676bd958674148df423393930c3e12f25b592a3ca47ea1c6505c1fbef9091f",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "sonic",
@@ -117,7 +117,7 @@
       "block": 76339891,
       "txHash": "0x3c969c5d937019eb094427335f2a6cbfd94939413d4f3fb79b7596f7086a0d5a",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "unichain",
@@ -126,7 +126,7 @@
       "block": 53988189,
       "txHash": "0xf0cf8ab7ed7ece4366ff18146cb3da45e69dac8a3860cde966a840cf595948bc",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "worldchain",
@@ -135,7 +135,17 @@
       "block": 32700462,
       "txHash": "0x315fef87863c3de0b8153628d4a0326d6e39cc8b3715c5c803e1bad6c7ea1f17",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
+    },
+    {
+      "name": "hyperevm",
+      "chainId": 999,
+      "deployed": true,
+      "block": 41163374,
+      "txHash": "0x75924250cc615ce9b68517ac5bb3e367059ac88b26128c7059ac6353342a7772",
+      "explorerVerified": true,
+      "owner": "safe",
+      "note": "required HyperEVM big blocks enabled for the deploy (disabled after). Added to the mainnet selector registry via an OIV Safe tx (script/safe-txs/hyperevm-selector.json)."
     },
     {
       "name": "mantle",
@@ -144,7 +154,7 @@
       "block": 98303146,
       "txHash": "0xc5663624d3ad19301b10c73a1b67f1a3318bb0f2d24616537d78b0346c3cc562",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "plasma",
@@ -153,7 +163,7 @@
       "block": 27796294,
       "txHash": "0x58675ce6836c02d7f87b99cfd22b8f05dbd3d4b84797656f10beb228494d4050",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "ink",
@@ -162,7 +172,7 @@
       "block": 51238251,
       "txHash": "0xe72e471d19375e66d0956d2dadb9930d178625374760261d465eb5478e80ee6e",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     },
     {
       "name": "berachain",
@@ -171,15 +181,10 @@
       "block": 23860979,
       "txHash": "0xa4ae231ca48da91a8ffb1c0050d0eb1c0a4123ac0e1d44ce21622c97aa97be38",
       "owner": "safe",
-      "explorerVerified": false
+      "explorerVerified": true
     }
   ],
   "excluded": [
-    {
-      "name": "hyperevm",
-      "chainId": 999,
-      "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Would need HyperEVM 'big blocks' enabled for the deployer \u2014 the ~7.6M-gas factory deploy exceeds the ~2M small-block cap."
-    },
     {
       "name": "bob",
       "chainId": 60808,
@@ -193,8 +198,49 @@
   ],
   "saltVersion": 2,
   "mainnetSelectorRegistry": {
-    "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
-    "seededBeforeHandover": true,
-    "destinationChainIdCount": 17
+    "destinationChainIdCount": 18,
+    "seededBeforeHandover": {
+      "count": 17,
+      "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+    },
+    "addedAfterHandover": [
+      {
+        "name": "hyperevm",
+        "chainId": 999,
+        "selector": "2442541497099098535",
+        "via": "OIV Safe tx on mainnet (setChainSelector) \u2014 see script/safe-txs/hyperevm-selector.json",
+        "pendingExecution": true
+      }
+    ]
+  },
+  "verification": {
+    "status": "all 19 chains, all 3 contracts source-verified 2026-07-22",
+    "verifiers": {
+      "etherscanV2": [
+        "ethereum",
+        "optimism",
+        "gnosis",
+        "base",
+        "arbitrum",
+        "bnb",
+        "polygon",
+        "avalanche",
+        "celo",
+        "sonic",
+        "unichain",
+        "worldchain",
+        "hyperevm",
+        "mantle",
+        "plasma",
+        "berachain"
+      ],
+      "etherscanV2_dedicatedKey": [
+        "linea"
+      ],
+      "blockscout": {
+        "ink": "https://explorer.inkonchain.com/api/",
+        "scroll": "https://scroll.blockscout.com/api/"
+      }
+    }
   }
 }
