@@ -138,6 +138,16 @@
       "explorerVerified": false
     },
     {
+      "name": "hyperevm",
+      "chainId": 999,
+      "deployed": true,
+      "block": 41163374,
+      "txHash": "0x75924250cc615ce9b68517ac5bb3e367059ac88b26128c7059ac6353342a7772",
+      "explorerVerified": false,
+      "owner": "safe",
+      "note": "required HyperEVM big blocks enabled for the deployer (usingBigBlocks) \u2014 the ~7.6M-gas factory deploy exceeds the ~3M small-block cap; big blocks disabled again after deploy"
+    },
+    {
       "name": "mantle",
       "chainId": 5000,
       "deployed": true,
@@ -175,11 +185,6 @@
     }
   ],
   "excluded": [
-    {
-      "name": "hyperevm",
-      "chainId": 999,
-      "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Would need HyperEVM 'big blocks' enabled for the deployer \u2014 the ~7.6M-gas factory deploy exceeds the ~2M small-block cap."
-    },
     {
       "name": "bob",
       "chainId": 60808,
