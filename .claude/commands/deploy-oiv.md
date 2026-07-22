@@ -185,7 +185,7 @@ If yes, for each asset ask:
 > "Can it be used for **subscriptions** (deposits)? (yes/no)"
 > "Can it be used for **redemptions** (withdrawals)? (yes/no)"
 
-Keep asking until the user says no more. Maximum 20 additional assets.
+Keep asking until the user says no more. Maximum 100 additional assets (the config reader rejects more).
 Validate that no asset is the same as the base asset and that there are no duplicates.
 
 **Step 6.3: Fees**
