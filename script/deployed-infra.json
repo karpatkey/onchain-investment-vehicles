@@ -214,7 +214,7 @@
     ]
   },
   "verification": {
-    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink)",
+    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink + Sourcify v2 + Routescan). Sourcify v2 is the widest: 3 main contracts exact-match on all 19 chains, auto-propagated to Etherscan/Routescan/Blockscout.",
     "contractsCovered": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer", "emptyContract"],
     "verifiers": {
       "etherscanV2": {
@@ -255,8 +255,23 @@
         "chains": ["ethereum", "optimism", "arbitrum", "base", "bnb", "polygon", "avalanche", "linea", "scroll"]
       },
       "sourcify": {
-        "_comment": "Not reached: Sourcify API v1 is in a scheduled brownout (2026-07-07 to 2027-01-08) and forge 1.7.1 only speaks v1. Revisit when forge supports the Sourcify v2 API.",
-        "status": "unavailable"
+        "_comment": "Verified via Sourcify v2 HTTP API (keyless, exact bytecode match from chain state — no constructor args). forge's --verifier sourcify only speaks the deprecated v1 API (in brownout 2026-07-07..2027-01-08), so POST v2 directly at https://sourcify.dev/server/v2/verify/{chainId}/{address}. Sourcify auto-propagates each match to etherscan + routescan + blockscout via externalVerifications. Added 2026-07-23.",
+        "keyless": true,
+        "apiV2Base": "https://sourcify.dev/server/v2",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
+          "hyperevm", "mantle", "plasma", "ink", "berachain"
+        ],
+        "emptyNote": "emptyContract not verifiable on Sourcify (bytecode_length_mismatch — trivial contract); covered on Etherscan V2 + Blockscout instead."
+      },
+      "routescan": {
+        "_comment": "Etherscan-compatible multichain explorer, keyless ('verifyContract' placeholder key). Coverage here was obtained automatically via Sourcify v2 externalVerifications propagation (3 main contracts). Direct forge path also works but hits the .env ETHERSCAN_API_KEY override.",
+        "keyless": true,
+        "via": "sourcify-v2-propagation",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": ["ethereum", "avalanche", "mantle", "plasma", "berachain"]
       }
     }
   }
