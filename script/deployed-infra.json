@@ -214,32 +214,49 @@
     ]
   },
   "verification": {
-    "status": "all 19 chains, all 3 contracts source-verified 2026-07-22",
+    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink)",
+    "contractsCovered": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer", "emptyContract"],
     "verifiers": {
-      "etherscanV2": [
-        "ethereum",
-        "optimism",
-        "gnosis",
-        "base",
-        "arbitrum",
-        "bnb",
-        "polygon",
-        "avalanche",
-        "celo",
-        "sonic",
-        "unichain",
-        "worldchain",
-        "hyperevm",
-        "mantle",
-        "plasma",
-        "berachain"
-      ],
-      "etherscanV2_dedicatedKey": [
-        "linea"
-      ],
+      "etherscanV2": {
+        "_comment": "Primary: all 3 main contracts + emptyContract (Empty filled 2026-07-23). Shared Etherscan V2 multichain key.",
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "sonic", "unichain", "worldchain", "hyperevm",
+          "mantle", "plasma", "berachain"
+        ]
+      },
+      "etherscanV2_dedicatedKey": {
+        "_comment": "Shared key lacked Linea access; used a Linea-scoped Etherscan V2 key.",
+        "chains": ["linea"]
+      },
       "blockscout": {
-        "ink": "https://explorer.inkonchain.com/api/",
-        "scroll": "https://scroll.blockscout.com/api/"
+        "_comment": "The 3 main contracts confirmed is_verified via /api/v2/smart-contracts on all listed instances; emptyContract also confirmed on ethereum/gnosis/arbitrum/celo/unichain/ink/worldchain (pending/failed on base/polygon/scroll). Added 2026-07-23 with a Blockscout Pro key.",
+        "instances": {
+          "ethereum": "https://eth.blockscout.com",
+          "gnosis": "https://gnosis.blockscout.com",
+          "base": "https://base.blockscout.com",
+          "arbitrum": "https://arbitrum.blockscout.com",
+          "polygon": "https://polygon.blockscout.com",
+          "celo": "https://celo.blockscout.com",
+          "scroll": "https://scroll.blockscout.com",
+          "unichain": "https://unichain.blockscout.com",
+          "ink": "https://explorer.inkonchain.com",
+          "worldchain": "https://worldchain-mainnet.explorer.alchemy.com"
+        },
+        "notReached": {
+          "optimism": "optimism.blockscout.com rejected the standard-JSON submission (already covered by Etherscan V2 + OKLink)",
+          "hyperevm": "www.hyperscan.com API reports the address as not-a-contract (incompatible endpoint)"
+        }
+      },
+      "oklink": {
+        "_comment": "Keyless (no Ok-Access-Key needed) standard-JSON verify API. kpkOivFactory/kpkSharesDeployer/ccipOivDeployer confirmed Success. emptyContract not verifiable on OKLink (trivial-contract matcher quirk).",
+        "keyless": true,
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": ["ethereum", "optimism", "arbitrum", "base", "bnb", "polygon", "avalanche", "linea", "scroll"]
+      },
+      "sourcify": {
+        "_comment": "Not reached: Sourcify API v1 is in a scheduled brownout (2026-07-07 to 2027-01-08) and forge 1.7.1 only speaks v1. Revisit when forge supports the Sourcify v2 API.",
+        "status": "unavailable"
       }
     }
   }
