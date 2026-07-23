@@ -214,32 +214,79 @@
     ]
   },
   "verification": {
-    "status": "all 19 chains, all 3 contracts source-verified 2026-07-22",
+    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink + Sourcify v2 + Routescan + Tenderly-public). Sourcify v2 is the widest: 3 main contracts exact-match on all 19 chains, auto-propagated to Etherscan/Routescan/Blockscout. Tenderly public covers the 3 main contracts on 18/19 (all but hyperevm).",
+    "contractsCovered": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer", "emptyContract"],
     "verifiers": {
-      "etherscanV2": [
-        "ethereum",
-        "optimism",
-        "gnosis",
-        "base",
-        "arbitrum",
-        "bnb",
-        "polygon",
-        "avalanche",
-        "celo",
-        "sonic",
-        "unichain",
-        "worldchain",
-        "hyperevm",
-        "mantle",
-        "plasma",
-        "berachain"
-      ],
-      "etherscanV2_dedicatedKey": [
-        "linea"
-      ],
+      "etherscanV2": {
+        "_comment": "Primary: all 3 main contracts + emptyContract (Empty filled 2026-07-23). Shared Etherscan V2 multichain key.",
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "sonic", "unichain", "worldchain", "hyperevm",
+          "mantle", "plasma", "berachain"
+        ]
+      },
+      "etherscanV2_dedicatedKey": {
+        "_comment": "Shared key lacked Linea access; used a Linea-scoped Etherscan V2 key.",
+        "chains": ["linea"]
+      },
       "blockscout": {
-        "ink": "https://explorer.inkonchain.com/api/",
-        "scroll": "https://scroll.blockscout.com/api/"
+        "_comment": "The 3 main contracts confirmed is_verified via /api/v2/smart-contracts on all listed instances; emptyContract also confirmed on ethereum/gnosis/arbitrum/celo/unichain/ink/worldchain (pending/failed on base/polygon/scroll). Added 2026-07-23 with a Blockscout Pro key.",
+        "instances": {
+          "ethereum": "https://eth.blockscout.com",
+          "gnosis": "https://gnosis.blockscout.com",
+          "base": "https://base.blockscout.com",
+          "arbitrum": "https://arbitrum.blockscout.com",
+          "polygon": "https://polygon.blockscout.com",
+          "celo": "https://celo.blockscout.com",
+          "scroll": "https://scroll.blockscout.com",
+          "unichain": "https://unichain.blockscout.com",
+          "ink": "https://explorer.inkonchain.com",
+          "worldchain": "https://worldchain-mainnet.explorer.alchemy.com"
+        },
+        "notReached": {
+          "optimism": "optimism.blockscout.com rejected the standard-JSON submission (already covered by Etherscan V2 + OKLink)",
+          "hyperevm": "www.hyperscan.com API reports the address as not-a-contract (incompatible endpoint)"
+        }
+      },
+      "oklink": {
+        "_comment": "Keyless (no Ok-Access-Key needed) standard-JSON verify API. kpkOivFactory/kpkSharesDeployer/ccipOivDeployer confirmed Success. emptyContract not verifiable on OKLink (trivial-contract matcher quirk).",
+        "keyless": true,
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": ["ethereum", "optimism", "arbitrum", "base", "bnb", "polygon", "avalanche", "linea", "scroll"]
+      },
+      "sourcify": {
+        "_comment": "Verified via Sourcify v2 HTTP API (keyless, exact bytecode match from chain state — no constructor args). forge's --verifier sourcify only speaks the deprecated v1 API (in brownout 2026-07-07..2027-01-08), so POST v2 directly at https://sourcify.dev/server/v2/verify/{chainId}/{address}. Sourcify auto-propagates each match to etherscan + routescan + blockscout via externalVerifications. Added 2026-07-23.",
+        "keyless": true,
+        "apiV2Base": "https://sourcify.dev/server/v2",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
+          "hyperevm", "mantle", "plasma", "ink", "berachain"
+        ],
+        "emptyNote": "emptyContract not verifiable on Sourcify (bytecode_length_mismatch — trivial contract); covered on Etherscan V2 + Blockscout instead."
+      },
+      "routescan": {
+        "_comment": "Etherscan-compatible multichain explorer, keyless ('verifyContract' placeholder key). Coverage here was obtained automatically via Sourcify v2 externalVerifications propagation (3 main contracts). Direct forge path also works but hits the .env ETHERSCAN_API_KEY override.",
+        "keyless": true,
+        "via": "sourcify-v2-propagation",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": ["ethereum", "avalanche", "mantle", "plasma", "berachain"]
+      },
+      "tenderly": {
+        "_comment": "PUBLIC verification (irreversible) via Tenderly's Etherscan-compatible API in the karpatkey/agents project. forge can't be used (its .env ETHERSCAN_API_KEY auto-load overrides the Tenderly verifier-url) — POST directly to https://api.tenderly.co/api/v1/account/{account}/project/{project}/etherscan/verify/network/{chainId}/public with X-Access-Key. Added 2026-07-23.",
+        "public": true,
+        "project": "karpatkey/agents",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
+          "mantle", "plasma", "ink", "berachain"
+        ],
+        "notReached": {
+          "hyperevm": "not supported by Tenderly (chain 999)",
+          "emptyContract": "NOTOK on the trivial Empty contract (same quirk as Sourcify/OKLink) — covered on Etherscan V2 + Blockscout"
+        }
       }
     }
   }
