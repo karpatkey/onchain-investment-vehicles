@@ -214,7 +214,7 @@
     ]
   },
   "verification": {
-    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink + Sourcify v2 + Routescan). Sourcify v2 is the widest: 3 main contracts exact-match on all 19 chains, auto-propagated to Etherscan/Routescan/Blockscout.",
+    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink + Sourcify v2 + Routescan + Tenderly-public). Sourcify v2 is the widest: 3 main contracts exact-match on all 19 chains, auto-propagated to Etherscan/Routescan/Blockscout. Tenderly public covers the 3 main contracts on 18/19 (all but hyperevm).",
     "contractsCovered": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer", "emptyContract"],
     "verifiers": {
       "etherscanV2": {
@@ -272,6 +272,21 @@
         "via": "sourcify-v2-propagation",
         "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
         "chains": ["ethereum", "avalanche", "mantle", "plasma", "berachain"]
+      },
+      "tenderly": {
+        "_comment": "PUBLIC verification (irreversible) via Tenderly's Etherscan-compatible API in the karpatkey/agents project. forge can't be used (its .env ETHERSCAN_API_KEY auto-load overrides the Tenderly verifier-url) — POST directly to https://api.tenderly.co/api/v1/account/{account}/project/{project}/etherscan/verify/network/{chainId}/public with X-Access-Key. Added 2026-07-23.",
+        "public": true,
+        "project": "karpatkey/agents",
+        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
+        "chains": [
+          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
+          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
+          "mantle", "plasma", "ink", "berachain"
+        ],
+        "notReached": {
+          "hyperevm": "not supported by Tenderly (chain 999)",
+          "emptyContract": "NOTOK on the trivial Empty contract (same quirk as Sourcify/OKLink) — covered on Etherscan V2 + Blockscout"
+        }
       }
     }
   }
