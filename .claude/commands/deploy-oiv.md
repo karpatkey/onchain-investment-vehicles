@@ -407,4 +407,8 @@ Show a final message:
   - WETH: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`
   - DAI:  `0x6B175474E89094C44Da98b954EedeAC495271d0F`
   - Security Council Safe: `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`
-  - KpkOivFactory: `0x0d94255fdE65D302616b02A2F070CdB21190d420`
+  - KpkOivFactory: read it from `FACTORY` in `script/DeployOiv.s.sol` — do NOT hardcode it here.
+    That constant is pinned to the deploy path by `test/FactoryAddressSync.t.sol`; this list is not,
+    and it previously named `0x0d94255fdE65D302616b02A2F070CdB21190d420`, the pre-v2.1.1 factory
+    embedding the vulnerable Roles Modifier v2.1.0. Deploying a fund through that address would
+    reproduce both that vulnerability and the missing MultiSend unwrap adapters.

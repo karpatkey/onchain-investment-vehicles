@@ -66,6 +66,12 @@ contract DeployCcipOivDeployer is OivChainDeploy {
 
         vm.startBroadcast();
 
+        // Same preflight `_runChain` performs — see DeployKpkOivFactory.s.sol for why the standalone
+        // onboarding path must not skip it. The orchestrator's whole purpose is to drive `deployStack`
+        // on this chain, which reverts without these.
+        _ensureEmpty();
+        _ensureMultiSendUnwrapper();
+
         if (predicted.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_CCIP, initCode));
             require(ok, "CcipOivDeployer CREATE2 deploy failed");

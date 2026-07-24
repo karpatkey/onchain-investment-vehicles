@@ -60,6 +60,26 @@ contract HostileMultiSend {
 }
 
 /// @title MultiSend unwrapper attack surface — PoC suite for PR #37
+/// @notice Records WHY the factory asserts the exact codehash of all three MultiSend-unwrapping
+///         addresses, and what batching does and does not grant.
+///
+///         Scenario A is the load-bearing one: registering an unwrap adapter for `(target, selector)`
+///         makes `PermissionChecker._authorize` take a branch that never reads `role.targets[to]`
+///         and never evaluates the outer `ExecutionOptions`, so it is an unconditional
+///         un-permission-checked DELEGATECALL grant to that target for every role. B and C show the
+///         consequences when the code at such a target is not what we assume.
+///
+///         IMPORTANT — B and C describe a gap that is now CLOSED. `_deployAndWireStack` asserts the
+///         exact codehash of `MULTI_SEND`, `MULTI_SEND_CALLS_ONLY` and `MULTISEND_UNWRAPPER`, so
+///         neither is reachable through an ordinary fund deploy; both reach their state by `vm.etch`
+///         AFTER `deployOiv` has run, deliberately stepping around the guard. The guards' own
+///         coverage lives in `test/KpkOivFactory.t.sol`
+///         (`test_deployOiv_revertsWhenMultiSendIsNotCanonical` and siblings).
+///
+///         D–H are the hypotheses that were tested and REJECTED: batching cannot bypass
+///         `ExecutionOptions.DelegateCall` or `Send`, cannot exceed an allowance (consumptions
+///         accumulate across entries), cannot recurse through a nested `multiSend`, and cannot mix
+///         roles. The inner calls of a batch are permission-checked exactly as unbatched calls.
 contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
     address factoryOwner = makeAddr("factoryOwner");
     address admin = makeAddr("admin");
@@ -184,11 +204,20 @@ contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
         IRolesExt(execMod).scopeFunction(MANAGER, USDC, IERC20.transfer.selector, c, 0);
         vm.stopPrank();
 
-        // The factory asserts the UNWRAPPER has code but never asserts anything about the two
-        // MultiSend targets it registers the unwrapper against.
-        assertGt(factory.MULTISEND_UNWRAPPER().code.length, 0, "unwrapper present (factory checks this)");
+        // HISTORICAL: when this PoC was written the factory checked only that the UNWRAPPER had
+        // code, and asserted nothing about the two MultiSend targets — so this scenario was
+        // reachable through an ordinary fund deploy. That gap is now CLOSED: `_deployAndWireStack`
+        // asserts the exact codehash of all three (`MultiSendUnwrapperMissing`,
+        // `MultiSendMissing(address)`), which is precisely what this PoC motivated.
+        //
+        // The scenario is retained because it documents the CONSEQUENCE the guards prevent, and it
+        // only still executes because the `vm.etch` below runs AFTER `deployOiv` in `setUp` — i.e.
+        // it deliberately steps around the guard to reach the state a codeless target produces.
+        // Do not read it as evidence that the factory is unvalidated; see
+        // `test_deployOiv_revertsWhenMultiSendIsNotCanonical` for the guard's own coverage.
+        assertGt(factory.MULTISEND_UNWRAPPER().code.length, 0, "unwrapper present");
         vm.etch(MULTI_SEND, "");
-        assertEq(MULTI_SEND.code.length, 0, "MultiSend absent (factory checks nothing)");
+        assertEq(MULTI_SEND.code.length, 0, "MultiSend absent (etched past the deploy-time guard)");
 
         uint256 balBefore = IERC20(USDC).balanceOf(avatarSafe);
         bytes memory batch = _batch(_entry(0, USDC, 0, abi.encodeCall(IERC20.transfer, (attacker, 1000e6))));

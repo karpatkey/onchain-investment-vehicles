@@ -952,10 +952,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         if (EMPTY_CONTRACT.codehash != EXPECTED_EMPTY_CODEHASH) revert EmptyContractMissing();
 
         // Defense against the MultiSend unwrapping infrastructure being absent or non-canonical on
-        // the current chain (the unwrapper was missing on Linea and Scroll until 2026-07-24).
-        // Registration makes each MultiSend an unconditional DELEGATECALL sink for every role on
-        // every modifier this fund gets, so all three are asserted by exact codehash — see
-        // `EXPECTED_MULTI_SEND_CODEHASH` for why presence alone is not enough.
+        // the current chain. Registration makes each MultiSend an unconditional DELEGATECALL sink
+        // for every role on every modifier this fund gets, so all three are asserted by exact
+        // codehash — see `EXPECTED_MULTI_SEND_CODEHASH` for why presence alone is not enough.
+        // (Per-chain availability history lives in docs/DEPLOYED_ADDRESSES.md, not here: editing a
+        // comment in this compilation unit moves every deployed address.)
         if (MULTISEND_UNWRAPPER.codehash != EXPECTED_MULTISEND_UNWRAPPER_CODEHASH) {
             revert MultiSendUnwrapperMissing();
         }

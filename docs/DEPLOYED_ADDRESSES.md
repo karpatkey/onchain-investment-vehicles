@@ -14,13 +14,13 @@ Source of truth: each chain's commit on this branch lists addresses, broadcast t
 
 The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moves. `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three move together**; only `Empty` keeps its address. The salts are bumped to `uint256(3)`.
 
-Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (these are a function of the compiled bytecode — including NatSpec, since the solc metadata hash is embedded — so they change with any source edit; `test/FactoryAddressSync.t.sol` pins the factory address to what the deploy path actually produces, so drift fails CI):
+Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (these are a function of the compiled bytecode — including NatSpec, since the solc metadata hash is embedded — so they change with any source edit; **all three are pinned by `test/FactoryAddressSync.t.sol`** against what the deploy path actually produces, so drift fails CI rather than reaching a rollout):
 
 | Contract | Predicted salt-v3 address |
 |---|---|
-| `KpkOivFactory` | `0xBBf113f5767a43aBbe517A5A46f080A04b381bB8` |
-| `KpkSharesDeployer` | `0x9A7D378f7fF97f886Cbc333b54647c1c402aadd9` |
-| `CcipOivDeployer` | `0xe94C3a230fac10A5066aC2f41005db1cb6F3FEeb` |
+| `KpkOivFactory` | `0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F` |
+| `KpkSharesDeployer` | `0xea084E763F8535CBe28759b990F963BeDf60be9a` |
+| `CcipOivDeployer` | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 > ### ⚠️ Build these from a clean clone, not a working tree
@@ -33,7 +33,7 @@ Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1
 >
 > The values above were produced by a **fresh `git clone --recurse-submodules`** of this branch and match what CI computes, which is the only reproducible reference. A local tree that has drifted will silently produce different bytecode — which would also break explorer source verification, since verification compares metadata.
 >
-> **Before broadcasting the v3 rollout: clone fresh, run `test/FactoryAddressSync.t.sol`, and re-derive all three addresses there.** That test pins `DeployOiv.FACTORY`; `KpkSharesDeployer` and `CcipOivDeployer` are not pinned by any test and must be re-derived by hand.
+> **Before broadcasting the v3 rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone is the confirmation that the table above matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant.
 
 > **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. Complete the v3 rollout on all 19 chains before deploying any new fund.
 

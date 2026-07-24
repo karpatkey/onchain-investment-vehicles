@@ -39,21 +39,25 @@ library OivInfraConstants {
     // fails. The factory therefore registers `MULTISEND_UNWRAPPER` for the `multiSend(bytes)`
     // selector on both MultiSend contracts, on every Roles Modifier it deploys.
 
-    /// @notice Gnosis Safe v1.4.1 `MultiSend`. Byte-identical on all 19 deployed chains (verified
-    ///         2026-07-24 by EXTCODEHASH sweep — `0x0e4f7fc6…` everywhere).
+    // NOTE: keep the comments below free of dated operational history (which chain got what, when).
+    // `foundry.toml` leaves `bytecode_hash` at its solc default, so this file's text is hashed into
+    // the metadata of every contract that imports it — editing a comment here moves the CREATE2
+    // addresses of KpkOivFactory, KpkSharesDeployer and CcipOivDeployer, forcing a salt bump and a
+    // 19-chain re-rollout. Per-chain status and deployment history belong in
+    // docs/DEPLOYED_ADDRESSES.md and script/deployed-infra.json, which cost nothing to update.
+
+    /// @notice Gnosis Safe v1.4.1 `MultiSend`.
     address internal constant MULTI_SEND = 0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526;
 
-    /// @notice Gnosis Safe v1.4.1 `MultiSendCallOnly`. Byte-identical on all 19 deployed chains
-    ///         (`0xecd5bd14…` everywhere). Shares the `multiSend(bytes)` selector with `MULTI_SEND`,
-    ///         so it needs its own unwrapper registration — the adapter is keyed on (target, selector).
+    /// @notice Gnosis Safe v1.4.1 `MultiSendCallOnly`. Shares the `multiSend(bytes)` selector with
+    ///         `MULTI_SEND`, so it needs its own unwrapper registration — the adapter is keyed on
+    ///         the (target, selector) pair.
     address internal constant MULTI_SEND_CALLS_ONLY = 0x9641d764fc13c8B624c04430C7356C1C7C8102e2;
 
     /// @notice Zodiac `MultiSendUnwrapper` — decomposes a `multiSend(bytes)` payload into the
     ///         individual calls the Roles Modifier then permission-checks one by one.
     /// @dev    Deployed via the EIP-2470 SingletonFactory (`0xce0042B868300000d44A59004Da54A005ffdcf9f`)
-    ///         with salt 0, so it lands at this address on any chain. It was missing on Linea and
-    ///         Scroll until 2026-07-24, when it was deployed there from the same init code —
-    ///         EXTCODEHASH is now `0x1f6e088b…` on all 19 chains.
+    ///         with salt 0, so it lands at this address on any chain.
     ///
     ///         GOTCHA: the SingletonFactory swallows a failed inner CREATE2 (returns `address(0)`
     ///         without reverting), so `eth_estimateGas` happily returns a limit at which the

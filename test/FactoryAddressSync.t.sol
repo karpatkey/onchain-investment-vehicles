@@ -46,4 +46,33 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
             "DeployOiv.FACTORY points at the legacy factory (vulnerable Roles Modifier v2.1.0)"
         );
     }
+
+    // ── Documented salt-v3 predictions ─────────────────────────────────────────
+    //
+    // docs/DEPLOYED_ADDRESSES.md publishes all three predicted addresses, but only the factory was
+    // pinned — and all three shipped stale once already, moved by a metadata-hash change from a
+    // NatSpec edit. These pin the other two so the published table cannot rot silently before a
+    // 19-chain rollout. When they fail, re-derive from a CLEAN CLONE (a drifted working tree
+    // produces different values) and update both the constants here and the doc table.
+
+    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0xea084E763F8535CBe28759b990F963BeDf60be9a;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b;
+
+    function test_documentedSharesDeployerAddressMatchesDeployPath() public pure {
+        address factory = _predictFactory(CANONICAL_EOA_OWNER);
+        assertEq(
+            _create2Address(SALT_DEPLOYER, _deployerInitCode(factory)),
+            DOCUMENTED_SHARES_DEPLOYER,
+            "KpkSharesDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
+
+    function test_documentedOrchestratorAddressMatchesDeployPath() public pure {
+        address factory = _predictFactory(CANONICAL_EOA_OWNER);
+        assertEq(
+            _create2Address(SALT_CCIP, _orchestratorInitCode(CANONICAL_EOA_OWNER, factory)),
+            DOCUMENTED_ORCHESTRATOR,
+            "CcipOivDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
 }

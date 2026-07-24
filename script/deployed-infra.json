@@ -4,7 +4,7 @@
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
   "canonical": {
-    "_comment": "Same address on every chain (deterministic CREATE2, salt v2). owner()==finalOwner (Safe) post-handover.",
+    "_comment": "SUPERSEDED BY SALT V3 — these are the salt-v2 addresses, still live on all 19 chains but built BEFORE the MultiSend unwrap-adapter fix, so any fund deployed through this factory gets Roles Modifiers that reject batched multiSend calls. Do NOT deploy new funds through kpkOivFactory below; use the salt-v3 addresses in docs/DEPLOYED_ADDRESSES.md once that rollout lands, and note that a fund must not straddle the two factory versions (the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions). Same address on every chain (deterministic CREATE2, salt v2). owner()==finalOwner (Safe) post-handover.",
     "kpkOivFactory": "0xfff31e9948E2afF718Ca0f80C349ebE90F50f965",
     "kpkSharesDeployer": "0x04F61ea9F320473aC1439F025D014DC39e0652B0",
     "ccipOivDeployer": "0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc",

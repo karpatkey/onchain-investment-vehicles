@@ -1112,6 +1112,18 @@ contract KpkOivFactoryHarness is KpkOivFactory {
         )
     {}
 
+    /// @dev Exposes the factory's `internal` expected-codehash constants so a sync test can pin the
+    ///      duplicate copies in `script/base/OivChainDeploy.sol` to the REAL values the factory
+    ///      compiles in, rather than to another transcription of the same literals.
+    function exposed_expectedMultiSendCodehashes() external pure returns (bytes32, bytes32, bytes32) {
+        return
+            (
+                EXPECTED_MULTI_SEND_CODEHASH,
+                EXPECTED_MULTI_SEND_CALLS_ONLY_CODEHASH,
+                EXPECTED_MULTISEND_UNWRAPPER_CODEHASH
+            );
+    }
+
     function exposed_execApprove(address avatarSafe, address asset, address spender) external {
         _execApprove(avatarSafe, asset, spender);
     }
