@@ -301,8 +301,7 @@ contract KpkOivFactoryTest is OivTestConstants {
 
         // operation 1 = DELEGATECALL — MultiSend refuses to run any other way.
         vm.prank(inst.managerSafe);
-        bool success =
-            IRoles(inst.execRolesModifier).execTransactionWithRole(multiSend, 0, batch, 1, managerRole, true);
+        bool success = IRoles(inst.execRolesModifier).execTransactionWithRole(multiSend, 0, batch, 1, managerRole, true);
         assertTrue(success, "batched multiSend through execRolesModifier failed");
 
         // Negative control: without the adapter the identical batch is rejected.
