@@ -38,8 +38,9 @@ contract KpkOivFactoryTest is OivTestConstants {
     ///      independently check the selector the factory registers the unwrap adapter against.
     bytes4 internal constant MULTI_SEND_SELECTOR = bytes4(keccak256("multiSend(bytes)"));
 
-    /// @dev `ConditionViolation(Status,bytes32)` — the wrapper Roles v2.1 reverts with when a
-    ///      permission check fails; the specific reason travels in the `Status` enum parameter.
+    /// @dev `ConditionViolation(Status,bytes32)` — the error Roles v2.1 wraps every failed
+    ///      permission check in. The specific reason travels in the `Status` enum parameter, which
+    ///      is why assertions match on the selector rather than on a bare error signature.
     bytes4 internal constant CONDITION_VIOLATION_SELECTOR = bytes4(keccak256("ConditionViolation(uint8,bytes32)"));
 
     // ── Setup ───────────────────────────────────────────────────────────────────
