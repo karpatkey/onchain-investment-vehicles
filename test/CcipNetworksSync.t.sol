@@ -159,5 +159,32 @@ contract CcipNetworksSyncTest is Test {
             OivInfraConstants.ROLES_MODIFIER_MASTERCOPY,
             "infra.rolesModifierMastercopy drift (ccip-networks.json vs OivInfraConstants)"
         );
+        assertEq(
+            json.readAddress(".infra.multiSend"),
+            OivInfraConstants.MULTI_SEND,
+            "infra.multiSend drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.multiSendCallsOnly"),
+            OivInfraConstants.MULTI_SEND_CALLS_ONLY,
+            "infra.multiSendCallsOnly drift (ccip-networks.json vs OivInfraConstants)"
+        );
+        assertEq(
+            json.readAddress(".infra.multiSendUnwrapper"),
+            OivInfraConstants.MULTISEND_UNWRAPPER,
+            "infra.multiSendUnwrapper drift (ccip-networks.json vs OivInfraConstants)"
+        );
+    }
+
+    /// @dev The factory registers the unwrap adapter against `multiSend(bytes)` on every Roles
+    ///      Modifier it deploys. Pin the selector so a mistyped signature in the library cannot
+    ///      silently register the adapter under a key nothing ever calls — the failure mode would
+    ///      only surface in production, as a fund whose batched transactions all revert.
+    function test_multiSendSelectorMatchesSignature() public pure {
+        assertEq(
+            OivInfraConstants.MULTI_SEND_SELECTOR,
+            bytes4(keccak256("multiSend(bytes)")),
+            "MULTI_SEND_SELECTOR is not bytes4(keccak256('multiSend(bytes)'))"
+        );
     }
 }

@@ -1,0 +1,138 @@
+{
+  "version": "1.0",
+  "chainId": "1",
+  "createdAt": 1784923200000,
+  "meta": {
+    "name": "oiv_prod_usd \u2014 register MultiSend unwrappers on the sub + manager Roles Modifiers",
+    "description": "setTransactionUnwrapper(MultiSend, multiSend(bytes), MultiSendUnwrapper) and the same for MultiSendCallOnly, on the sub Roles Modifier 0xB15400Bb735CF9d91E09d097f2dA588ebe760D49 and the manager Roles Modifier 0x988A15711CCDF16C06010bb41AaEBF39e407cD7F. Both are owned by this Manager Safe. Without these the modifier cannot decompose a batched multiSend and rejects it wholesale. Txs 1-2 (sub ZRM) are the ones reported in the 2026-07-24 thread; txs 3-4 (manager ZRM) close the identical gap on the third modifier, which has the same missing registration. The exec Roles Modifier is owned by the OIV Safe \u2014 see oiv-prod-usd-unwrappers-oiv-safe.json.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0xB15400Bb735CF9d91E09d097f2dA588ebe760D49",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    },
+    {
+      "to": "0xB15400Bb735CF9d91E09d097f2dA588ebe760D49",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x9641d764fc13c8B624c04430C7356C1C7C8102e2",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    },
+    {
+      "to": "0x988A15711CCDF16C06010bb41AaEBF39e407cD7F",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    },
+    {
+      "to": "0x988A15711CCDF16C06010bb41AaEBF39e407cD7F",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x9641d764fc13c8B624c04430C7356C1C7C8102e2",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    }
+  ]
+}

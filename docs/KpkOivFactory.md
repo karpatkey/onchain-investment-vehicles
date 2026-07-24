@@ -140,6 +140,8 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
 
 The factory is **always** included as a setup-time Avatar Safe module in both flows so the Safe `setup()` initializer is byte-identical across `deployStack` and `deployOiv`. The factory is disabled as a module before each entry point returns; in `deployStack` it is never used, while in `deployOiv` it routes the token-allowance approvals.
 
+Each of the three wiring steps registers the Zodiac `MultiSendUnwrapper` (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) against both Safe MultiSend contracts — `MultiSend` (`0x38869bf6…B526`) and `MultiSendCallOnly` (`0x9641d764…02e2`) — for the `multiSend(bytes)` selector. A Roles Modifier permission-checks one call at a time, so without an unwrap adapter a batched `multiSend` arrives as a single opaque delegatecall it cannot decompose and rejects outright. **The registration must happen before `transferOwnership`**: `setTransactionUnwrapper` is owner-only, so once the modifier belongs to the Security Council or Manager Safe it can only be fixed by a multisig transaction. The adapter is keyed on the `(target, selector)` pair, which is why each MultiSend variant needs its own registration. Deployment reverts with `MultiSendUnwrapperMissing` if the unwrapper has no bytecode on the current chain.
+
 ```
 1. Deploy execRolesModifier    (factory = owner / avatar / target)
 2. Deploy subRolesModifier     (factory = owner / avatar / target)
@@ -151,10 +153,13 @@ The factory is **always** included as a setup-time Avatar Safe module in both fl
                                → assign MANAGER role to managerSafe
                                → enable subRolesModifier as nested module
                                → assign MANAGER role + default role to subRolesModifier
+                               → register MultiSend unwrap adapters
                                → transfer ownership to execRolesMod.finalOwner
 7. Wire subRolesModifier       → avatar = avatarSafe, target = execRolesModifier
+                               → register MultiSend unwrap adapters
                                → transfer ownership to managerSafe
 8. Wire managerRolesModifier   → avatar = managerSafe, target = managerSafe
+                               → register MultiSend unwrap adapters
                                → transfer ownership to managerSafe
 
 ── deployStack: remove factory as module from Avatar Safe and stop ────────

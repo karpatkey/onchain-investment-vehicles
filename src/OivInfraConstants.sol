@@ -30,4 +30,38 @@ library OivInfraConstants {
     ///         authorization bypass (triggerable when a Safe using the CompatibilityFallbackHandler
     ///         is a role member — exactly this architecture), so the whole stack must use v2.1.1.
     address internal constant ROLES_MODIFIER_MASTERCOPY = 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5;
+
+    // ── MultiSend unwrapping ────────────────────────────────────────────────────
+    //
+    // A Roles Modifier checks permissions per individual call. A `multiSend(bytes)` batch arrives
+    // as ONE opaque delegatecall, so without an unwrap adapter registered for the MultiSend target
+    // the modifier cannot decompose the batch and rejects it outright — every batched operation
+    // fails. The factory therefore registers `MULTISEND_UNWRAPPER` for the `multiSend(bytes)`
+    // selector on both MultiSend contracts, on every Roles Modifier it deploys.
+
+    /// @notice Gnosis Safe v1.4.1 `MultiSend`. Byte-identical on all 19 deployed chains (verified
+    ///         2026-07-24 by EXTCODEHASH sweep — `0x0e4f7fc6…` everywhere).
+    address internal constant MULTI_SEND = 0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526;
+
+    /// @notice Gnosis Safe v1.4.1 `MultiSendCallOnly`. Byte-identical on all 19 deployed chains
+    ///         (`0xecd5bd14…` everywhere). Shares the `multiSend(bytes)` selector with `MULTI_SEND`,
+    ///         so it needs its own unwrapper registration — the adapter is keyed on (target, selector).
+    address internal constant MULTI_SEND_CALLS_ONLY = 0x9641d764fc13c8B624c04430C7356C1C7C8102e2;
+
+    /// @notice Zodiac `MultiSendUnwrapper` — decomposes a `multiSend(bytes)` payload into the
+    ///         individual calls the Roles Modifier then permission-checks one by one.
+    /// @dev    Deployed via the EIP-2470 SingletonFactory (`0xce0042B868300000d44A59004Da54A005ffdcf9f`)
+    ///         with salt 0, so it lands at this address on any chain. It was missing on Linea and
+    ///         Scroll until 2026-07-24, when it was deployed there from the same init code —
+    ///         EXTCODEHASH is now `0x1f6e088b…` on all 19 chains.
+    ///
+    ///         GOTCHA: the SingletonFactory swallows a failed inner CREATE2 (returns `address(0)`
+    ///         without reverting), so `eth_estimateGas` happily returns a limit at which the
+    ///         code-deposit step runs out of gas and the outer tx still "succeeds". Send the deploy
+    ///         with an explicit gas limit (~1.5M), then assert EXTCODEHASH — never trust the receipt.
+    address internal constant MULTISEND_UNWRAPPER = 0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD;
+
+    /// @notice `bytes4(keccak256("multiSend(bytes)"))` — the selector both MultiSend contracts expose
+    ///         and the one the unwrap adapter is registered against.
+    bytes4 internal constant MULTI_SEND_SELECTOR = 0x8d80ff0a;
 }

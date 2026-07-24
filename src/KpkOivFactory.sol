@@ -11,6 +11,7 @@ import {ISafeProxyFactory} from "./interfaces/ISafeProxyFactory.sol";
 import {ISafeModuleSetup} from "./interfaces/ISafeModuleSetup.sol";
 import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
+import {OivInfraConstants} from "./OivInfraConstants.sol";
 
 /// @notice Minimal interface for KpkSharesDeployer.
 /// @dev    Kept as a local interface so importing KpkSharesDeployer.sol (which imports KpkShares)
@@ -109,6 +110,27 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev Head sentinel of the Gnosis Safe module linked-list. The list is ordered from most
     ///      recently enabled to oldest: SENTINEL → newest → … → oldest → SENTINEL.
     address private constant SENTINEL_MODULES = address(0x1);
+
+    /// @notice Gnosis Safe v1.4.1 `MultiSend`, registered for unwrapping on every Roles Modifier
+    ///         this factory deploys.
+    address public constant MULTI_SEND = OivInfraConstants.MULTI_SEND;
+
+    /// @notice Gnosis Safe v1.4.1 `MultiSendCallOnly`, registered separately because the unwrap
+    ///         adapter is keyed on the `(target, selector)` pair.
+    address public constant MULTI_SEND_CALLS_ONLY = OivInfraConstants.MULTI_SEND_CALLS_ONLY;
+
+    /// @notice Zodiac `MultiSendUnwrapper` registered against both MultiSend contracts.
+    /// @dev    Deliberately a `constant` rather than an owner-settable infrastructure address, in
+    ///         the same tier as `EMPTY_CONTRACT`. The unwrapper decides how a batch is split into
+    ///         the individual calls that then get permission-checked, so a swapped adapter could
+    ///         mis-decompose a batch and slip unchecked calls past every role — a privilege
+    ///         escalation on all future funds. It is a canonical CREATE2 address, identical on all
+    ///         19 chains, so there is no legitimate reason for it to vary per deployment.
+    address public constant MULTISEND_UNWRAPPER = OivInfraConstants.MULTISEND_UNWRAPPER;
+
+    /// @dev `multiSend(bytes)` — the selector the unwrap adapter is registered against on both
+    ///      MultiSend contracts.
+    bytes4 private constant MULTI_SEND_SELECTOR = OivInfraConstants.MULTI_SEND_SELECTOR;
 
     // ── Infrastructure addresses ───────────────────────────────────────────────
 
@@ -355,6 +377,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         codehash). The Avatar Safe would otherwise get an owner that is not the always-
     ///         reverting `Empty`, breaking the Roles-Modifier-only execution invariant.
     error EmptyContractMissing();
+
+    /// @notice Thrown when `MULTISEND_UNWRAPPER` has no bytecode on the current chain. Deploying a
+    ///         fund would otherwise register an adapter that cannot decompose a batch, leaving every
+    ///         `multiSend` through the Roles Modifiers permanently rejected — the exact defect this
+    ///         wiring exists to prevent, and one only discovered in production. The unwrapper is
+    ///         deployable permissionlessly at its canonical address on any chain (EIP-2470
+    ///         SingletonFactory, salt 0), so this fails closed rather than degrading silently.
+    error MultiSendUnwrapperMissing();
 
     /// @notice Thrown when `deployOiv` is called before `setKpkSharesDeployer` has wired the
     ///         deployer post-construction. This is only reachable in the brief window between
@@ -877,6 +907,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // existing codeless one has keccak256(""); both differ from EXPECTED, so "missing" is covered.)
         if (EMPTY_CONTRACT.codehash != EXPECTED_EMPTY_CODEHASH) revert EmptyContractMissing();
 
+        // Defense against the canonical MultiSendUnwrapper being absent on the current chain (it
+        // was missing on Linea and Scroll until 2026-07-24). Registering a codeless adapter would
+        // produce a fund that looks correctly wired but rejects every batched transaction.
+        if (MULTISEND_UNWRAPPER.code.length == 0) revert MultiSendUnwrapperMissing();
+
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(config.salt, msg.sender);
 
@@ -1031,6 +1066,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         IRoles(mod).assignRoles(subMod, roleKeys, memberOf);
         IRoles(mod).setAvatar(avatarSafe);
         IRoles(mod).setTarget(avatarSafe);
+        _registerMultiSendUnwrappers(mod);
         IRoles(mod).transferOwnership(finalOwner);
     }
 
@@ -1045,6 +1081,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function _wireSubModifier(address mod, address avatarSafe, address execMod, address managerSafe) internal {
         IRoles(mod).setAvatar(avatarSafe);
         IRoles(mod).setTarget(execMod);
+        _registerMultiSendUnwrappers(mod);
         IRoles(mod).transferOwnership(managerSafe);
     }
 
@@ -1057,7 +1094,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function _wireManagerModifier(address mod, address managerSafe) internal {
         IRoles(mod).setAvatar(managerSafe);
         IRoles(mod).setTarget(managerSafe);
+        _registerMultiSendUnwrappers(mod);
         IRoles(mod).transferOwnership(managerSafe);
+    }
+
+    /// @dev Registers the Zodiac MultiSendUnwrapper against both Safe MultiSend contracts on `mod`.
+    ///      A Roles Modifier permission-checks one call at a time; a `multiSend(bytes)` batch
+    ///      arrives as a single opaque delegatecall, so without an unwrap adapter the modifier
+    ///      cannot decompose it and rejects the whole batch. Both MultiSend variants share the
+    ///      `multiSend(bytes)` selector but the adapter is keyed on `(target, selector)`, so each
+    ///      needs its own registration.
+    ///
+    ///      MUST be called while the factory is still the modifier's owner — i.e. before the
+    ///      `transferOwnership` that ends each wiring helper. `setTransactionUnwrapper` is
+    ///      `onlyOwner`, and once ownership has moved to the Security Council or Manager Safe the
+    ///      registration can only be done by a multisig transaction after the fact.
+    /// @param mod Roles Modifier to configure (factory must still be its owner).
+    function _registerMultiSendUnwrappers(address mod) internal {
+        IRoles(mod).setTransactionUnwrapper(MULTI_SEND, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
+        IRoles(mod).setTransactionUnwrapper(MULTI_SEND_CALLS_ONLY, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
     }
 
     /// @dev Deploys a fresh KpkShares implementation via `kpkSharesDeployer` (ensuring each fund
