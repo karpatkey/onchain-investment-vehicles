@@ -216,7 +216,7 @@
     "verifiedOnChainPostHandover": true
   },
   "verification": {
-    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends. Every number below was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi), never from a forge exit code.",
+    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends (Sourcify v2 57/57, Etherscan V2 51/51 on its 17 chains, Blockscout 30/30, Routescan 15/15 on its 5 chains, Tenderly 54/57 public). OKLink is indeterminate due to IP rate-limiting and adds no coverage that is not already held. Every figure was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi), never from a forge exit code.",
     "contractsCovered": [
       "kpkOivFactory",
       "kpkSharesDeployer",
@@ -286,8 +286,18 @@
         ]
       },
       "oklink": {
-        "_comment": "Keyless (browser UA required). Sweep in progress at time of writing; OKLink is exact-match and only exposes guid-based status, so results must come from the submit/poll cycle.",
-        "result": "PENDING"
+        "_comment": "INDETERMINATE - not a confirmed gap. OKLink verification is keyless but heavily IP rate-limited: a first pass returned 7 confirmed 'Success' and 18 'Pending' (Pending = still compiling server-side, NOT failed), and a second pass was rate-limited (code 50026) on all 27 submissions. OKLink exposes no keyless READ endpoint to settle it: the guid check needs a guid from a fresh submit, and its Etherscan-compat getsourcecode requires an OK-ACCESS-KEY this session does not have. Retry later from a cooled-down IP, or with an OK-ACCESS-KEY, if OKLink coverage is wanted.",
+        "result": "indeterminate (>=7/27 confirmed Success; remainder unknown)",
+        "confirmedSuccess": [
+          "optimism/kpkSharesDeployer",
+          "base/kpkSharesDeployer",
+          "bnb/kpkSharesDeployer",
+          "polygon/kpkSharesDeployer",
+          "avalanche/kpkSharesDeployer",
+          "linea/kpkSharesDeployer",
+          "scroll/kpkSharesDeployer"
+        ],
+        "impact": "None on coverage: every chain OKLink serves is already verified on Sourcify v2 + Etherscan V2 (or Blockscout for scroll) + Tenderly."
       }
     }
   },
