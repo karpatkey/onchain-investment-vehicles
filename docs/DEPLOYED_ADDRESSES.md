@@ -18,12 +18,22 @@ Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1
 
 | Contract | Predicted salt-v3 address |
 |---|---|
-| `KpkOivFactory` | `0xf6c2a1C5B3E6119beF4214bcc465ABc2eE93cfC9` |
-| `KpkSharesDeployer` | `0x69A5e1D7E8aa61C2A7a8afE893793a1b56B9fA5A` |
-| `CcipOivDeployer` | `0x9ab745e6be65723a58b2568233C1cf48A4eB3705` |
+| `KpkOivFactory` | `0xBBf113f5767a43aBbe517A5A46f080A04b381bB8` |
+| `KpkSharesDeployer` | `0x9A7D378f7fF97f886Cbc333b54647c1c402aadd9` |
+| `CcipOivDeployer` | `0xe94C3a230fac10A5066aC2f41005db1cb6F3FEeb` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
-> These are sensitive to *any* source edit, including comments: `foundry.toml` leaves `bytecode_hash` at its default, so the solc metadata hash is embedded in the creation code. Editing a NatSpec line in `IRoles.sol` alone moved the factory from `0xE956…A63e` to the address above. **Re-derive them immediately before broadcasting** — `test/FactoryAddressSync.t.sol` will fail CI if `DeployOiv.FACTORY` drifts, but the other two are not pinned by any test.
+> ### ⚠️ Build these from a clean clone, not a working tree
+>
+> `foundry.toml` leaves `bytecode_hash` at its default, so the solc **metadata hash is embedded in the creation code** — and that hash covers the *source paths* of every dependency, not just their content. The addresses above are therefore a property of the build environment as much as of the code:
+>
+> - Editing a single NatSpec line in `IRoles.sol` moved the factory address.
+> - An untracked `lib/openzeppelin-contracts/` in a working tree makes forge remap `@openzeppelin/contracts/` to it instead of the nested copy under `lib/openzeppelin-contracts-upgradeable/`. Same OZ version (5.0.2), same behaviour, **different address** — because the paths baked into the metadata differ.
+> - Nested submodules left off their pinned commits shift it again.
+>
+> The values above were produced by a **fresh `git clone --recurse-submodules`** of this branch and match what CI computes, which is the only reproducible reference. A local tree that has drifted will silently produce different bytecode — which would also break explorer source verification, since verification compares metadata.
+>
+> **Before broadcasting the v3 rollout: clone fresh, run `test/FactoryAddressSync.t.sol`, and re-derive all three addresses there.** That test pins `DeployOiv.FACTORY`; `KpkSharesDeployer` and `CcipOivDeployer` are not pinned by any test and must be re-derived by hand.
 
 > **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. Complete the v3 rollout on all 19 chains before deploying any new fund.
 
