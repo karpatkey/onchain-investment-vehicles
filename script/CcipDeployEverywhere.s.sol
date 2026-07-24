@@ -165,9 +165,19 @@ contract CcipDeployEverywhere is OivConfigReader {
 
     /// @dev A registry entry is seedable into the chain mapping when it is wired AND a CCIP
     ///      destination (the source chain is deployed to locally, never via CCIP).
+    /// @dev A chain is seedable only if it is wired, is a destination, AND is not marked `excluded`.
+    ///      The exclusion check is load-bearing: `verdict` describes whether a chain COULD host the
+    ///      infra, not whether it DOES. `bob` and `katana` are both `READY-AFTER-EMPTY` but have no
+    ///      infra deployed (the deployer was unfunded there), so without this they get selectors and
+    ///      the no-array `deployEverywhere` fans out to them — spending a non-refundable CCIP fee on
+    ///      messages whose delivery reverts, and landing the fund on every chain but those two.
+    ///      Observed for real during the salt-v3 rollout: seeding produced 20 destinations instead of
+    ///      18, and the extra two had to be removed before ownership moved to the Safe.
     function _seedable(string memory json, string memory base) internal view returns (bool) {
         string memory verdict = json.readString(string.concat(base, ".verdict"));
         if (!_isWired(verdict)) return false;
+        string memory excludedKey = string.concat(base, ".excluded");
+        if (vm.keyExists(json, excludedKey) && json.readBool(excludedKey)) return false;
         string memory role = json.readString(string.concat(base, ".role"));
         return keccak256(bytes(role)) == keccak256(bytes("destination"));
     }
