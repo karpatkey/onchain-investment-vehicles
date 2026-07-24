@@ -209,7 +209,7 @@
         "chainId": 999,
         "selector": "2442541497099098535",
         "via": "OIV Safe tx on mainnet (setChainSelector) \u2014 see script/safe-txs/hyperevm-selector.json",
-        "pendingExecution": true
+        "pendingExecution": false
       }
     ]
   },
