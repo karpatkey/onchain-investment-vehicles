@@ -1,13 +1,13 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (salt v2). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The four `canonical` contracts share one address on every chain (deterministic CREATE2, salt v2, eoaOwner 0xAa5A...4F72). `chains[]` = the 19 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued (decision 2026-07-22). Salt v1 (factory 0xfb762083839AaED43Af0d37e67d7EE62340D25f0) is SUPERSEDED (was deployed with owner handed to the Safe at deploy time; redeployed at salt v2 to allow EOA config before handover). Human companion: docs/DEPLOYED_ADDRESSES.md. NOTE: `explorerVerified` = block-explorer SOURCE verification \u2014 now TRUE on all 19 (see `verification` block for verifier per chain).",
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (SALT V3). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The three `canonical` contracts share one address on every chain (deterministic CREATE2, salt v3, eoaOwner 0xAa5A...4F72); `emptyContract` is unchanged from earlier salts. `chains[]` = the 19 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued. SALT V3 supersedes salt v2 (factory 0xfff31e9948E2afF718Ca0f80C349ebE90F50f965): v2 predates the MultiSend unwrap-adapter fix, so any fund deployed through it gets Roles Modifiers that reject batched multiSend calls. A fund must NOT straddle two factory versions - the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions. BUILD NOTE: foundry.toml leaves bytecode_hash at its solc default, so these addresses depend on the build environment (dependency source PATHS are hashed into the metadata); they were produced from a fresh `git clone --recurse-submodules` of main at 9120f63 and are pinned by test/FactoryAddressSync.t.sol. Human companion: docs/DEPLOYED_ADDRESSES.md.",
   "version": "2.1.1",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
   "canonical": {
-    "_comment": "SUPERSEDED BY SALT V3 — these are the salt-v2 addresses, still live on all 19 chains but built BEFORE the MultiSend unwrap-adapter fix, so any fund deployed through this factory gets Roles Modifiers that reject batched multiSend calls. Do NOT deploy new funds through kpkOivFactory below; use the salt-v3 addresses in docs/DEPLOYED_ADDRESSES.md once that rollout lands, and note that a fund must not straddle the two factory versions (the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions). Same address on every chain (deterministic CREATE2, salt v2). owner()==finalOwner (Safe) post-handover.",
-    "kpkOivFactory": "0xfff31e9948E2afF718Ca0f80C349ebE90F50f965",
-    "kpkSharesDeployer": "0x04F61ea9F320473aC1439F025D014DC39e0652B0",
-    "ccipOivDeployer": "0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc",
+    "_comment": "Same address on every chain (deterministic CREATE2, salt v3). owner()==finalOwner (Safe) post-handover, verified on-chain on all 19.",
+    "kpkOivFactory": "0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F",
+    "kpkSharesDeployer": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
+    "ccipOivDeployer": "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b",
     "emptyContract": "0xA4703438f8cc4fc2C2503a7e43935Da16BA74652"
   },
   "chains": [
@@ -15,8 +15,8 @@
       "name": "ethereum",
       "chainId": 1,
       "deployed": true,
-      "block": 25575540,
-      "txHash": "0xe4d80eabd81e21a71007eeb8a992dac7f6c09a41b966c4867e59ec2fe6de741c",
+      "block": 25605129,
+      "txHash": "0x39f7d6f3d491f9680ec8b4be330d205cd94d2323be82a08e62e31cbb0bc630c7",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -24,8 +24,8 @@
       "name": "optimism",
       "chainId": 10,
       "deployed": true,
-      "block": 154568805,
-      "txHash": "0x8b3d8bd5535a159e8aab12c20259135f310fea5508ea4d4dade65082fa2121d1",
+      "block": 154663882,
+      "txHash": "0x967205ee52f286802ce76ff56149abbbb315395924de3e5ae9dbdc7f65e68b70",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -33,8 +33,8 @@
       "name": "gnosis",
       "chainId": 100,
       "deployed": true,
-      "block": 47335819,
-      "txHash": "0x8657748033163577eb4275b25f15608a4e0eb0d92d7f5fba12a0fa34852f69fd",
+      "block": 47372831,
+      "txHash": "0xecd4798c9b61fc741977f9712df6fa390ecf72b3384133e753b846631112b6df",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -42,8 +42,8 @@
       "name": "base",
       "chainId": 8453,
       "deployed": true,
-      "block": 48890346,
-      "txHash": "0x07be90d192c034ad2404ee08f1b011853cbc0d81f6fb31c182566d760e857779",
+      "block": 49068618,
+      "txHash": "0x3c3a21af1cc1d03513d536abcbc518b9ead900d64db5bdd2902377eca6d67617",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -51,8 +51,8 @@
       "name": "arbitrum",
       "chainId": 42161,
       "deployed": true,
-      "block": 486581318,
-      "txHash": "0x867a001b1605e118963298e22cd96e91bf820214b328826766e46ee5a8414028",
+      "block": 487340953,
+      "txHash": "0x44e9ad9b8ed2adb9d1460fdd72d6f838c3acc3647861166c7c169abc562a4f39",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -60,8 +60,8 @@
       "name": "bnb",
       "chainId": 56,
       "deployed": true,
-      "block": 111504023,
-      "txHash": "0xa6c00a2a961aa763c76f13abec3756f8344bc7568acbaf9033adec638e7c9539",
+      "block": 111926335,
+      "txHash": "0xa22df9933e37c3cf55a6b6b70a3423f1caae20748dc39c0ec22262c119f1c3df",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -69,8 +69,8 @@
       "name": "polygon",
       "chainId": 137,
       "deployed": true,
-      "block": 90687647,
-      "txHash": "0x8d12e274b69e07141580ccce505534527f99605c79bce5a062d4bd00291f1edf",
+      "block": 90814430,
+      "txHash": "0xc19d4eb2746ef6de9c4c4441281014b5735e60a59054a1d4fba37a9cf21a62c3",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -78,8 +78,8 @@
       "name": "avalanche",
       "chainId": 43114,
       "deployed": true,
-      "block": 90970564,
-      "txHash": "0x15dd47b1f95b7c1f2e860b1ee05461124d51dbfebb5187808771ad5ac8b79029",
+      "block": 91143742,
+      "txHash": "0x5ba0a5343b5af33ad4c5267456c5bade3a7f17035b2f55dc3a4611bf98ef5408",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -87,8 +87,8 @@
       "name": "celo",
       "chainId": 42220,
       "deployed": true,
-      "block": 72835737,
-      "txHash": "0x11956a97a5d2e5ac635676fae671bb67973eadaefdf7f55ec5826213d8ae731d",
+      "block": 73025918,
+      "txHash": "0xc186646d3f2c2842642f8011ac14759a3fbef086a9979f1149ec80fdd52878f1",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -96,8 +96,8 @@
       "name": "linea",
       "chainId": 59144,
       "deployed": true,
-      "block": 31479671,
-      "txHash": "0xc2341306977c1cbabe83a606ec5348d022975fb1a64901ca700933057a9467cc",
+      "block": 31507780,
+      "txHash": "0xd3bae36190e9cde435c9ce2e2cbcf4f4bafa6ec21ad7077c37c11c2b14b577fe",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -105,8 +105,8 @@
       "name": "scroll",
       "chainId": 534352,
       "deployed": true,
-      "block": 34442509,
-      "txHash": "0x9a676bd958674148df423393930c3e12f25b592a3ca47ea1c6505c1fbef9091f",
+      "block": 34466088,
+      "txHash": "0x8f300af065a5c262d29307baf688764527788a8712f8ef4505f3c4a1b6968c6d",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -114,8 +114,8 @@
       "name": "sonic",
       "chainId": 146,
       "deployed": true,
-      "block": 76339891,
-      "txHash": "0x3c969c5d937019eb094427335f2a6cbfd94939413d4f3fb79b7596f7086a0d5a",
+      "block": 76442370,
+      "txHash": "0x9140ab063d7a274e88c1318bbe6823aae64598d7815ba29198664cb9136316db",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -123,8 +123,8 @@
       "name": "unichain",
       "chainId": 130,
       "deployed": true,
-      "block": 53988189,
-      "txHash": "0xf0cf8ab7ed7ece4366ff18146cb3da45e69dac8a3860cde966a840cf595948bc",
+      "block": 54178385,
+      "txHash": "0x64bea6725c16309d4fe7f707bb83c8147717633582bc191a4b2100d50290593f",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -132,8 +132,8 @@
       "name": "worldchain",
       "chainId": 480,
       "deployed": true,
-      "block": 32700462,
-      "txHash": "0x315fef87863c3de0b8153628d4a0326d6e39cc8b3715c5c803e1bad6c7ea1f17",
+      "block": 32795562,
+      "txHash": "0x4f320ec2354c39b83ad64781192b9a19c94b941b89254542b36e7f627af36775",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -141,18 +141,17 @@
       "name": "hyperevm",
       "chainId": 999,
       "deployed": true,
-      "block": 41163374,
-      "txHash": "0x75924250cc615ce9b68517ac5bb3e367059ac88b26128c7059ac6353342a7772",
-      "explorerVerified": true,
+      "block": 41348936,
+      "txHash": "0x5d909b4ccaa6a9fbe87d03562f94e31cb051351aa453d4ae4bea64e2d2787d9f",
       "owner": "safe",
-      "note": "required HyperEVM big blocks enabled for the deploy (disabled after). Added to the mainnet selector registry via an OIV Safe tx (script/safe-txs/hyperevm-selector.json)."
+      "explorerVerified": true
     },
     {
       "name": "mantle",
       "chainId": 5000,
       "deployed": true,
-      "block": 98303146,
-      "txHash": "0xc5663624d3ad19301b10c73a1b67f1a3318bb0f2d24616537d78b0346c3cc562",
+      "block": 98398236,
+      "txHash": "0x0b604e9f92f38ca171fc5bf282d491a9108dd062525f3de5bbaa0a3de6fae460",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -160,8 +159,8 @@
       "name": "plasma",
       "chainId": 9745,
       "deployed": true,
-      "block": 27796294,
-      "txHash": "0x58675ce6836c02d7f87b99cfd22b8f05dbd3d4b84797656f10beb228494d4050",
+      "block": 27986461,
+      "txHash": "0xae31d1a1955b3dac193f4e632c04c380770b5ab2e4a86148262c6084b8e1c4e5",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -169,8 +168,8 @@
       "name": "ink",
       "chainId": 57073,
       "deployed": true,
-      "block": 51238251,
-      "txHash": "0xe72e471d19375e66d0956d2dadb9930d178625374760261d465eb5478e80ee6e",
+      "block": 51428424,
+      "txHash": "0x2e71620d493ecce649116e2c1115fee64f4fe0c6fb29bb7a21deddfeb897ff6b",
       "owner": "safe",
       "explorerVerified": true
     },
@@ -178,8 +177,8 @@
       "name": "berachain",
       "chainId": 80094,
       "deployed": true,
-      "block": 23860979,
-      "txHash": "0xa4ae231ca48da91a8ffb1c0050d0eb1c0a4123ac0e1d44ce21622c97aa97be38",
+      "block": 23956067,
+      "txHash": "0x8479a007e4f064121559dd378b5f3a2a251dfb25afa6c1a07632b0306c2774da",
       "owner": "safe",
       "explorerVerified": true
     }
@@ -196,98 +195,106 @@
       "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
     }
   ],
-  "saltVersion": 2,
+  "saltVersion": 3,
   "mainnetSelectorRegistry": {
+    "_comment": "Seeded from the EOA BEFORE ownership moved to the Safe. A salt-v3 orchestrator starts EMPTY - the v2 registry does not carry over. The seeding script initially wrote 20 entries because bob+katana are verdict READY-AFTER-EMPTY; both were removed via removeChainSelector while the EOA still owned the orchestrator. script/CcipDeployEverywhere.s.sol now honours an `excluded` flag so this cannot recur (test/SelectorSeedScope.t.sol).",
     "destinationChainIdCount": 18,
     "seededBeforeHandover": {
-      "count": 17,
+      "count": 18,
       "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
     },
-    "addedAfterHandover": [
+    "removedAfterSeeding": [
       {
-        "name": "hyperevm",
-        "chainId": 999,
-        "selector": "2442541497099098535",
-        "via": "OIV Safe tx on mainnet (setChainSelector) \u2014 see script/safe-txs/hyperevm-selector.json",
-        "pendingExecution": false
+        "name": "bob",
+        "chainId": 60808
+      },
+      {
+        "name": "katana",
+        "chainId": 747474
       }
-    ]
+    ],
+    "verifiedOnChainPostHandover": true
   },
   "verification": {
-    "status": "all 19 chains source-verified on their primary explorer (2026-07-22); multi-explorer coverage broadened 2026-07-23 (Blockscout + OKLink + Sourcify v2 + Routescan + Tenderly-public). Sourcify v2 is the widest: 3 main contracts exact-match on all 19 chains, auto-propagated to Etherscan/Routescan/Blockscout. Tenderly public covers the 3 main contracts on 18/19 (all but hyperevm).",
-    "contractsCovered": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer", "emptyContract"],
+    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends. Every number below was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi), never from a forge exit code.",
+    "contractsCovered": [
+      "kpkOivFactory",
+      "kpkSharesDeployer",
+      "ccipOivDeployer"
+    ],
     "verifiers": {
+      "sourcifyV2": {
+        "_comment": "Keyless, exact_match, and the lead backend: it auto-propagated to Etherscan/Routescan/Blockscout, which is why the later Etherscan sweep found everything 'already verified'.",
+        "result": "57/57 (19 chains x 3 contracts)",
+        "match": "exact_match"
+      },
       "etherscanV2": {
-        "_comment": "Primary: all 3 main contracts + emptyContract (Empty filled 2026-07-23). Shared Etherscan V2 multichain key.",
+        "_comment": "17 chains support Etherscan V2. scroll (534352) and ink (57073) are NOT on V2 - covered by Blockscout instead. This also lights up the branded UIs (Basescan, Arbiscan, Lineascan, HyperEVMScan, SonicScan, ...) since they share the same DB.",
+        "result": "51/51 on supported chains",
         "chains": [
-          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
-          "avalanche", "celo", "sonic", "unichain", "worldchain", "hyperevm",
-          "mantle", "plasma", "berachain"
+          "ethereum",
+          "optimism",
+          "gnosis",
+          "base",
+          "arbitrum",
+          "bnb",
+          "polygon",
+          "avalanche",
+          "celo",
+          "linea",
+          "sonic",
+          "unichain",
+          "worldchain",
+          "hyperevm",
+          "mantle",
+          "plasma",
+          "berachain"
         ]
       },
-      "etherscanV2_dedicatedKey": {
-        "_comment": "Shared key lacked Linea access; used a Linea-scoped Etherscan V2 key.",
-        "chains": ["linea"]
-      },
       "blockscout": {
-        "_comment": "The 3 main contracts confirmed is_verified via /api/v2/smart-contracts on all listed instances; emptyContract also confirmed on ethereum/gnosis/arbitrum/celo/unichain/ink/worldchain (pending/failed on base/polygon/scroll). Added 2026-07-23 with a Blockscout Pro key.",
-        "instances": {
-          "ethereum": "https://eth.blockscout.com",
-          "gnosis": "https://gnosis.blockscout.com",
-          "base": "https://base.blockscout.com",
-          "arbitrum": "https://arbitrum.blockscout.com",
-          "polygon": "https://polygon.blockscout.com",
-          "celo": "https://celo.blockscout.com",
-          "scroll": "https://scroll.blockscout.com",
-          "unichain": "https://unichain.blockscout.com",
-          "ink": "https://explorer.inkonchain.com",
-          "worldchain": "https://worldchain-mainnet.explorer.alchemy.com"
-        },
-        "notReached": {
-          "optimism": "optimism.blockscout.com rejected the standard-JSON submission (already covered by Etherscan V2 + OKLink)",
-          "hyperevm": "www.hyperscan.com API reports the address as not-a-contract (incompatible endpoint)"
-        }
-      },
-      "oklink": {
-        "_comment": "Keyless (no Ok-Access-Key needed) standard-JSON verify API. kpkOivFactory/kpkSharesDeployer/ccipOivDeployer confirmed Success. emptyContract not verifiable on OKLink (trivial-contract matcher quirk).",
-        "keyless": true,
-        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
-        "chains": ["ethereum", "optimism", "arbitrum", "base", "bnb", "polygon", "avalanche", "linea", "scroll"]
-      },
-      "sourcify": {
-        "_comment": "Verified via Sourcify v2 HTTP API (keyless, exact bytecode match from chain state — no constructor args). forge's --verifier sourcify only speaks the deprecated v1 API (in brownout 2026-07-07..2027-01-08), so POST v2 directly at https://sourcify.dev/server/v2/verify/{chainId}/{address}. Sourcify auto-propagates each match to etherscan + routescan + blockscout via externalVerifications. Added 2026-07-23.",
-        "keyless": true,
-        "apiV2Base": "https://sourcify.dev/server/v2",
-        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
-        "chains": [
-          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
-          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
-          "hyperevm", "mantle", "plasma", "ink", "berachain"
-        ],
-        "emptyNote": "emptyContract not verifiable on Sourcify (bytecode_length_mismatch — trivial contract); covered on Etherscan V2 + Blockscout instead."
+        "_comment": "10 instances x 3 contracts. NOTE: scroll.blockscout.com now 301-redirects to scrollscan.com - a read that does not follow redirects reports a false gap.",
+        "result": "30/30",
+        "instances": [
+          "eth.blockscout.com",
+          "gnosis.blockscout.com",
+          "base.blockscout.com",
+          "arbitrum.blockscout.com",
+          "polygon.blockscout.com",
+          "celo.blockscout.com",
+          "scroll.blockscout.com",
+          "unichain.blockscout.com",
+          "explorer.inkonchain.com",
+          "worldchain-mainnet.explorer.alchemy.com"
+        ]
       },
       "routescan": {
-        "_comment": "Etherscan-compatible multichain explorer, keyless ('verifyContract' placeholder key). Coverage here was obtained automatically via Sourcify v2 externalVerifications propagation (3 main contracts). Direct forge path also works but hits the .env ETHERSCAN_API_KEY override.",
-        "keyless": true,
-        "via": "sourcify-v2-propagation",
-        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
-        "chains": ["ethereum", "avalanche", "mantle", "plasma", "berachain"]
+        "_comment": "Populated via Sourcify propagation. 15/15 for the five chains Routescan actually hosts; the others are simply not Routescan networks.",
+        "result": "15/15",
+        "chains": [
+          "ethereum",
+          "avalanche",
+          "mantle",
+          "plasma",
+          "berachain"
+        ]
       },
       "tenderly": {
-        "_comment": "PUBLIC verification (irreversible) via Tenderly's Etherscan-compatible API in the karpatkey/agents project. forge can't be used (its .env ETHERSCAN_API_KEY auto-load overrides the Tenderly verifier-url) — POST directly to https://api.tenderly.co/api/v1/account/{account}/project/{project}/etherscan/verify/network/{chainId}/public with X-Access-Key. Added 2026-07-23.",
-        "public": true,
-        "project": "karpatkey/agents",
-        "contracts": ["kpkOivFactory", "kpkSharesDeployer", "ccipOivDeployer"],
-        "chains": [
-          "ethereum", "optimism", "gnosis", "base", "arbitrum", "bnb", "polygon",
-          "avalanche", "celo", "linea", "scroll", "sonic", "unichain", "worldchain",
-          "mantle", "plasma", "ink", "berachain"
-        ],
-        "notReached": {
-          "hyperevm": "not supported by Tenderly (chain 999)",
-          "emptyContract": "NOTOK on the trivial Empty contract (same quirk as Sourcify/OKLink) — covered on Etherscan V2 + Blockscout"
-        }
+        "_comment": "PUBLIC verify in the karpatkey/agents project (always public - see the /verify-contracts skill). hyperevm (999) is not a supported Tenderly network, which is structural, not a gap.",
+        "result": "54/57",
+        "unsupported": [
+          "hyperevm"
+        ]
+      },
+      "oklink": {
+        "_comment": "Keyless (browser UA required). Sweep in progress at time of writing; OKLink is exact-match and only exposes guid-based status, so results must come from the submit/poll cycle.",
+        "result": "PENDING"
       }
     }
+  },
+  "supersededSaltV2": {
+    "_comment": "Still on-chain on all 19 chains but ABANDONED - predates the MultiSend unwrap-adapter fix. Do not deploy funds through it.",
+    "kpkOivFactory": "0xfff31e9948E2afF718Ca0f80C349ebE90F50f965",
+    "kpkSharesDeployer": "0x04F61ea9F320473aC1439F025D014DC39e0652B0",
+    "ccipOivDeployer": "0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc"
   }
 }

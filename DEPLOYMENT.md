@@ -225,17 +225,19 @@ Fee rates are in basis points (100 bps = 1%). The skill handles the conversion f
 
 ## Deployed factory addresses
 
-> ### ⚠️ Salt v2 is superseded — do not deploy new funds through it
->
-> The addresses below are the **salt-v2** build, still live on all 19 chains. It predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — the defect this replaces. Repairing a fund after the fact needs multisig transactions, because ownership is handed over during the deploy.
->
-> Use the **salt-v3** addresses in [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) once the v3 rollout has landed. The v2 addresses are kept here only as a record of what is on-chain today.
-
-The **salt-v2** `KpkOivFactory` (and `KpkSharesDeployer`), deployed at the same address on every chain via the canonical CREATE2 deployer:
+The current **salt-v3** build, deployed at the same address on every chain via the canonical CREATE2 deployer (2026-07-24):
 
 | Contract         | Address                                      |
 |------------------|----------------------------------------------|
-| `KpkOivFactory`  | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` (superseded) |
-| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` (superseded) |
+| `KpkOivFactory`  | `0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F` |
+| `KpkSharesDeployer` | `0xea084E763F8535CBe28759b990F963BeDf60be9a` |
+| `CcipOivDeployer` | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
+| `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
 
-Deployed on 19 chains, owned by the OIV governance Safe. For the authoritative per-chain address / tx / block record — and the superseded legacy `0x0d94…d420` (pre-patch v2.1.0) build — see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).
+Deployed on 19 chains, owned by the OIV governance Safe (`owner() == Safe` verified on-chain on all 19).
+
+> ### ⚠️ Do not deploy funds through the salt-v2 build
+>
+> `KpkOivFactory 0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` (with deployer `0x04F61ea9…52B0` and orchestrator `0x45Fd2B5E…D6Bc`) is **superseded**. It is still live on all 19 chains, but it predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls**. Repairing one afterwards needs multisig transactions, because ownership is handed over during the deploy. The even older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0.
+
+For the authoritative per-chain address / tx / block record see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).

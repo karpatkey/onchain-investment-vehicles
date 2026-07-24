@@ -10,18 +10,24 @@ Source of truth: each chain's commit on this branch lists addresses, broadcast t
 
 ---
 
-## ⚠️ Salt v2 is superseded — salt v3 rollout pending
+## Current — salt v3 (LIVE on 19 chains, Safe-owned)
 
-The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moves. `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three move together**; only `Empty` keeps its address. The salts are bumped to `uint256(3)`.
+Deployed **2026-07-24**. The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moved; `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three moved together**. Only `Empty` keeps its address. Salts are `uint256(3)`.
 
-Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (these are a function of the compiled bytecode — including NatSpec, since the solc metadata hash is embedded — so they change with any source edit; **all three are pinned by `test/FactoryAddressSync.t.sol`** against what the deploy path actually produces, so drift fails CI rather than reaching a rollout):
+Rolled out **EOA-owned first** (so the mainnet orchestrator's selector registry could be seeded by the deployer), then `Ownable.owner` on the factory + orchestrator was transferred to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`. Verified on-chain post-handover: `owner() == Safe` on **19/19** chains for both contracts, and the registry holds **18 destinations**.
 
-| Contract | Predicted salt-v3 address |
+| Contract | Salt-v3 address |
 |---|---|
 | `KpkOivFactory` | `0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F` |
 | `KpkSharesDeployer` | `0xea084E763F8535CBe28759b990F963BeDf60be9a` |
-| `CcipOivDeployer` | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
-| `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+| `CcipOivDeployer` (orchestrator) | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+
+Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll, sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. Per-chain deploy block / tx in [`script/deployed-infra.json`](../script/deployed-infra.json). **Excluded (no infra):** `bob`, `katana`.
+
+> **HyperEVM note.** As with salt v2, the deploy needed Hyperliquid "big blocks" enabled for the deployer (`usingBigBlocks` L1 action) — the ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again afterwards.
+
+> **Selector-registry note.** A freshly CREATE2'd orchestrator starts with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
 
 > ### ⚠️ Build these from a clean clone, not a working tree
 >
@@ -33,15 +39,27 @@ Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1
 >
 > The values above were produced by a **fresh `git clone --recurse-submodules`** of this branch and match what CI computes, which is the only reproducible reference. A local tree that has drifted will silently produce different bytecode — which would also break explorer source verification, since verification compares metadata.
 >
-> **Before broadcasting the v3 rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone is the confirmation that the table above matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant.
+> **Any future rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone confirms the table matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant. The salt-v3 addresses above were produced this way, from a clone of `main` at `9120f63`.
 
-> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. Complete the v3 rollout on all 19 chains before deploying any new fund.
-
-Everything below still describes the **currently deployed** salt-v2 infra and remains accurate until the v3 rollout lands.
+> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. v3 is now complete on all 19 chains, so deploy new funds only through the v3 factory above.
 
 ---
 
-## Current — v2.1.1 CCIP infra (canonical, same address on every chain)
+## Superseded — salt v2 (still on-chain, do NOT deploy new funds through it)
+
+> **Abandoned 2026-07-24.** This build predates the MultiSend unwrap-adapter fix, so every fund deployed through it gets three Roles Modifiers with **no unwrap adapter registered** — meaning every batched `multiSend` through them reverts, repairable only by multisig after the fact. The contracts remain deployed on all 19 chains and the existing kUSD fund still lives on the legacy stack, but nothing new should be built on them.
+
+| Contract | Salt-v2 address (superseded) |
+|---|---|
+| `KpkOivFactory` | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
+| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
+| `CcipOivDeployer` | `0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc` |
+
+The historical detail below describes that salt-v2 rollout.
+
+---
+
+## Historical — v2.1.1 CCIP infra at salt v2
 
 The patched build (Roles Modifier v2.1.1), **salt v2**, deployed via the canonical CREATE2 deployer, so the four contracts share one address on every chain. Addresses are keyed to the deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72`. Rolled out **EOA-owned first** (so the mainnet orchestrator's selector registry was seeded by the deployer), then `Ownable.owner` on the factory + orchestrator was transferred to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`. Machine-readable per-chain status: [`script/deployed-infra.json`](../script/deployed-infra.json).
 
