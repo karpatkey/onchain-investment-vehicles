@@ -38,6 +38,10 @@ contract KpkOivFactoryTest is OivTestConstants {
     ///      independently check the selector the factory registers the unwrap adapter against.
     bytes4 internal constant MULTI_SEND_SELECTOR = bytes4(keccak256("multiSend(bytes)"));
 
+    /// @dev `ConditionViolation(Status,bytes32)` — the wrapper Roles v2.1 reverts with when a
+    ///      permission check fails; the specific reason travels in the `Status` enum parameter.
+    bytes4 internal constant CONDITION_VIOLATION_SELECTOR = bytes4(keccak256("ConditionViolation(uint8,bytes32)"));
+
     // ── Setup ───────────────────────────────────────────────────────────────────
 
     function setUp() public {
@@ -304,13 +308,115 @@ contract KpkOivFactoryTest is OivTestConstants {
         bool success = IRoles(inst.execRolesModifier).execTransactionWithRole(multiSend, 0, batch, 1, managerRole, true);
         assertTrue(success, "batched multiSend through execRolesModifier failed");
 
-        // Negative control: without the adapter the identical batch is rejected.
+        // Negative control: without the adapter the identical batch is rejected. Assert the SPECIFIC
+        // revert rather than a bare `expectRevert`, which would also pass on an unrelated failure and
+        // stop proving the adapter is what makes the batch work. With no unwrapper registered the
+        // modifier falls back to checking MULTI_SEND as an ordinary target, which the MANAGER role
+        // has no clearance for; Roles v2.1 reports that as `ConditionViolation(Status, bytes32)`
+        // rather than the bare `TargetAddressNotAllowed()`.
         vm.prank(admin);
         IRoles(inst.execRolesModifier).setTransactionUnwrapper(multiSend, MULTI_SEND_SELECTOR, address(0));
 
         vm.prank(inst.managerSafe);
-        vm.expectRevert();
-        IRoles(inst.execRolesModifier).execTransactionWithRole(multiSend, 0, batch, 1, managerRole, true);
+        (bool ok2, bytes memory ret) = inst.execRolesModifier
+            .call(
+                abi.encodeWithSelector(
+                    IRoles.execTransactionWithRole.selector, multiSend, uint256(0), batch, uint8(1), managerRole, true
+                )
+            );
+        assertFalse(ok2, "batch still executed after the unwrapper was cleared");
+        assertEq(
+            bytes4(bytes.concat(ret[0], ret[1], ret[2], ret[3])),
+            CONDITION_VIOLATION_SELECTOR,
+            "expected a Roles permission rejection, not an unrelated revert"
+        );
+    }
+
+    /// @dev `MultiSendCallOnly` is registered separately (the adapter is keyed on the
+    ///      `(target, selector)` pair) and had no end-to-end coverage. It refuses inner
+    ///      delegatecalls, so it is the safer of the two, but both must actually work.
+    function test_execModifier_multiSendCallOnlyBatchExecutes() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        bytes32 managerRole = bytes32("MANAGER");
+        vm.startPrank(admin);
+        IRoles(inst.execRolesModifier).scopeTarget(managerRole, USDC);
+        IRoles(inst.execRolesModifier).allowFunction(managerRole, USDC, IERC20.approve.selector, 0);
+        vm.stopPrank();
+
+        address multiSendCallsOnly = factory.MULTI_SEND_CALLS_ONLY();
+
+        vm.prank(inst.managerSafe);
+        bool ok = IRoles(inst.execRolesModifier)
+            .execTransactionWithRole(multiSendCallsOnly, 0, _approveBatch(), 1, managerRole, true);
+        assertTrue(ok, "batched multiSend through MultiSendCallOnly failed");
+    }
+
+    /// @dev The route the production incident was actually reported on. The sub modifier's target is
+    ///      the exec modifier, so a batch sent here is unwrapped and permission-checked TWICE — once
+    ///      by the sub modifier, then again by the exec modifier when the sub modifier calls through
+    ///      under its default MANAGER role. That is why the fix has to register on BOTH; this test
+    ///      fails if either registration is dropped.
+    function test_subModifier_nestedMultiSendBatchExecutes() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        bytes32 managerRole = bytes32("MANAGER");
+        address subOperator = makeAddr("subOperator");
+
+        // The exec modifier already grants the sub modifier the MANAGER role (factory-wired).
+        // Scope the target there, and give the sub modifier its own member + identical scoping.
+        vm.startPrank(admin);
+        IRoles(inst.execRolesModifier).scopeTarget(managerRole, USDC);
+        IRoles(inst.execRolesModifier).allowFunction(managerRole, USDC, IERC20.approve.selector, 0);
+        vm.stopPrank();
+
+        bytes32[] memory roleKeys = new bytes32[](1);
+        roleKeys[0] = managerRole;
+        bool[] memory memberOf = new bool[](1);
+        memberOf[0] = true;
+
+        vm.startPrank(inst.managerSafe);
+        IRoles(inst.subRolesModifier).assignRoles(subOperator, roleKeys, memberOf);
+        IRoles(inst.subRolesModifier).scopeTarget(managerRole, USDC);
+        IRoles(inst.subRolesModifier).allowFunction(managerRole, USDC, IERC20.approve.selector, 0);
+        vm.stopPrank();
+
+        address multiSend = factory.MULTI_SEND();
+
+        vm.prank(subOperator);
+        bool ok =
+            IRoles(inst.subRolesModifier).execTransactionWithRole(multiSend, 0, _approveBatch(), 1, managerRole, true);
+        assertTrue(ok, "nested batch through subRolesModifier failed");
+    }
+
+    /// @dev The manager modifier guards the Manager Safe itself. The factory assigns it no members,
+    ///      so this asserts the registration landed rather than driving a call through it.
+    function test_managerModifier_unwrappersUsableByItsOwner() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        _assertUnwrappersRegistered(inst.managerRolesModifier, "managerMod");
+
+        // Its owner can still manage the registration post-handover (the recovery path).
+        address multiSend = factory.MULTI_SEND();
+        vm.prank(inst.managerSafe);
+        IRoles(inst.managerRolesModifier).setTransactionUnwrapper(multiSend, MULTI_SEND_SELECTOR, address(0));
+        assertEq(
+            IRoles(inst.managerRolesModifier).unwrappers(_unwrapperKey(multiSend, MULTI_SEND_SELECTOR)),
+            address(0),
+            "managerMod owner could not clear its own registration"
+        );
+    }
+
+    /// @dev Two `USDC.approve(address(1), 0)` calls, MultiSend-encoded.
+    function _approveBatch() internal view returns (bytes memory) {
+        bytes memory inner = abi.encodeWithSelector(IERC20.approve.selector, address(1), 0);
+        return abi.encodeWithSignature(
+            "multiSend(bytes)",
+            bytes.concat(
+                abi.encodePacked(uint8(0), USDC, uint256(0), uint256(inner.length), inner),
+                abi.encodePacked(uint8(0), USDC, uint256(0), uint256(inner.length), inner)
+            )
+        );
     }
 
     /// @dev Fail closed when the canonical unwrapper has no code on this chain (as was the case on
@@ -329,6 +435,55 @@ contract KpkOivFactoryTest is OivTestConstants {
         vm.etch(factory.MULTISEND_UNWRAPPER(), "");
         vm.expectRevert(KpkOivFactory.MultiSendUnwrapperMissing.selector);
         factory.deployStack(stackConfig);
+    }
+
+    /// @dev The distinction a presence check cannot make: a DIFFERENT contract occupying the
+    ///      address. Registering an unwrap adapter makes the registered MultiSend an unconditional,
+    ///      un-permission-checked DELEGATECALL target for every role, so a non-canonical occupant is
+    ///      a fund takeover rather than a degraded feature. `code.length != 0` would accept all three
+    ///      of these; the codehash assert rejects them.
+    function test_deployOiv_revertsWhenUnwrapperIsNotCanonical() public {
+        vm.etch(factory.MULTISEND_UNWRAPPER(), hex"60006000fd");
+        vm.expectRevert(KpkOivFactory.MultiSendUnwrapperMissing.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    function test_deployOiv_revertsWhenMultiSendIsNotCanonical() public {
+        address multiSend = factory.MULTI_SEND();
+
+        vm.etch(multiSend, hex"60006000fd");
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.MultiSendMissing.selector, multiSend));
+        factory.deployOiv(oivConfig);
+    }
+
+    function test_deployOiv_revertsWhenMultiSendCallsOnlyIsNotCanonical() public {
+        address multiSendCallsOnly = factory.MULTI_SEND_CALLS_ONLY();
+
+        vm.etch(multiSendCallsOnly, hex"60006000fd");
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.MultiSendMissing.selector, multiSendCallsOnly));
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @dev Pins the three hardcoded constants against REAL chain state. Every other assertion in
+    ///      this file compares the factory's constants to themselves (or to `OivInfraConstants`,
+    ///      which is where they come from), so a wrong address would sail through CI. This is the
+    ///      only check that would catch one.
+    function test_multiSendConstantsMatchOnChainCode() public view {
+        assertEq(
+            factory.MULTI_SEND().codehash,
+            0x0e4f7fc66550a322d1e7688e181b75e217e662a4f3f4d6a29b22bc61217c4b77,
+            "MULTI_SEND is not the canonical Safe v1.4.1 MultiSend on this fork"
+        );
+        assertEq(
+            factory.MULTI_SEND_CALLS_ONLY().codehash,
+            0xecd5bd14a08c5d2122379900b2f272bdf107a7e92423c10dd5fe3254386c9939,
+            "MULTI_SEND_CALLS_ONLY is not the canonical Safe v1.4.1 MultiSendCallOnly on this fork"
+        );
+        assertEq(
+            factory.MULTISEND_UNWRAPPER().codehash,
+            0x1f6e088be5e6ef9d0fbe0547d3fa9a9e40d823433fd8a4449215b5663209a1eb,
+            "MULTISEND_UNWRAPPER is not the canonical Zodiac MultiSendUnwrapper on this fork"
+        );
     }
 
     function test_sharesProxy_portfolioSafeIsAvatarSafe() public {

@@ -140,7 +140,11 @@ The factory avoids the `SafeProxyOwner` workaround by deploying the Roles Modifi
 
 The factory is **always** included as a setup-time Avatar Safe module in both flows so the Safe `setup()` initializer is byte-identical across `deployStack` and `deployOiv`. The factory is disabled as a module before each entry point returns; in `deployStack` it is never used, while in `deployOiv` it routes the token-allowance approvals.
 
-Each of the three wiring steps registers the Zodiac `MultiSendUnwrapper` (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) against both Safe MultiSend contracts — `MultiSend` (`0x38869bf6…B526`) and `MultiSendCallOnly` (`0x9641d764…02e2`) — for the `multiSend(bytes)` selector. A Roles Modifier permission-checks one call at a time, so without an unwrap adapter a batched `multiSend` arrives as a single opaque delegatecall it cannot decompose and rejects outright. **The registration must happen before `transferOwnership`**: `setTransactionUnwrapper` is owner-only, so once the modifier belongs to the Security Council or Manager Safe it can only be fixed by a multisig transaction. The adapter is keyed on the `(target, selector)` pair, which is why each MultiSend variant needs its own registration. Deployment reverts with `MultiSendUnwrapperMissing` if the unwrapper has no bytecode on the current chain.
+Each of the three wiring steps registers the Zodiac `MultiSendUnwrapper` (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) against both Safe MultiSend contracts — `MultiSend` (`0x38869bf6…B526`) and `MultiSendCallOnly` (`0x9641d764…02e2`) — for the `multiSend(bytes)` selector. A Roles Modifier permission-checks one call at a time, so without an unwrap adapter a batched `multiSend` arrives as a single opaque delegatecall it cannot decompose and rejects outright. **The registration must happen before `transferOwnership`**: `setTransactionUnwrapper` is owner-only, so once the modifier belongs to the Security Council or Manager Safe it can only be fixed by a multisig transaction. The adapter is keyed on the `(target, selector)` pair, which is why each MultiSend variant needs its own registration.
+
+> **What registration actually grants.** `PermissionChecker._authorize` branches on the adapter lookup *before* any clearance check, and the adapter branch never reads `role.targets[target]` nor evaluates the outer `ExecutionOptions`. Registering an adapter for `(target, selector)` is therefore equivalent to granting **every present and future role an unconditional, un-permission-checked DELEGATECALL to `target`**, executed in the Avatar Safe's own storage context. The inner calls of the batch are still checked exactly as unbatched calls would be — role scoping, `ExecutionOptions`, and allowance consumption all hold, and batching cannot manufacture a permission the role lacks — but the *outer* hop is unconditional. That is why all three addresses are asserted by exact codehash at deploy time (`MultiSendUnwrapperMissing`, `MultiSendMissing`) rather than merely checked for presence: a non-canonical occupant of a registered address only needs to expose `multiSend(bytes)` to run as the Safe and, for example, enable itself as a module.
+
+**Recovery.** The three addresses are `constant`, so if the `MultiSendUnwrapper` were ever found buggy the factory would keep wiring the known-bad adapter until it is redeployed at a new address — which forces a full salt bump and re-rollout. Per-fund recovery needs no redeploy: each modifier's owner can call `setTransactionUnwrapper(target, 0x8d80ff0a, address(0))` to clear its own registration, which restores the pre-fix behaviour (batches rejected) rather than leaving the fund exploitable. Clearing is the correct first response to a compromised adapter; the redeploy follows at normal pace.
 
 ```
 1. Deploy execRolesModifier    (factory = owner / avatar / target)
@@ -388,7 +392,9 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 - Any `managerSafe.owners[i]` is `address(0)` (`ZeroAddress`)
 - `managerSafe.owners` contains a duplicate (`DuplicateOwner`)
 - `execRolesMod.finalOwner` is `address(0)` (`ZeroAddress`)
-- The chain has no contract deployed at `EMPTY_CONTRACT` (`EmptyContractMissing`)
+- The code at `EMPTY_CONTRACT` is not the canonical `Empty` (`EmptyContractMissing` — checked by codehash, so a missing *or* substituted contract reverts)
+- The code at `MULTISEND_UNWRAPPER` is not the canonical Zodiac `MultiSendUnwrapper` (`MultiSendUnwrapperMissing` — likewise by codehash)
+- The code at `MULTI_SEND` or `MULTI_SEND_CALLS_ONLY` is not the canonical Safe v1.4.1 contract (`MultiSendMissing(address)`)
 
 `deployOiv` reverts if any of the above for its `managerSafe`, plus:
 

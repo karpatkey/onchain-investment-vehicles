@@ -10,6 +10,25 @@ Source of truth: each chain's commit on this branch lists addresses, broadcast t
 
 ---
 
+## ⚠️ Salt v2 is superseded — salt v3 rollout pending
+
+The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moves. `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three move together**; only `Empty` keeps its address. The salts are bumped to `uint256(3)`.
+
+Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (these are a function of the compiled bytecode — including NatSpec, since the solc metadata hash is embedded — so they change with any source edit; `test/FactoryAddressSync.t.sol` pins the factory address to what the deploy path actually produces, so drift fails CI):
+
+| Contract | Predicted salt-v3 address |
+|---|---|
+| `KpkOivFactory` | `0xE956739b8afb06E71E9A0363E170B5498317A63e` |
+| `KpkSharesDeployer` | `0xd5606E74F45bd1A58073261C1C738cD7268a8D3f` |
+| `CcipOivDeployer` | `0xeDA7015dE6EB08d46D69999B29a833D28D01883F` |
+| `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+
+> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. Complete the v3 rollout on all 19 chains before deploying any new fund.
+
+Everything below still describes the **currently deployed** salt-v2 infra and remains accurate until the v3 rollout lands.
+
+---
+
 ## Current — v2.1.1 CCIP infra (canonical, same address on every chain)
 
 The patched build (Roles Modifier v2.1.1), **salt v2**, deployed via the canonical CREATE2 deployer, so the four contracts share one address on every chain. Addresses are keyed to the deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72`. Rolled out **EOA-owned first** (so the mainnet orchestrator's selector registry was seeded by the deployer), then `Ownable.owner` on the factory + orchestrator was transferred to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`. Machine-readable per-chain status: [`script/deployed-infra.json`](../script/deployed-infra.json).
@@ -141,7 +160,7 @@ The cross-flow invariant in `KpkOivFactory` produces identical addresses for the
 |---|---|
 | `DEFAULT_ADMIN_ROLE` on KpkShares (mainnet) | Staging Sec Council Safe `0x9D73C053afcbF6CD5c8986C3f049fD2Ce005730C` (1/4) — to be transferred to the production Sec Council once policies are configured |
 | `OPERATOR` on KpkShares (mainnet) | Manager Safe `0x7Bb5…cce3` (auto-wired by factory) |
-| Exec Roles Modifier owner | Staging Sec Council Safe `0x9D73…730C` |
+| Exec Roles Modifier owner | OIV Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` — verified on-chain 2026-07-24 on all five fund chains. This row previously read "Staging Sec Council Safe `0x9D73…730C`", which was the deploy-time owner; ownership has since moved and the doc had not been updated. |
 | Sub Roles Modifier owner | Manager Safe `0x7Bb5…cce3` |
 | Manager Roles Modifier owner | Manager Safe `0x7Bb5…cce3` |
 | Avatar Safe → KpkShares allowance (mainnet) | USDC + USDT both at `type(uint256).max` |

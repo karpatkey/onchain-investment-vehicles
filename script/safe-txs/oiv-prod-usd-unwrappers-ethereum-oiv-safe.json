@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "chainId": "1",
+  "createdAt": 1784923200000,
+  "meta": {
+    "name": "oiv_prod_usd (ethereum) - MultiSend unwrappers on the exec Roles Modifier",
+    "description": "setTransactionUnwrapper on the exec Roles Modifier 0xd8e63D2ca7A098E2B939BF4733e94C5768D3B966, for both Safe MultiSend contracts. Owner-only; execute from the OIV Safe 0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537. A Roles Modifier permission-checks one call at a time, so without an unwrap adapter a batched multiSend(bytes) is an opaque delegatecall it cannot decompose and rejects wholesale. The kUSD stack was deployed by the pre-fix KpkOivFactory on FIVE chains (ethereum, optimism, gnosis, base, arbitrum) at IDENTICAL modifier addresses, and all three modifiers on every one of them are missing both registrations - verified on-chain 2026-07-24. Execute the matching file on each chain; this one is ethereum (chainId 1). The sub and manager Roles Modifiers are owned by the Manager Safe - see oiv-prod-usd-unwrappers-ethereum-manager-safe.json.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0xd8e63D2ca7A098E2B939BF4733e94C5768D3B966",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    },
+    {
+      "to": "0xd8e63D2ca7A098E2B939BF4733e94C5768D3B966",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes4",
+            "name": "selector",
+            "type": "bytes4"
+          },
+          {
+            "internalType": "address",
+            "name": "adapter",
+            "type": "address"
+          }
+        ],
+        "name": "setTransactionUnwrapper",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x9641d764fc13c8B624c04430C7356C1C7C8102e2",
+        "selector": "0x8d80ff0a",
+        "adapter": "0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD"
+      }
+    }
+  ]
+}

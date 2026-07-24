@@ -26,8 +26,13 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  *   - additionalAssets is bounded by OivConfigReader.MAX_ADDITIONAL_ASSETS (reverts if exceeded).
  */
 contract DeployOiv is OivConfigReader {
-    // Update this when the factory is redeployed (its CREATE2 address changes with its bytecode).
-    address constant FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
+    /// @dev Salt-v3 KpkOivFactory. Its CREATE2 address is a function of its bytecode, so this must be
+    ///      updated whenever the factory changes — `test/FactoryAddressSync.t.sol` asserts it equals
+    ///      what `OivChainDeploy` would actually deploy, so a stale value fails CI instead of being
+    ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
+    ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
+    ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
+    address public constant FACTORY = 0xE956739b8afb06E71E9A0363E170B5498317A63e;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 
