@@ -44,6 +44,13 @@ contract DeployKpkOivFactory is OivChainDeploy {
 
         vm.startBroadcast();
 
+        // Same preflight `_runChain` performs. This standalone path is documented in README.md as a
+        // per-chain onboarding entry point, so without these a chain can be wired with a working
+        // factory and no `Empty` / MultiSendUnwrapper — every later fund deploy on it then reverts,
+        // including a CCIP fan-out delivery whose fee was already spent on the source chain.
+        _ensureEmpty();
+        _ensureMultiSendUnwrapper();
+
         if (predictedFactory.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
             require(ok, "factory CREATE2 deploy failed");

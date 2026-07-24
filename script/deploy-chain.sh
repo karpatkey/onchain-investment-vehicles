@@ -78,3 +78,61 @@ echo "  eoaOwner=$EOA  finalOwner=$FINAL  dryRun=${DRY_RUN:-0}"
 ( cd "$ROOT" && forge script "$script" \
     --rpc-url "$CHAIN" "${signer[@]}" $bflag $vflag \
     --sig "run(address,address)" "$EOA" "$FINAL" )
+
+# ── Post-broadcast on-chain verification ──────────────────────────────────────
+# The Solidity preflight in OivChainDeploy runs INSIDE vm.startBroadcast(), so its post-condition
+# `require`s are evaluated against forge's local simulation, never against the chain. That gap is
+# load-bearing for the MultiSendUnwrapper: EIP-2470's SingletonFactory swallows a failed inner
+# CREATE2 (returns address(0), tx status 1), so a broadcast whose gas fell short on-chain still
+# looks successful in simulation and the script prints "[OK] deployed". These checks re-query the
+# real chain after the broadcast landed, which is the only trustworthy signal.
+if [ "${DRY_RUN:-0}" != "1" ]; then
+  echo "=== Post-broadcast verification against $CHAIN ==="
+  rpc_codehash() { cast keccak "$(cast code "$1" --rpc-url "$CHAIN" 2>/dev/null)" 2>/dev/null; }
+  EMPTY_HASH_CODE=$(cast keccak "$(cast code 0xA4703438f8cc4fc2C2503a7e43935Da16BA74652 --rpc-url "$CHAIN" 2>/dev/null)")
+  fail=0
+  check() { # addr expected label
+    got=$(rpc_codehash "$1")
+    if [ "$got" = "$2" ]; then
+      echo "  [OK]   $3"
+    else
+      echo "  [FAIL] $3 — codehash $got != $2"
+      fail=1
+    fi
+  }
+  check 0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526 0x0e4f7fc66550a322d1e7688e181b75e217e662a4f3f4d6a29b22bc61217c4b77 "MultiSend"
+  check 0x9641d764fc13c8B624c04430C7356C1C7C8102e2 0xecd5bd14a08c5d2122379900b2f272bdf107a7e92423c10dd5fe3254386c9939 "MultiSendCallOnly"
+  check 0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD 0x1f6e088be5e6ef9d0fbe0547d3fa9a9e40d823433fd8a4449215b5663209a1eb "MultiSendUnwrapper"
+  [ -n "$EMPTY_HASH_CODE" ] && echo "  [..]   Empty codehash: $EMPTY_HASH_CODE"
+
+  if [ "$fail" = "1" ]; then
+    echo ""
+    echo "ERROR: on-chain state does not match what the deploy assumed."
+    echo "  A missing MultiSendUnwrapper is usually the SingletonFactory silent-OOG: the tx succeeded"
+    echo "  (status 1) but the inner CREATE2 ran out of gas at the code-deposit step. Redeploy it with"
+    echo "  an explicit gas limit (~1.5M) before deploying any fund on this chain:"
+    echo "    cast send 0xce0042B868300000d44A59004Da54A005ffdcf9f 'deploy(bytes,bytes32)' <initcode> 0x0 \\"
+    echo "      --rpc-url $CHAIN --gas-limit 1500000 <signer flags>"
+    echo "  DO NOT run deployOiv/deployStack or a CCIP fan-out targeting this chain until it passes:"
+    echo "  the fan-out fee is spent on the source chain and is not refunded when delivery reverts."
+    exit 1
+  fi
+
+  # Mainnet only: the orchestrator's chainId->CCIP-selector registry does NOT survive a salt bump —
+  # a freshly CREATE2'd orchestrator starts empty, and deployEverywhere reverts UnknownChain on the
+  # first destination. Seeding is owner-only, so it must happen while the EOA still owns it.
+  if [ "$CHAIN" = "ethereum" ]; then
+    ORCH_COUNT=""
+    if [ -n "${ORCHESTRATOR:-}" ]; then
+      ORCH_COUNT=$(cast call "$ORCHESTRATOR" "getChainIdCount()(uint256)" --rpc-url "$CHAIN" 2>/dev/null || true)
+    fi
+    if [ -n "$ORCH_COUNT" ]; then
+      echo "  [..]   mainnet orchestrator selector registry: $ORCH_COUNT destinations"
+      [ "$ORCH_COUNT" = "0" ] && echo "  WARNING: registry is EMPTY — seed it with setChainSelectors BEFORE handing ownership to the Safe."
+    else
+      echo "  NOTE: set ORCHESTRATOR=<address> to have this script check the selector registry."
+      echo "        A salt-v3 orchestrator starts with an EMPTY registry; seed it from the EOA"
+      echo "        (setChainSelectors) BEFORE transferring ownership, or re-seeding needs a Safe tx."
+    fi
+  fi
+fi

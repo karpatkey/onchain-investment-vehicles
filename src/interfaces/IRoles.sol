@@ -79,6 +79,33 @@ interface IRoles {
     /// @param options       Execution options bitmask (0 = none, 1 = send, 2 = delegatecall, 3 = both).
     function allowFunction(bytes32 roleKey, address targetAddress, bytes4 selector, uint8 options) external;
 
+    /// @notice Registers (or clears) the unwrap adapter used to decompose calls to
+    ///         `to.selector` before permission-checking them.
+    /// @dev    Callable only by the current owner. Without an adapter a batched
+    ///         `multiSend(bytes)` delegatecall is one opaque blob the modifier cannot
+    ///         permission-check, so it is rejected wholesale. The adapter is keyed on the
+    ///         `(to, selector)` pair, so each MultiSend variant must be registered separately.
+    ///         Pass `address(0)` as `adapter` to remove a registration.
+    /// @param to       Target contract whose calls need unwrapping (a MultiSend contract).
+    /// @param selector 4-byte selector on `to` that carries the batch (`multiSend(bytes)`).
+    /// @param adapter  Unwrap adapter implementing Zodiac's `ITransactionUnwrapper`.
+    function setTransactionUnwrapper(address to, bytes4 selector, address adapter) external;
+
+    /// @notice Returns the unwrap adapter registered for a `(to, selector)` pair.
+    /// @dev    `key` packs the target into the high 20 bytes, the selector into the next 4, and
+    ///         leaves the low 8 bytes zero:
+    ///
+    ///             bytes0..19  = to
+    ///             bytes20..23 = selector
+    ///             bytes24..31 = 0
+    ///
+    ///         In Solidity that is `bytes32(bytes20(to)) | (bytes32(selector) >> 160)`.
+    ///         (`abi.encodePacked(to, selector)` produces the same 24 bytes but returns `bytes`,
+    ///         which has no direct conversion to `bytes32` — use the shift form above.)
+    /// @param key Packed `(to, selector)` key.
+    /// @return    Registered adapter, or the zero address when none is set.
+    function unwrappers(bytes32 key) external view returns (address);
+
     /// @notice Executes a transaction through the modifier if the caller holds `roleKey`.
     /// @dev    Forwards the call to target if all role checks pass.
     ///         If `shouldRevert` is true the call reverts on inner failure; otherwise it returns false.

@@ -225,11 +225,17 @@ Fee rates are in basis points (100 bps = 1%). The skill handles the conversion f
 
 ## Deployed factory addresses
 
-The current **v2.1.1** `KpkOivFactory` (and `KpkSharesDeployer`) is deployed at the same address on every chain via the canonical CREATE2 deployer:
+> ### ⚠️ Salt v2 is superseded — do not deploy new funds through it
+>
+> The addresses below are the **salt-v2** build, still live on all 19 chains. It predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — the defect this replaces. Repairing a fund after the fact needs multisig transactions, because ownership is handed over during the deploy.
+>
+> Use the **salt-v3** addresses in [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) once the v3 rollout has landed. The v2 addresses are kept here only as a record of what is on-chain today.
+
+The **salt-v2** `KpkOivFactory` (and `KpkSharesDeployer`), deployed at the same address on every chain via the canonical CREATE2 deployer:
 
 | Contract         | Address                                      |
 |------------------|----------------------------------------------|
-| `KpkOivFactory`  | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
-| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
+| `KpkOivFactory`  | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` (superseded) |
+| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` (superseded) |
 
 Deployed on 19 chains, owned by the OIV governance Safe. For the authoritative per-chain address / tx / block record — and the superseded legacy `0x0d94…d420` (pre-patch v2.1.0) build — see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).

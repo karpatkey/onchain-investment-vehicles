@@ -111,10 +111,19 @@ orchestrator never holds a privileged role on any deployed fund — the exec Rol
   `quoteDeployEverywhere(config, destChainIds, gasLimit)` to size the `msg.value` to send; any
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
-- **Gas limit.** `deployStack` measures at ~1.45M gas; pass `gasLimit` of ~1.8M–2.0M. CCIP caps
+- **Gas limit.** `deployStack` measures at ~1.55M gas; pass `gasLimit` of ~2.0M–2.2M. CCIP caps
   destination execution at 3M, so there is comfortable headroom. Unspent gas is **not** refunded.
+  (The figure was ~1.38M before the factory began registering MultiSend unwrap adapters — six
+  `setTransactionUnwrapper` writes across the three Roles Modifiers, ~155k gas.)
 - **`EMPTY_CONTRACT` precondition.** `deployStack` reverts with `EmptyContractMissing` unless the
   `Empty` contract (`0xA470…4652`) is predeployed on the target chain — ensure this first.
+- **MultiSend-unwrapping precondition.** `deployStack` also reverts with `MultiSendUnwrapperMissing`
+  or `MultiSendMissing` unless the Zodiac `MultiSendUnwrapper` (`0xB4Cd…9efD`) and both Safe v1.4.1
+  MultiSend contracts (`0x3886…B526`, `0x9641…02e2`) are present with their canonical bytecode.
+  `_ensureMultiSendUnwrapper` onboards the unwrapper during infra deploy (permissionless, via the
+  EIP-2470 SingletonFactory), so this is only a live risk on a chain wired without running that
+  preflight. It matters most for fan-out: the CCIP fee is spent on the source chain regardless, so a
+  destination missing this reverts on delivery and the fund exists everywhere except there.
 - **New funds only.** Addresses are keyed to the orchestrator. Funds previously deployed directly by
   an EOA cannot be retro-extended through this path; every fund using it must enter via the
   orchestrator from the start.

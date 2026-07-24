@@ -95,9 +95,16 @@ CREATE2 collision).
 
 - **Async, not atomic** — monitor delivery on the [CCIP Explorer](https://ccip.chain.link); a failed
   message enters the FAILED state and is manually re-executable within its retry window.
-- **`gasLimit`** must cover `deployStack` on the destination (~1.45M measured; ~1.8M–2.0M
-  recommended; CCIP caps destination execution at 3M).
+- **`gasLimit`** must cover `deployStack` on the destination (~1.55M measured; ~2.0M–2.2M
+  recommended; CCIP caps destination execution at 3M). The figure rose from ~1.38M when the factory
+  began registering MultiSend unwrap adapters (~155k gas), so the older ~1.8M advice is now too
+  close to the floor. Under-sizing is not recoverable: the CCIP fee is spent on the source chain and
+  the destination `ccipReceive` reverts.
 - **`Empty` must be present** on every target chain (the Avatar Safe's sole signer).
+- **MultiSend unwrapping must be present** on every target chain — the Zodiac `MultiSendUnwrapper`
+  (`0xB4Cd…9efD`) plus both Safe v1.4.1 MultiSend contracts (`0x3886…B526`, `0x9641…02e2`), each with
+  its canonical bytecode. `deployStack` reverts `MultiSendUnwrapperMissing` / `MultiSendMissing`
+  otherwise. `script/deploy-chain.sh` onboards and then re-verifies these against the chain.
 - Supported networks, router/LINK/selector values, and the new-chain onboarding checklist are in
   [CCIP_CROSS_CHAIN_DEPLOY.md](CCIP_CROSS_CHAIN_DEPLOY.md) and
   [`../script/ccip-networks.json`](../script/ccip-networks.json).

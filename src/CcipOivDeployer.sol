@@ -274,8 +274,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///                       `StackConfig` sent to each sidechain is derived via
     ///                       `factory.oivToStackConfig` (the factory's own mapping), so the five
     ///                       operational-stack addresses match the local OIV.
-    /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.45M
-    ///                       measured; a 1.8M–2.0M value is recommended). Capped at 3M by CCIP.
+    /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.55M
+    ///                       measured; a 2.0M–2.2M value is recommended). Capped at 3M by CCIP.
+    ///                       The measured figure rose from ~1.38M when the factory began registering
+    ///                       MultiSend unwrap adapters (six `setTransactionUnwrapper` writes across
+    ///                       the three Roles Modifiers, ~155k gas). An under-sized `gasLimit` is not
+    ///                       refundable: the CCIP fee is paid on the source chain and the destination
+    ///                       `ccipReceive` reverts, so the fund lands on every chain but that one.
     /// @return instance      Addresses of the seven contracts deployed locally.
     /// @return messageIds    CCIP message id per destination, in `getChainIds()` order (local skipped).
     ///
