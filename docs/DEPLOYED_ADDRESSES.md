@@ -18,10 +18,12 @@ Predicted salt-v3 addresses for deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1
 
 | Contract | Predicted salt-v3 address |
 |---|---|
-| `KpkOivFactory` | `0xE956739b8afb06E71E9A0363E170B5498317A63e` |
-| `KpkSharesDeployer` | `0xd5606E74F45bd1A58073261C1C738cD7268a8D3f` |
-| `CcipOivDeployer` | `0xeDA7015dE6EB08d46D69999B29a833D28D01883F` |
+| `KpkOivFactory` | `0xf6c2a1C5B3E6119beF4214bcc465ABc2eE93cfC9` |
+| `KpkSharesDeployer` | `0x69A5e1D7E8aa61C2A7a8afE893793a1b56B9fA5A` |
+| `CcipOivDeployer` | `0x9ab745e6be65723a58b2568233C1cf48A4eB3705` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+
+> These are sensitive to *any* source edit, including comments: `foundry.toml` leaves `bytecode_hash` at its default, so the solc metadata hash is embedded in the creation code. Editing a NatSpec line in `IRoles.sol` alone moved the factory from `0xE956…A63e` to the address above. **Re-derive them immediately before broadcasting** — `test/FactoryAddressSync.t.sol` will fail CI if `DeployOiv.FACTORY` drifts, but the other two are not pinned by any test.
 
 > **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. Complete the v3 rollout on all 19 chains before deploying any new fund.
 

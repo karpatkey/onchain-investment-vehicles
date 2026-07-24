@@ -92,8 +92,16 @@ interface IRoles {
     function setTransactionUnwrapper(address to, bytes4 selector, address adapter) external;
 
     /// @notice Returns the unwrap adapter registered for a `(to, selector)` pair.
-    /// @dev    `key` is `bytes32(abi.encodePacked(to, selector))` — the target in the high
-    ///         20 bytes, the selector in the next 4, the remaining 8 bytes zero.
+    /// @dev    `key` packs the target into the high 20 bytes, the selector into the next 4, and
+    ///         leaves the low 8 bytes zero:
+    ///
+    ///             bytes0..19  = to
+    ///             bytes20..23 = selector
+    ///             bytes24..31 = 0
+    ///
+    ///         In Solidity that is `bytes32(bytes20(to)) | (bytes32(selector) >> 160)`.
+    ///         (`abi.encodePacked(to, selector)` produces the same 24 bytes but returns `bytes`,
+    ///         which has no direct conversion to `bytes32` — use the shift form above.)
     /// @param key Packed `(to, selector)` key.
     /// @return    Registered adapter, or the zero address when none is set.
     function unwrappers(bytes32 key) external view returns (address);
