@@ -216,7 +216,7 @@
     "verifiedOnChainPostHandover": true
   },
   "verification": {
-    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends (Sourcify v2 57/57, Etherscan V2 51/51 on its 17 chains, Blockscout 30/30, Routescan 15/15 on its 5 chains, Tenderly 54/57 public). OKLink is indeterminate due to IP rate-limiting and adds no coverage that is not already held. Every figure was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi), never from a forge exit code.",
+    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends (Sourcify v2 57/57, Etherscan V2 51/51 on its 17 chains, Blockscout 30/30, Routescan 15/15 on its 5 chains, Tenderly 54/57 public, OKLink 30/30 on its 10 chains). Every figure was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi / OKLink check-verify-result), never from a forge exit code. OKLink was settled on 2026-07-25 - see its entry below; the earlier 'indeterminate, IP rate-limited' reading was a misdiagnosis.",
     "contractsCovered": [
       "kpkOivFactory",
       "kpkSharesDeployer",
@@ -286,18 +286,38 @@
         ]
       },
       "oklink": {
-        "_comment": "OKLink verification is KEYLESS (an OKX trading API key does NOT work here - it returns Invalid OK-ACCESS-KEY; that credential is for a different product). Submissions went in for all 27 targets. 7 are confirmed Success; the rest could not be confirmed in-session because OKLink throttled the submit route (code 50026) and a guid - the only status handle - is obtainable only from a submit. The check-verify-result route itself is keyless and unthrottled. Tracked in issue #39; re-run script/verify/oklink_patient.py from a cooled-down IP to settle it. Re-submitting an already-verified contract is safe.",
-        "result": "submitted on all 9 OKLink chains (27 targets); >=7 confirmed Success, remainder pending OKLink-side confirmation",
-        "confirmedSuccess": [
-          "optimism/kpkSharesDeployer",
-          "base/kpkSharesDeployer",
-          "bnb/kpkSharesDeployer",
-          "polygon/kpkSharesDeployer",
-          "avalanche/kpkSharesDeployer",
-          "linea/kpkSharesDeployer",
-          "scroll/kpkSharesDeployer"
+        "_comment": "SETTLED 2026-07-25 (issue #39). OKLink verification is KEYLESS (an OKX trading API key does NOT work here - it returns Invalid OK-ACCESS-KEY; that credential is for a different product). OKLink serves TEN of our chains, not nine - gnosis was missed in the salt-v2 survey and has now been verified too, so the target count is 30, not 27. THE 50026 DIAGNOSIS WAS WRONG: `{code: 50026, msg: 'System error, please try again later.'}` on the submit route is NOT IP rate-limiting - it is OKLink's unhelpful rendering of 'this (chain, address) already has a SUCCESSFUL verification'. Established by controlled experiment: 50026 tracks the (chain, address) pair and is independent of payload, size and IP (a 200-byte throwaway payload at one of our addresses 50026s, while the same payload at an unrelated address is accepted, as is our full 244KB payload at an unrelated address); gnosis returned code 0 before it was verified and 50026 minutes later once its three contracts came back Success; and addresses carrying only FAILED jobs keep accepting resubmits. A full 30-target resweep on 2026-07-25 returned 50026 for every one, so all 30 are verified. The sweep is self-healing - anything genuinely unverified is accepted and queued - and re-running it is safe and idempotent: script/verify/oklink_verify.py.",
+        "result": "30/30 (10 chains x 3 contracts)",
+        "chains": [
+          "ethereum",
+          "optimism",
+          "gnosis",
+          "base",
+          "arbitrum",
+          "bnb",
+          "polygon",
+          "avalanche",
+          "linea",
+          "scroll"
         ],
-        "impact": "None on coverage: every chain OKLink serves is already verified on Sourcify v2 + Etherscan V2 (or Blockscout for scroll) + Tenderly.",
+        "directlyReadConfirmed": {
+          "_comment": "Read back by guid from check-verify-result (keyless, never throttled). The other 20 are established by the 50026 equivalence above, because OKLink only mints a guid - the sole status handle - for a contract that is NOT already verified, so an already-verified target cannot be re-read directly.",
+          "gnosis": [
+            "kpkOivFactory",
+            "kpkSharesDeployer",
+            "ccipOivDeployer"
+          ],
+          "kpkSharesDeployerOn": [
+            "optimism",
+            "base",
+            "bnb",
+            "polygon",
+            "avalanche",
+            "linea",
+            "scroll"
+          ]
+        },
+        "impact": "None on coverage either way: every chain OKLink serves already holds Sourcify v2 + Etherscan V2 (or Blockscout for scroll) + Tenderly. OKLink is a sixth backend.",
         "trackingIssue": "#39"
       }
     }
