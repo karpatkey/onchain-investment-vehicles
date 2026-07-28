@@ -21,8 +21,19 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      # Pinned deliberately. `foundry-toolchain@v1` defaults to `version: stable`, i.e. whatever
+      # forge is newest when the job runs. That is unsafe here: `foundry.toml` leaves
+      # `bytecode_hash` at solc's default, so the compilation inputs forge assembles (remappings
+      # among them) are hashed into contract metadata and therefore into every CREATE2 address.
+      # test/FactoryAddressSync.t.sol asserts the deployed addresses in docs/DEPLOYED_ADDRESSES.md
+      # against addresses predicted from that bytecode, so a forge release that changes those
+      # inputs would turn CI red with no change to this repo -- or, worse, quietly become the new
+      # "correct" answer and mask a real drift. Bump this only alongside a deliberate re-derivation
+      # of the addresses from a clean clone.
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: 1.7.1
 
       - name: Show Forge version
         run: forge --version

@@ -41,8 +41,17 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 > - Editing a single NatSpec line in `IRoles.sol` moved the factory address.
 > - An untracked `lib/openzeppelin-contracts/` in a working tree makes forge remap `@openzeppelin/contracts/` to it instead of the nested copy under `lib/openzeppelin-contracts-upgradeable/`. Same OZ version (5.0.2), same behaviour, **different address** — because the paths baked into the metadata differ.
 > - Nested submodules left off their pinned commits shift it again.
+> - **Stray untracked `ds-test/` directories under `lib/` shift it too** (confirmed 2026-07-28). The nested `forge-std` copies have no `.gitmodules`, so `ds-test` is *not* a registered submodule and a recursive clone never creates it — but if a `lib/.../forge-std/lib/ds-test` exists locally, forge emits an extra `ds-test/=…` remapping (10 remappings instead of 9) and every predicted address moves. There are **two** such spots (under `openzeppelin-contracts-upgradeable/lib/forge-std` and under `.../openzeppelin-contracts/lib/forge-std`); deleting only one just relocates the remapping to the other and yields a third wrong address. Delete both.
 >
-> The values above were produced by a **fresh `git clone --recurse-submodules`** of this branch and match what CI computes, which is the only reproducible reference. A local tree that has drifted will silently produce different bytecode — which would also break explorer source verification, since verification compares metadata.
+> **Fastest way to tell whether a tree has drifted** — diff its remappings against a clean clone's; any difference is the problem:
+>
+> ```bash
+> diff <(forge remappings | sort) <(cd /path/to/fresh-clone && forge remappings | sort)
+> ```
+>
+> Run `forge clean` before trusting a re-run: a cached-artifact re-run finishes in milliseconds and re-prints the *old* address, which looks like a confirmed result.
+>
+> The values above were produced by a **fresh `git clone --recurse-submodules`** of this branch and match what CI computes, which is the only reproducible reference. A local tree that has drifted will silently produce different bytecode — which would also break explorer source verification, since verification compares metadata. CI's forge version is **pinned** in `.github/workflows/test.yml` for the same reason; bump it only alongside a deliberate re-derivation of these addresses.
 >
 > **Any future rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone confirms the table matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant. The salt-v3 addresses above were produced this way, from a clone of `main` at `9120f63`.
 
