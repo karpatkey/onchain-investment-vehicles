@@ -78,7 +78,16 @@ The patched build (Roles Modifier v2.1.1), **salt v2**, deployed via the canonic
 
 > **HyperEVM note.** HyperEVM deploy required enabling Hyperliquid "big blocks" for the deployer (`usingBigBlocks` L1 action) — its ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again after the deploy.
 
-> **Note — salt v1 superseded.** An earlier salt-v1 build (factory `0xfb762083839AaED43Af0d37e67d7EE62340D25f0`) was deployed on these chains with ownership handed to the Safe *at deploy time*, which left owner-only setup behind the multisig. It was redeployed at **salt v2** (addresses above) so all config runs from the EOA before handover. The v1 contracts remain on-chain but are abandoned/unused.
+> **Note — salt v1 superseded.** An earlier salt-v1 build was deployed on these chains with ownership handed to the Safe *at deploy time*, which left owner-only setup behind the multisig. It was redeployed at **salt v2** (addresses above) so all config runs from the EOA before handover. The v1 contracts remain on-chain but are abandoned/unused — recorded here only so they can be identified if encountered on-chain:
+>
+> | Contract | Salt-v1 address (abandoned) |
+> |---|---|
+> | `KpkOivFactory` | `0xfb762083839AaED43Af0d37e67d7EE62340D25f0` |
+> | `KpkSharesDeployer` | `0x3Bc6cf9f825348Bee937f084f46E6655184F26C9` |
+> | `CcipOivDeployer` | `0x037B800C05950e5152D946bD5C93444937532ca5` |
+> | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (same at every salt) |
+>
+> Per-chain salt-v1 deploy blocks and tx hashes were never merged to `main`; they survive in the diff of closed PR #30 (`refs/pull/30/head`) if that provenance is ever needed. They are deliberately not carried here — the contracts are unused, so 19 rows of block/tx detail would be noise.
 
 ---
 
