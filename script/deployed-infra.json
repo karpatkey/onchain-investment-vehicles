@@ -1,5 +1,5 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (SALT V3). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The three `canonical` contracts share one address on every chain (deterministic CREATE2, salt v3, eoaOwner 0xAa5A...4F72); `emptyContract` is unchanged from earlier salts. `chains[]` = the 19 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued. SALT V3 supersedes salt v2 (factory 0xfff31e9948E2afF718Ca0f80C349ebE90F50f965): v2 predates the MultiSend unwrap-adapter fix, so any fund deployed through it gets Roles Modifiers that reject batched multiSend calls. A fund must NOT straddle two factory versions - the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions. BUILD NOTE: foundry.toml leaves bytecode_hash at its solc default, so these addresses depend on the build environment (dependency source PATHS are hashed into the metadata); they were produced from a fresh `git clone --recurse-submodules` of main at 9120f63 and are pinned by test/FactoryAddressSync.t.sol. Human companion: docs/DEPLOYED_ADDRESSES.md.",
+  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (SALT V3). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The three `canonical` contracts share one address on every chain (deterministic CREATE2, salt v3, eoaOwner 0xAa5A...4F72); `emptyContract` is unchanged from earlier salts. `chains[]` = the 19 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued. SALT V3 supersedes salt v2, which predated the MultiSend unwrap-adapter fix and so produced Roles Modifiers that reject batched multiSend calls. The salt-v1 and salt-v2 addresses are deliberately NOT recorded in this repo: no fund uses them, this file tracks only the current infra, and git history has them if ever needed. A fund must NOT straddle two factory versions - the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions. BUILD NOTE: foundry.toml leaves bytecode_hash at its solc default, so these addresses depend on the build environment (dependency source PATHS are hashed into the metadata); they were produced from a fresh `git clone --recurse-submodules` of main at 9120f63 and are pinned by test/FactoryAddressSync.t.sol. Human companion: docs/DEPLOYED_ADDRESSES.md.",
   "version": "2.1.1",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
@@ -321,11 +321,5 @@
         "trackingIssue": "#39"
       }
     }
-  },
-  "supersededSaltV2": {
-    "_comment": "Still on-chain on all 19 chains but ABANDONED - predates the MultiSend unwrap-adapter fix. Do not deploy funds through it.",
-    "kpkOivFactory": "0xfff31e9948E2afF718Ca0f80C349ebE90F50f965",
-    "kpkSharesDeployer": "0x04F61ea9F320473aC1439F025D014DC39e0652B0",
-    "ccipOivDeployer": "0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc"
   }
 }

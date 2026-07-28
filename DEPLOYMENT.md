@@ -236,8 +236,10 @@ The current **salt-v3** build, deployed at the same address on every chain via t
 
 Deployed on 19 chains, owned by the OIV governance Safe (`owner() == Safe` verified on-chain on all 19).
 
-> ### ⚠️ Do not deploy funds through the salt-v2 build
+> ### ⚠️ Deploy only through the addresses above
 >
-> `KpkOivFactory 0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` (with deployer `0x04F61ea9…52B0` and orchestrator `0x45Fd2B5E…D6Bc`) is **superseded**. It is still live on all 19 chains, but it predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls**. Repairing one afterwards needs multisig transactions, because ownership is handed over during the deploy. The even older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0.
+> Earlier factory generations are still live on-chain, and **only the salt-v3 addresses above are safe to deploy through**. The salt-v2 build predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — repairable only by multisig afterwards, because ownership is handed over during the deploy. The older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0; `script/DeployCcipOivDeployer.s.sol` hard-refuses that one (`OivChainDeploy.LEGACY_FACTORY`, pinned by `test/FactoryAddressSync.t.sol`).
+>
+> Superseded addresses are intentionally not listed in this repo — it records the current infra plus the stack the live kUSD fund runs on. If you need an old generation's address, take it from git history rather than re-adding it here.
 
 For the authoritative per-chain address / tx / block record see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).

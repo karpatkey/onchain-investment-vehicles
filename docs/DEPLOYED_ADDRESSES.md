@@ -2,11 +2,12 @@
 
 Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Both contracts deploy at identical addresses on every EVM chain by construction (same canonical deployer, same salt, same constructor args).
 
-Source of truth: each chain's commit on this branch lists addresses, broadcast tx hashes, and explorer links. Once all chains are merged, this doc reflects the final state.
-
-> ⚠️ The **current** infra is the patched **v2.1.1** build (next section). The `0x0d94…d420` factory
-> documented further down is the **legacy, pre-patch v2.1.0** build (had the June-2026 ERC-1271 bypass)
-> and is **superseded** — kept below only as historical record.
+> **This file records only the CURRENT infra, plus the older stack a live fund still runs on.**
+> Deploy new funds exclusively through the **salt v3** addresses in the next section. The
+> `0x0d94…d420` factory further down is the pre-patch **v2.1.0** build (the June-2026 ERC-1271
+> bypass); it is listed **only** because the kUSD fund lives on it, never as a deploy target.
+> The intermediate **salt-v1 and salt-v2** builds are unused by any fund and are therefore not
+> recorded here at all — they remain on-chain, and git history has the detail if it is ever needed.
 
 ---
 
@@ -49,42 +50,11 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 
 ---
 
-## Superseded — salt v2 (still on-chain, do NOT deploy new funds through it)
+## The kUSD fund's stack — pre-v2.1.1 factory `0x0d94…d420`
 
-> **Abandoned 2026-07-24.** This build predates the MultiSend unwrap-adapter fix, so every fund deployed through it gets three Roles Modifiers with **no unwrap adapter registered** — meaning every batched `multiSend` through them reverts, repairable only by multisig after the fact. The contracts remain deployed on all 19 chains and the existing kUSD fund still lives on the legacy stack, but nothing new should be built on them.
-
-| Contract | Salt-v2 address (superseded) |
-|---|---|
-| `KpkOivFactory` | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
-| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
-| `CcipOivDeployer` | `0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc` |
-
-The historical detail below describes that salt-v2 rollout.
-
----
-
-## Historical — v2.1.1 CCIP infra at salt v2
-
-The patched build (Roles Modifier v2.1.1), **salt v2**, deployed via the canonical CREATE2 deployer, so the four contracts share one address on every chain. Addresses are keyed to the deployer EOA `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72`. Rolled out **EOA-owned first** (so the mainnet orchestrator's selector registry was seeded by the deployer), then `Ownable.owner` on the factory + orchestrator was transferred to the OIV governance Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537`. Machine-readable per-chain status: [`script/deployed-infra.json`](../script/deployed-infra.json).
-
-| Contract | Address |
-|---|---|
-| `KpkOivFactory` | `0xfff31e9948E2afF718Ca0f80C349ebE90F50f965` |
-| `KpkSharesDeployer` | `0x04F61ea9F320473aC1439F025D014DC39e0652B0` |
-| `CcipOivDeployer` (orchestrator) | `0x45Fd2B5ED2669Bb4973b8b20C08644d3B265D6Bc` |
-| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
-
-**Deployed on 19 chains, owned by the Safe, source-verified on the block explorers** (all 4 canonical contracts per chain, incl. `Empty`; primary verifier is Etherscan V2 for 16 chains + a dedicated Lineascan key for Linea. Coverage was broadened 2026-07-23 to additional explorers: **Sourcify v2** (keyless, exact-match) covers the 3 main contracts on **all 19 chains** and auto-propagates each to Etherscan + Routescan + Blockscout; **Blockscout** on 10 instances (ethereum, gnosis, base, arbitrum, polygon, celo, scroll, unichain, ink, worldchain); **OKLink** — keyless — on 9 chains (ethereum, optimism, arbitrum, base, bnb, polygon, avalanche, linea, scroll); **Routescan** on 5 (ethereum, avalanche, mantle, plasma, berachain, via Sourcify propagation); and **Tenderly** (public, in the karpatkey/agents project) on 18 (all but hyperevm, which Tenderly does not support). `Empty` is verified on Etherscan V2 + Blockscout (it is not verifiable on Sourcify/OKLink — trivial-contract matcher quirk). See the `verification` block in `deployed-infra.json` for the full matrix): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll, sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. The mainnet orchestrator's selector registry covers **18 destinations** — 17 seeded by the EOA before handover + `hyperevm` (999) added afterward via an OIV Safe tx ([`script/safe-txs/hyperevm-selector.json`](../script/safe-txs/hyperevm-selector.json)). **Excluded (unfunded):** `bob` + `katana`. Per-chain deploy block / tx in [`script/deployed-infra.json`](../script/deployed-infra.json).
-
-> **HyperEVM note.** HyperEVM deploy required enabling Hyperliquid "big blocks" for the deployer (`usingBigBlocks` L1 action) — its ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again after the deploy.
-
-> **Note — salt v1 superseded.** An earlier salt-v1 build (factory `0xfb762083839AaED43Af0d37e67d7EE62340D25f0`) was deployed on these chains with ownership handed to the Safe *at deploy time*, which left owner-only setup behind the multisig. It was redeployed at **salt v2** (addresses above) so all config runs from the EOA before handover. The v1 contracts remain on-chain but are abandoned/unused.
-
----
-
-## Legacy (superseded, pre-v2.1.1) — factory `0x0d94…d420`
-
-> **Superseded.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It remains deployed on mainnet + Optimism/Gnosis/Base/Arbitrum and the kUSD fund below lives on it, but new funds use the **v2.1.1** infra above. Kept as historical record.
+> **Not a historical record — this is where a live fund runs.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It is documented because **the kUSD fund below still lives on it** (mainnet + Optimism/Gnosis/Base/Arbitrum), so these are the addresses you need to operate or audit that fund. **Never deploy anything new through it** — use the salt-v3 factory above. `script/base/OivChainDeploy.sol` keeps this factory address as `LEGACY_FACTORY` and `script/DeployCcipOivDeployer.s.sol` refuses to wire it into an orchestrator, pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol).
+>
+> Superseded infra that **nothing uses** — the salt-v1 and salt-v2 builds — is deliberately **not** recorded here. This file carries only the current infra plus the stack a live fund depends on. Older generations remain on-chain and are recoverable from git history if ever needed.
 
 ## Common (CREATE2 — same address on every chain)
 
