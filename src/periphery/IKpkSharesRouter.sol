@@ -57,6 +57,13 @@ interface IKpkSharesRouter {
     /// @notice Thrown when an attestation is used outside its `[issuedAt, validUntil]` window.
     error NavAttestationExpired(uint64 validUntil, uint256 nowTs);
 
+    /// @notice Thrown when the *price* an attestation carries is older than `maxNavTtl`.
+    /// @dev    Distinct from {NavAttestationExpired}, which bounds when a quote stops being usable.
+    ///         This bounds how stale the price may be at the moment it is applied. Without it a quote
+    ///         signed a week ago with a fresh `validUntil` would settle at a week-old NAV during its
+    ///         final `maxNavTtl` seconds.
+    error NavQuoteTooOld(uint64 issuedAt, uint256 nowTs, uint64 maxAge);
+
     /// @notice Thrown when an attestation is post-dated relative to the current block.
     error NavAttestationNotYetValid(uint64 issuedAt, uint256 nowTs);
 
@@ -75,8 +82,23 @@ interface IKpkSharesRouter {
     error PriceDeviationTooLarge(uint256 price, uint256 lastSettled, uint16 maxDeviationBps);
 
     /// @notice Thrown when an uncharged performance fee large enough to materially misprice this
-    ///         settlement is outstanding. The pricing service must trigger a fee-only settlement and
-    ///         re-quote at the post-dilution NAV.
+    ///         settlement is outstanding.
+    /// @dev    Remedy: run a fee-only settlement **once the fund's six-hour fee gate has reopened**,
+    ///         then re-quote at the post-dilution NAV.
+    ///
+    ///         The gate qualifier is load-bearing. `KpkShares._chargeFees` only charges — and only then
+    ///         advances the watermark — when `perfTimeElapsed > MIN_TIME_ELAPSED` (6 h), and
+    ///         `_performanceFeeLastUpdate` is written only inside that branch. A fee-only settlement
+    ///         attempted earlier mints nothing, moves no watermark, and leaves this block in place.
+    ///
+    ///         So this error can persist for up to six hours in **both** directions, and the router arms
+    ///         it itself: a router settlement charges the fee, resets the fund's clock, and any
+    ///         subsequent price move past `maxFeeDilutionBps` blocks until the gate reopens. It is
+    ///         availability only — no fund loss, and `KpkShares.requestRedemption` stays permissionless
+    ///         so nobody is locked out of the fund itself — but the timing is adverse, because the block
+    ///         fires exactly when NAV has moved sharply. The only lever that shortens it today is a
+    ///         `DEFAULT_ADMIN_ROLE` `setAssetConfig` widening the tolerance, i.e. relaxing the control
+    ///         that is blocking.
     error FeeSettlementRequired(uint256 pendingFeeShares, uint16 maxFeeDilutionBps);
 
     /// @notice Thrown when the caller's requested output is worse than their own bound.
@@ -112,6 +134,11 @@ interface IKpkSharesRouter {
     ///         (`kpkShares.sol:723`). Because `investor` on a router-created request is the router,
     ///         a surviving `PENDING` request would route the user's refund to this contract.
     error RequestNotSettled(uint256 requestId, uint8 status);
+
+    /// @notice Thrown when an emergency-cancel targets a request this router did not create.
+    /// @dev    `KpkShares` authorises cancellation by investor OR receiver, so a third party naming this
+    ///         router as their receiver would otherwise be cancellable by this router's admin.
+    error NotRouterRequest(uint256 requestId, address investor);
 
     /// @notice Thrown when the router did not end the call with a zero balance of the token it moved.
     error ResidualBalance(address token, uint256 expected, uint256 actual);
@@ -185,24 +212,48 @@ interface IKpkSharesRouter {
     ///                            disables the asset, so a newly enabled fund asset is inert here until
     ///                            an admin configures it explicitly.
     /// @param redeemEnabled       Whether `redeem` accepts this asset.
-    /// @param maxNavTtl           Longest attestation lifetime accepted, in seconds. This is the primary
-    ///                            lever on stale-NAV arbitrage: the option's value scales with the
-    ///                            square root of the window.
+    /// @param maxNavTtl           Bounds a quote in both directions, in seconds: `validUntil` may not
+    ///                            exceed `now + maxNavTtl`, and the price may not be older than
+    ///                            `maxNavTtl` at the moment it is applied. Both halves are needed — the
+    ///                            forward bound alone would still admit a week-old price during its
+    ///                            final `maxNavTtl` seconds. This is the primary lever on stale-NAV
+    ///                            arbitrage; the option's value scales with the square root of the
+    ///                            window.
     /// @param minHoldingPeriod    Seconds a receiver must wait after a router subscription before the
     ///                            router will redeem for them. Blocks the atomic round-trip loop.
     /// @param maxDeviationBps     Maximum deviation from `KpkShares.getLastSettledPrice`. Advisory only:
     ///                            that value is rewritten on every settlement (`kpkShares.sol:428`) and
     ///                            can be walked by any other `OPERATOR`, so it cannot be relied on
     ///                            alone — `priceFloor`/`priceCeil` are the real constraint.
-    /// @param maxFeeDilutionBps   Largest uncharged performance-fee dilution, in bps of net supply,
+    /// @param maxFeeDilutionBps   Largest uncharged **performance**-fee dilution, in bps of net supply,
     ///                            tolerated before `subscribe`/`redeem` refuse to settle.
+    ///
+    ///                            Two limits are deliberate and must be understood before relying on
+    ///                            this. It does NOT cover management-fee dilution: that accrues on every
+    ///                            asset with no fee-module gate, and the fund's `_managementFeeLastUpdate`
+    ///                            is private with no getter, so the router cannot compute it. On a fund
+    ///                            with no performance-fee module — the live kUSD configuration — this
+    ///                            guard is therefore entirely inert while management fees still mint
+    ///                            ahead of pricing. And it fails open on a fee module that does not
+    ///                            expose `highWatermark(address)`.
+    ///
+    ///                            Management-fee dilution is bounded operationally, by settlement
+    ///                            cadence, not on-chain: at a 300 bps annual rate a one-day gap is
+    ///                            ~0.8 bps but a 30-day gap is ~25 bps, landing on whichever single
+    ///                            user crosses the fund's six-hour fee gate.
     /// @param priceFloor          Absolute lower bound on the attested price, 8 decimals. Does not move
     ///                            with settlements, which is what makes it resistant to the ratchet.
     /// @param priceCeil           Absolute upper bound on the attested price, 8 decimals.
     /// @param maxAssetsInPerTx    Largest single subscription, in asset units.
     /// @param maxSharesInPerTx    Largest single redemption, in shares.
-    /// @param maxSharesMintedPerDay Daily budget for shares minted through this router, per UTC day.
-    /// @param maxAssetsOutPerDay  Daily budget for assets paid out through this router, per UTC day.
+    /// @param maxSharesMintedPerDay Budget for shares minted through this router, per **fixed UTC day**.
+    ///                            Fixed windows reset at a publicly known instant, so the true bound on
+    ///                            any 24-hour period is **2x** this value — a full budget at 23:59 and
+    ///                            another at 00:00. Size accordingly: to bound a rolling day at X, set
+    ///                            this to X/2. The budget is also **per asset**, so a fund with two
+    ///                            enabled assets has twice this again in aggregate.
+    /// @param maxAssetsOutPerDay  Budget for assets paid out through this router, per fixed UTC day.
+    ///                            Same 2x-across-midnight and per-asset caveats as above.
     struct AssetConfig {
         bool subscribeEnabled;
         bool redeemEnabled;
@@ -263,6 +314,9 @@ interface IKpkSharesRouter {
 
     /// @notice Emitted when the router's allowance to the shares proxy is manually zeroed.
     event SharesAllowanceRevoked(address indexed asset);
+
+    /// @notice Emitted when the admin rewinds or advances the NAV round counter.
+    event NavRoundReset(uint256 previousRound, uint256 newRound);
 
     /// @notice Emitted when the admin force-cancels a router-created request that survived a
     ///         transaction, and forwards the refund.
@@ -389,8 +443,12 @@ interface IKpkSharesRouter {
     /// @notice The current intent epoch for `owner`.
     function intentEpoch(address owner) external view returns (uint256);
 
-    /// @notice The highest NAV round already used for `asset`.
-    function lastNavRound(address asset) external view returns (uint256);
+    /// @notice The highest NAV round already applied on this router.
+    /// @dev    Router-wide, not per-asset. `sharesPrice` is a fund-wide USD-per-share figure — the asset
+    ///         only selects the decimals used to convert it — so a round consumed while settling one
+    ///         asset must also retire that round for every sibling asset. Keying this per asset would
+    ///         let a superseded quote be replayed on an asset that happened not to transact.
+    function lastNavRound() external view returns (uint256);
 
     /// @notice When `receiver` last received shares through this router, for holding-period checks.
     function sharesHeldSince(address receiver) external view returns (uint64);
@@ -423,6 +481,20 @@ interface IKpkSharesRouter {
 
     /// @notice Zeroes the router's allowance to the shares proxy for `asset`.
     function revokeSharesAllowance(address asset) external;
+
+    /// @notice Rewinds or advances the NAV round counter.
+    /// @dev    Recovery lever for the one piece of irreversible state in this contract. `lastNavRound`
+    ///         ratchets monotonically from an unbounded `uint256` carried in a signed quote, so a single
+    ///         attestation with an absurd round — a compromised signer, or a pricing service emitting
+    ///         milliseconds, a hash, or a `u64::MAX` sentinel — would otherwise exhaust the sequence and
+    ///         permanently disable settlement, with no upgrade path and no way to recover but to
+    ///         redeploy and have every user re-approve.
+    ///
+    ///         Safe to expose: the round is a replay-ordering device, not a price control. Rewinding it
+    ///         cannot change what a quote is worth — `priceFloor`, `priceCeil`, `maxDeviationBps` and
+    ///         `validUntil` all still bind — it can only make an old, still-unexpired quote usable
+    ///         again, and quote lifetimes are bounded by `maxNavTtl`.
+    function resetNavRound(uint256 round) external;
 
     /// @notice Force-cancels a router-created subscription request that survived its transaction and
     ///         forwards the refund to `refundTo`.

@@ -104,8 +104,13 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
     // State
     //
 
-    /// @notice Highest NAV round already applied per asset.
-    mapping(address asset => uint256 round) public lastNavRound;
+    /// @notice Highest NAV round already applied on this router.
+    /// @dev    Router-wide rather than per-asset. `sharesPrice` is a fund-wide USD-per-share figure and
+    ///         the asset only selects the decimals used to convert it, so a round consumed on one asset
+    ///         must retire that round everywhere. Keyed per asset, a superseded quote stayed usable on
+    ///         any sibling asset that happened not to transact — settle USDC at round N after a price
+    ///         drop and the pre-drop round N-1 quote was still live on USDT.
+    uint256 public lastNavRound;
 
     /// @notice Redemption intent digests already executed or cancelled.
     mapping(bytes32 digest => bool consumed) public consumedIntent;
@@ -200,12 +205,7 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
         _settleSingle(requestId, asset, nav.sharesPrice);
 
         _assertSettled(requestId);
-
-        uint256 balanceAfter = IERC20(asset).balanceOf(address(this));
-        if (balanceAfter != balanceBefore) revert ResidualBalance(asset, balanceBefore, balanceAfter);
-
-        uint256 residual = IERC20(asset).allowance(address(this), address(SHARES_CONTRACT));
-        if (residual != 0) revert ResidualAllowance(residual);
+        _assertNoResidualAsset(asset, balanceBefore);
 
         emit Subscribed(asset, msg.sender, receiver, assetsIn, sharesOut, nav.sharesPrice, requestId);
     }
@@ -227,6 +227,17 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
         _verifyNav(nav, navSig, intent.asset, cfg);
         _requireNoBlockingFee(intent.asset, nav.sharesPrice, cfg);
 
+        (requestId, assetsOut) = _redeemOne(intent, intentSig, nav, cfg);
+    }
+
+    /// @dev Body of the single-redemption path, split out purely to keep `redeem`'s stack shallow
+    ///      enough for via-IR. Snapshots, creates, settles, asserts and emits for exactly one intent.
+    function _redeemOne(
+        RedemptionIntent calldata intent,
+        bytes calldata intentSig,
+        NavAttestation calldata nav,
+        AssetConfig memory cfg
+    ) private returns (uint256 requestId, uint256 assetsOut) {
         uint256 shareBalanceBefore = IERC20(address(SHARES_CONTRACT)).balanceOf(address(this));
         uint256 receiverBefore = IERC20(intent.asset).balanceOf(intent.receiver);
 
@@ -235,20 +246,23 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
 
         _assertSettled(requestId);
         _assertNoResidualShares(shareBalanceBefore);
+        _assertDelivered(intent.asset, intent.receiver, receiverBefore, assetsOut);
 
-        // Belt-and-braces against a redemption asset that delivers less than it reports. `KpkShares`
-        // already enforces `assetsOutNet >= request.assetAmount` at `:856`, and we set that floor to
-        // `assetsOut`, so this can only fire on a non-standard token.
-        uint256 delivered = IERC20(intent.asset).balanceOf(intent.receiver) - receiverBefore;
-        if (delivered < intent.minAssetsOut) revert InsufficientOutput(delivered, intent.minAssetsOut);
+        _emitRedeemed(intent, assetsOut, nav.sharesPrice, requestId);
+    }
 
+    /// @dev Emits {Redeemed}. Factored out so neither `_redeemOne` nor `redeemBatch`'s loop carries the
+    ///      event's eight arguments plus the intent digest on the stack at once.
+    function _emitRedeemed(RedemptionIntent calldata intent, uint256 assetsOut, uint256 sharesPrice, uint256 requestId)
+        private
+    {
         emit Redeemed(
             intent.asset,
             intent.owner,
             intent.receiver,
             intent.sharesIn,
             assetsOut,
-            nav.sharesPrice,
+            sharesPrice,
             requestId,
             hashRedemptionIntent(intent)
         );
@@ -290,16 +304,7 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
 
         for (uint256 i = 0; i < count; i++) {
             _assertSettled(requestIds[i]);
-            emit Redeemed(
-                intents[i].asset,
-                intents[i].owner,
-                intents[i].receiver,
-                intents[i].sharesIn,
-                assetsOut[i],
-                nav.sharesPrice,
-                requestIds[i],
-                hashRedemptionIntent(intents[i])
-            );
+            _emitRedeemed(intents[i], assetsOut[i], nav.sharesPrice, requestIds[i]);
         }
 
         // No per-receiver delta check here: all payouts land in one `processRequests`, so if two
@@ -478,6 +483,14 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
     }
 
     /// @inheritdoc IKpkSharesRouter
+    function resetNavRound(uint256 round) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 previous = lastNavRound;
+        lastNavRound = round;
+
+        emit NavRoundReset(previous, round);
+    }
+
+    /// @inheritdoc IKpkSharesRouter
     function emergencyCancelSubscription(uint256 requestId, address refundTo)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -485,8 +498,7 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
     {
         if (refundTo == address(0)) revert ZeroAddress();
 
-        IkpkShares.UserRequest memory request = SHARES_CONTRACT.getRequest(requestId);
-        address asset = request.asset;
+        address asset = _requireOwnRequest(requestId);
 
         uint256 before = IERC20(asset).balanceOf(address(this));
         SHARES_CONTRACT.cancelSubscription(requestId);
@@ -503,6 +515,8 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
         nonReentrant
     {
         if (refundTo == address(0)) revert ZeroAddress();
+
+        _requireOwnRequest(requestId);
 
         IERC20 shares = IERC20(address(SHARES_CONTRACT));
 
@@ -533,6 +547,23 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
         uint256 maxAllowed = block.timestamp + cfg.maxNavTtl;
         if (nav.validUntil > maxAllowed) revert NavTtlTooLong(nav.validUntil, maxAllowed);
 
+        // Bound the age of the PRICE, not just the remaining life of the quote. The check above alone
+        // is satisfied by a week-old quote during its final `maxNavTtl` seconds, which would settle at
+        // a week-old NAV — making the contract's headline anti-stale-NAV control vacuous and `issuedAt`
+        // decorative despite being signed.
+        if (block.timestamp - nav.issuedAt > cfg.maxNavTtl) {
+            revert NavQuoteTooOld(nav.issuedAt, block.timestamp, cfg.maxNavTtl);
+        }
+
+        _verifyNavPriceAndRound(nav, asset, cfg);
+
+        address signer = ECDSA.recover(hashNavAttestation(nav), navSig);
+        if (!hasRole(NAV_SIGNER_ROLE, signer)) revert InvalidNavSigner(signer);
+    }
+
+    /// @dev Price bounds and round monotonicity. Split from `_verifyNav` purely to keep the stack
+    ///      shallow enough for via-IR.
+    function _verifyNavPriceAndRound(NavAttestation calldata nav, address asset, AssetConfig memory cfg) private {
         // Absolute bounds first. These do not move with settlements, which is what makes them
         // resistant to the `_lastSettledPrice` ratchet described in the contract-level docs.
         if (nav.sharesPrice < cfg.priceFloor || nav.sharesPrice > cfg.priceCeil) {
@@ -549,14 +580,11 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
             }
         }
 
-        // Monotonic rounds. `>=` rather than `>` so one quote can serve every investor in its window;
-        // a newer round landing first simply forces in-flight callers to re-quote.
-        uint256 lastRound = lastNavRound[asset];
+        // Monotonic rounds, router-wide. `>=` rather than `>` so one quote can serve every investor in
+        // its window; a newer round landing first simply forces in-flight callers to re-quote.
+        uint256 lastRound = lastNavRound;
         if (nav.navRound < lastRound) revert StaleNavRound(nav.navRound, lastRound);
-        if (nav.navRound != lastRound) lastNavRound[asset] = nav.navRound;
-
-        address signer = ECDSA.recover(hashNavAttestation(nav), navSig);
-        if (!hasRole(NAV_SIGNER_ROLE, signer)) revert InvalidNavSigner(signer);
+        if (nav.navRound != lastRound) lastNavRound = nav.navRound;
     }
 
     /// @dev Reverts when a material uncharged performance fee is outstanding.
@@ -609,11 +637,14 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
 
     /// @dev Rejects receivers that would corrupt accounting or confound the conservation assertions.
     ///      The fee receiver is excluded because minting subscriber shares there would distort the net
-    ///      supply the fund uses as its fee base.
+    ///      supply the fund uses as its fee base. The portfolio Safe is excluded on BOTH paths: minting
+    ///      into it creates self-referential treasury shares that an off-chain NAV service valuing the
+    ///      Safe's holdings can double-count, and those shares are then stuck, since the redemption path
+    ///      refuses to pay that address.
     function _validateReceiver(address receiver) private view {
         if (
             receiver == address(0) || receiver == address(this) || receiver == address(SHARES_CONTRACT)
-                || receiver == SHARES_CONTRACT.feeReceiver()
+                || receiver == SHARES_CONTRACT.feeReceiver() || receiver == SHARES_CONTRACT.portfolioSafe()
         ) {
             revert InvalidReceiver(receiver);
         }
@@ -643,8 +674,6 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
         if (intent.epoch != currentEpoch) revert IntentEpochMismatch(intent.epoch, currentEpoch);
 
         _validateReceiver(intent.receiver);
-        // Paying the portfolio Safe would settle a redemption into the fund itself.
-        if (intent.receiver == SHARES_CONTRACT.portfolioSafe()) revert InvalidReceiver(intent.receiver);
 
         if (cfg.minHoldingPeriod != 0) {
             uint64 heldSince = sharesHeldSince[intent.owner];
@@ -704,6 +733,42 @@ contract KpkSharesRouter is IKpkSharesRouter, AccessControl, Pausable, Reentranc
     function _assertSettled(uint256 requestId) private view {
         IkpkShares.RequestStatus status = SHARES_CONTRACT.getRequest(requestId).requestStatus;
         if (status != IkpkShares.RequestStatus.PROCESSED) revert RequestNotSettled(requestId, uint8(status));
+    }
+
+    /// @dev Asserts the router kept none of the subscription asset and left no standing allowance to the
+    ///      shares proxy. The exact-amount `forceApprove` is fully consumed by the pull inside
+    ///      `requestSubscription` (`kpkShares.sol:228`), so any remainder means the flow diverged.
+    function _assertNoResidualAsset(address asset, uint256 balanceBefore) private view {
+        uint256 balanceAfter = IERC20(asset).balanceOf(address(this));
+        if (balanceAfter != balanceBefore) revert ResidualBalance(asset, balanceBefore, balanceAfter);
+
+        uint256 residual = IERC20(asset).allowance(address(this), address(SHARES_CONTRACT));
+        if (residual != 0) revert ResidualAllowance(residual);
+    }
+
+    /// @dev Requires that `requestId` is a request this router itself created, and returns its asset.
+    ///
+    ///      `KpkShares._requireCancellationAuthorization` (`:707`) authorises the investor OR the
+    ///      receiver, so anyone can call `requestSubscription` directly on the fund naming this router
+    ///      as receiver, which makes the router an authorised canceller of their request. Without this
+    ///      check an admin could cancel a stranger's pending subscription: the fund refunds the real
+    ///      investor so nothing is stolen, but a third party's request dies and an `EmergencyCancelled`
+    ///      event misattributes it to this router.
+    function _requireOwnRequest(uint256 requestId) private view returns (address asset) {
+        IkpkShares.UserRequest memory request = SHARES_CONTRACT.getRequest(requestId);
+        if (request.investor != address(this)) revert NotRouterRequest(requestId, request.investor);
+
+        return request.asset;
+    }
+
+    /// @dev Verifies what the receiver ACTUALLY got, against the quoted payout rather than the owner's
+    ///      floor. Comparing against `intent.minAssetsOut` would be near-vacuous: an owner who signs a
+    ///      permissive floor — commonly 1 wei, as the app does when it trusts the quote — would accept
+    ///      almost any shortfall. `KpkShares` only ever compares numbers it computed itself (`:856`), so
+    ///      this is the sole check on a token that delivers less than it reports.
+    function _assertDelivered(address asset, address receiver, uint256 balanceBefore, uint256 expected) private view {
+        uint256 delivered = IERC20(asset).balanceOf(receiver) - balanceBefore;
+        if (delivered < expected) revert InsufficientOutput(delivered, expected);
     }
 
     /// @dev Asserts the router ends the call holding no more shares than it started with.

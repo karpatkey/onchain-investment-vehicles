@@ -349,6 +349,71 @@ contract KpkSharesRouterAdminTest is KpkSharesRouterTestBase {
     }
 
     // ============================================================================
+    // Review regressions
+    // ============================================================================
+
+    /// @notice `lastNavRound` is the only irreversible state in the contract and ratchets from an
+    ///         unbounded `uint256` carried in a signed quote. One absurd round would otherwise brick
+    ///         settlement permanently — the router is non-upgradeable and rotating the signer key does
+    ///         not help, because the check is on the round, not the key.
+    function test_resetNavRound_recoversFromAnExhaustedRound() public {
+        IKpkSharesRouter.NavAttestation memory poison = _nav(address(usdc), SHARES_PRICE);
+        poison.navRound = type(uint256).max;
+
+        vm.prank(investor);
+        router.subscribe(address(usdc), _usdcAmount(1), 1, investor, poison, _signNav(poison));
+        assertEq(router.lastNavRound(), type(uint256).max, "counter is exhausted");
+
+        // Rotating the signing key does not help: the block is on the round.
+        bytes32 signerRole = router.NAV_SIGNER_ROLE();
+        (address freshSigner, uint256 freshPk) = makeAddrAndKey("freshNavSigner");
+        vm.startPrank(admin);
+        router.revokeRole(signerRole, navSigner);
+        router.grantRole(signerRole, freshSigner);
+        vm.stopPrank();
+
+        IKpkSharesRouter.NavAttestation memory normal = _nav(address(usdc), SHARES_PRICE);
+        vm.prank(investor);
+        vm.expectRevert(
+            abi.encodeWithSelector(IKpkSharesRouter.StaleNavRound.selector, normal.navRound, type(uint256).max)
+        );
+        router.subscribe(address(usdc), _usdcAmount(10), 1, investor, normal, _signNavWith(normal, freshPk));
+
+        // The admin lever restores service.
+        vm.prank(admin);
+        router.resetNavRound(normal.navRound - 1);
+        assertEq(router.lastNavRound(), normal.navRound - 1, "counter rewound");
+
+        vm.prank(investor);
+        (, uint256 sharesOut) =
+            router.subscribe(address(usdc), _usdcAmount(10), 1, investor, normal, _signNavWith(normal, freshPk));
+        assertGt(sharesOut, 0, "settlement resumes after the reset");
+    }
+
+    function test_resetNavRound_onlyAdmin() public {
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, bob, DEFAULT_ADMIN_ROLE)
+        );
+        router.resetNavRound(1);
+    }
+
+    /// @notice `KpkShares` authorises cancellation by investor OR receiver, so anyone can name the
+    ///         router as their receiver and thereby make it an authorised canceller of their request.
+    ///         The admin must not be able to reach a request the router did not create.
+    function test_emergencyCancelSubscription_rejectsThirdPartyRequest() public {
+        // A stranger opens a request directly on the fund, naming the router as receiver.
+        vm.prank(alice);
+        uint256 strangerId = kpkSharesContract.requestSubscription(_usdcAmount(100), 1, address(usdc), address(router));
+
+        skip(SUBSCRIPTION_REQUEST_TTL + 1);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IKpkSharesRouter.NotRouterRequest.selector, strangerId, alice));
+        router.emergencyCancelSubscription(strangerId, carol);
+    }
+
+    // ============================================================================
     // Fuzz
     // ============================================================================
 

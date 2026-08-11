@@ -33,6 +33,20 @@ contract ReentrantToken is Mock_ERC20 {
     }
 }
 
+/// @notice A redemption asset that delivers less than it reports, modelling a transfer-tax token.
+contract FeeOnTransferToken is Mock_ERC20 {
+    constructor() Mock_ERC20("FOT", 18) {}
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        // Deliver 99%, burn the rest: the caller is told `amount` moved, the receiver sees less.
+        uint256 fee = amount / 100;
+        _transfer(from, to, amount - fee);
+        _burn(from, fee);
+        _spendAllowance(from, msg.sender, amount);
+        return true;
+    }
+}
+
 /// @notice Price-provenance, atomicity and reentrancy behaviour. These are the checks that carry the
 ///         fund's economic protection once atomic settlement voids the audited min-out guard.
 contract KpkSharesRouterAdversarialTest is KpkSharesRouterTestBase {
@@ -174,7 +188,7 @@ contract KpkSharesRouterAdversarialTest is KpkSharesRouterTestBase {
         vm.prank(investor);
         router.subscribe(address(usdc), _usdcAmount(10), 1, investor, newer, newerSig);
 
-        assertEq(router.lastNavRound(address(usdc)), newer.navRound, "round must be recorded");
+        assertEq(router.lastNavRound(), newer.navRound, "round must be recorded");
 
         vm.prank(investor);
         vm.expectRevert(abi.encodeWithSelector(IKpkSharesRouter.StaleNavRound.selector, older.navRound, newer.navRound));
@@ -393,6 +407,131 @@ contract KpkSharesRouterAdversarialTest is KpkSharesRouterTestBase {
 
         assertEq(feeShares, 0, "no fee below the watermark");
         assertFalse(blocking, "must not block");
+    }
+
+    // ============================================================================
+    // Review regressions
+    // ============================================================================
+
+    /// @notice `maxNavTtl` must bound the AGE of the price, not merely the quote's remaining life.
+    ///         Without the `issuedAt` check a week-old quote settles during its final `maxNavTtl`
+    ///         seconds — the forward bound alone passes.
+    function test_subscribe_revertsOnStalePriceInsideItsFinalWindow() public {
+        IKpkSharesRouter.NavAttestation memory nav = _nav(address(usdc), SHARES_PRICE);
+        nav.validUntil = uint64(block.timestamp + 7 days);
+        bytes memory sig = _signNav(nav);
+
+        // Land inside the last 30s of a week-long quote: `validUntil <= now + maxNavTtl` now holds,
+        // so only the age check can reject this.
+        vm.warp(nav.validUntil - 30);
+
+        assertLe(nav.validUntil, block.timestamp + MAX_NAV_TTL, "precondition: forward TTL bound passes");
+
+        vm.prank(investor);
+        vm.expectRevert(
+            abi.encodeWithSelector(IKpkSharesRouter.NavQuoteTooOld.selector, nav.issuedAt, block.timestamp, MAX_NAV_TTL)
+        );
+        router.subscribe(address(usdc), _usdcAmount(1000), 1, investor, nav, sig);
+    }
+
+    function test_subscribe_acceptsQuoteAtTheEdgeOfMaxAge() public {
+        IKpkSharesRouter.NavAttestation memory nav = _nav(address(usdc), SHARES_PRICE);
+        nav.validUntil = uint64(block.timestamp + MAX_NAV_TTL);
+        bytes memory sig = _signNav(nav);
+
+        skip(MAX_NAV_TTL); // age == maxNavTtl exactly, still inside the bound
+
+        vm.prank(investor);
+        (, uint256 sharesOut) = router.subscribe(address(usdc), _usdcAmount(10), 1, investor, nav, sig);
+        assertGt(sharesOut, 0, "a quote exactly at max age must still settle");
+    }
+
+    /// @notice The round counter is router-wide. Keyed per asset, a superseded quote stayed live on any
+    ///         sibling asset that had not transacted, defeating the anti-cherry-pick guard — the price
+    ///         is fund-wide, so the asset only selects decimals.
+    /// @dev Registers a second 18-decimal deposit asset on the fund and configures it on the router.
+    function _enableSecondAsset() internal returns (Mock_ERC20 dai) {
+        dai = new Mock_ERC20("DAI", 18);
+        dai.mint(investor, 1_000_000e18);
+
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(dai), false, true, true);
+
+        IKpkSharesRouter.AssetConfig memory config = _defaultConfig();
+        config.maxAssetsInPerTx = 1_000_000e18;
+        vm.prank(admin);
+        router.setAssetConfig(address(dai), config);
+
+        vm.prank(investor);
+        dai.approve(address(router), type(uint256).max);
+    }
+
+    function test_navRoundIsRetiredAcrossAllAssets() public {
+        Mock_ERC20 dai = _enableSecondAsset();
+
+        IKpkSharesRouter.NavAttestation memory oldDaiQuote = _nav(address(dai), SHARES_PRICE);
+        bytes memory oldDaiSig = _signNav(oldDaiQuote);
+
+        // Settle a NEWER round on USDC.
+        IKpkSharesRouter.NavAttestation memory newer = _nav(address(usdc), SHARES_PRICE);
+        vm.prank(investor);
+        router.subscribe(address(usdc), _usdcAmount(10), 1, investor, newer, _signNav(newer));
+
+        // The older DAI quote must now be dead too.
+        vm.prank(investor);
+        vm.expectRevert(
+            abi.encodeWithSelector(IKpkSharesRouter.StaleNavRound.selector, oldDaiQuote.navRound, newer.navRound)
+        );
+        router.subscribe(address(dai), 1000e18, 1, investor, oldDaiQuote, oldDaiSig);
+    }
+
+    /// @notice The portfolio Safe is forbidden on the SUBSCRIBE path too, matching the interface's
+    ///         documented forbidden set. Minting there creates self-referential treasury shares that an
+    ///         off-chain NAV service valuing the Safe's holdings could double-count.
+    function test_subscribe_revertsWhenReceiverIsPortfolioSafe() public {
+        address portfolioSafe = kpkSharesContract.portfolioSafe();
+
+        IKpkSharesRouter.NavAttestation memory nav = _nav(address(usdc), SHARES_PRICE);
+        bytes memory sig = _signNav(nav);
+
+        vm.prank(investor);
+        vm.expectRevert(abi.encodeWithSelector(IKpkSharesRouter.InvalidReceiver.selector, portfolioSafe));
+        router.subscribe(address(usdc), _usdcAmount(1000), 1, portfolioSafe, nav, sig);
+    }
+
+    /// @notice A redemption asset that under-delivers must fail closed. The fund only ever compares
+    ///         numbers it computed itself, so the router's realised-balance check is the only thing
+    ///         standing between a transfer-tax token and a silently short-paid redeemer.
+    function test_redeem_revertsWhenAssetDeliversLessThanReported() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken();
+        fot.mint(safe, 1_000_000e18);
+
+        vm.prank(ops);
+        kpkSharesContract.updateAsset(address(fot), false, true, true);
+
+        IKpkSharesRouter.AssetConfig memory config = _defaultConfig();
+        config.maxAssetsOutPerDay = 1_000_000e18;
+        vm.prank(admin);
+        router.setAssetConfig(address(fot), config);
+
+        vm.prank(safe);
+        fot.approve(address(kpkSharesContract), type(uint256).max);
+
+        // Give the investor shares and let the router spend them.
+        _routerSubscribeAndApproveShares(investor, _usdcAmount(1000), SHARES_PRICE);
+
+        IKpkSharesRouter.RedemptionIntent memory intent = _intent(investor, address(fot), _sharesAmount(100), 1);
+        bytes memory intentSig = _signIntent(intent, investorPk);
+        IKpkSharesRouter.NavAttestation memory nav = _nav(address(fot), SHARES_PRICE);
+        bytes memory navSig = _signNav(nav);
+
+        uint256 sharesBefore = kpkSharesContract.balanceOf(investor);
+
+        vm.prank(bot);
+        vm.expectRevert(); // InsufficientOutput: delivered < assetsOut
+        router.redeem(intent, intentSig, nav, navSig);
+
+        assertEq(kpkSharesContract.balanceOf(investor), sharesBefore, "owner keeps their shares");
     }
 
     function test_subscribe_succeedsWhenFeeDilutionWithinTolerance() public {

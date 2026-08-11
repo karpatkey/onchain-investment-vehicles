@@ -11,7 +11,19 @@
     "eventually push priceCeil, and raising it is a deliberate admin action — that is the intent.",
     "",
     "maxNavTtl is the primary lever on stale-NAV arbitrage and doubles as the kill switch: if the",
-    "pricing service stops signing, atomic settlement stops on its own."
+    "pricing service stops signing, atomic settlement stops on its own. It bounds a quote in BOTH",
+    "directions — validUntil may not exceed now + maxNavTtl, and the price may not be older than",
+    "maxNavTtl when it is applied.",
+    "",
+    "DAILY CAPS ARE FIXED UTC WINDOWS, so the true bound on any rolling 24h is 2x the value set here",
+    "(a full budget at 23:59 and another at 00:00), and they are PER ASSET, so two enabled assets",
+    "double it again. The values below are halved relative to the intended rolling-day bound: 2.5M",
+    "configured => 5M per rolling day per asset => 10M across USDC+USDT. Re-derive if the asset set",
+    "changes.",
+    "",
+    "maxFeeDilutionBps bounds PERFORMANCE-fee dilution only. kUSD runs performanceFeeModule = 0x0, so",
+    "on this fund the guard never fires; management-fee dilution (300 bps/yr) is bounded operationally",
+    "by settlement cadence, not on-chain. Keep settlements frequent."
   ],
   "mainnet": {
     "chain": {
@@ -40,8 +52,8 @@
               "priceCeil": "150000000",
               "maxAssetsInPerTx": "1000000000000",
               "maxSharesInPerTx": "1000000000000000000000000",
-              "maxSharesMintedPerDay": "5000000000000000000000000",
-              "maxAssetsOutPerDay": "5000000000000"
+              "maxSharesMintedPerDay": "2500000000000000000000000",
+              "maxAssetsOutPerDay": "2500000000000"
             },
             {
               "symbol": "USDT",
@@ -56,8 +68,8 @@
               "priceCeil": "150000000",
               "maxAssetsInPerTx": "1000000000000",
               "maxSharesInPerTx": "1000000000000000000000000",
-              "maxSharesMintedPerDay": "5000000000000000000000000",
-              "maxAssetsOutPerDay": "5000000000000"
+              "maxSharesMintedPerDay": "2500000000000000000000000",
+              "maxAssetsOutPerDay": "2500000000000"
             }
           ]
         }

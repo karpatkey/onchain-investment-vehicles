@@ -42,11 +42,61 @@ never at risk. After this change, the protection for continuing shareholders is 
 |---|---|---|
 | EIP-712 `NavAttestation` from `NAV_SIGNER_ROLE` | The investor choosing their own price, even though they broadcast | Hard |
 | `priceFloor` / `priceCeil` — absolute, admin-set | A walked or fat-fingered price | Hard; the only bound that does not track a mutable anchor |
-| `navRound` monotonic per asset | Cherry-picking an older-but-unexpired quote from a published strip | Hard |
-| `maxNavTtl` | The stale-NAV free option; doubles as the kill switch | Hard, and the primary economic lever |
-| Per-tx and per-day caps | Blast radius of a mispriced or compromised quote inside one monitoring interval | Hard |
+| `navRound` monotonic, **router-wide** | Cherry-picking an older-but-unexpired quote from a published strip | Hard |
+| `maxNavTtl` — bounds quote life **and price age** | The stale-NAV free option; doubles as the kill switch | Hard, and the primary economic lever |
+| Per-tx caps | Size of any single settlement | Hard |
+| Per-day caps | Blast radius of a mispriced or compromised quote inside one monitoring interval | Hard, but the true bound is **2×** — see below |
 | `maxDeviationBps` vs `getLastSettledPrice` | Drift from the fund's last settlement | **Advisory** — see below |
+| `maxFeeDilutionBps` | Uncharged **performance**-fee dilution only | **Partial** — see below |
 | `minHoldingPeriod` | Automated round-tripping | **Weak** — see below |
+
+### Why `maxNavTtl` checks two things
+
+It bounds `validUntil` forward (`<= now + maxNavTtl`) **and** the price's age backward
+(`now - issuedAt <= maxNavTtl`). The forward bound alone is not sufficient: a quote signed a week ago
+with `validUntil = now + 60` satisfies it during its final `maxNavTtl` seconds and would settle at a
+week-old NAV — making the headline anti-stale-NAV control vacuous and `issuedAt` decorative despite being
+signed. Both halves are needed for the "Hard" rating above to be true.
+
+### Why the round counter is router-wide, and why the admin can reset it
+
+`sharesPrice` is a fund-wide USD-per-share figure; the asset only selects the decimals used to convert
+it. A per-asset counter therefore left a superseded quote live on any sibling asset that happened not to
+transact — settle USDC at round N after a price drop and the pre-drop round N-1 quote was still usable on
+USDT. One counter for the whole router closes that.
+
+`lastNavRound` is also the only irreversible state in the contract, ratcheting from an unbounded
+`uint256` that arrives inside a signed quote. A single attestation carrying an absurd round — a
+compromised signer, or a pricing service emitting milliseconds, a hash, or a `u64::MAX` sentinel — would
+otherwise exhaust the sequence permanently, with no upgrade path and no recovery short of redeploying and
+having every user re-approve. `resetNavRound` (admin) is the lever, and it is safe to expose because the
+round is a replay-ordering device rather than a price control: rewinding it cannot change what a quote is
+worth, since `priceFloor`, `priceCeil`, `maxDeviationBps` and `validUntil` all still bind.
+
+### Why the daily caps are really 2×, and per asset
+
+`_dailyUsage` buckets on `block.timestamp / 1 days` — a fixed window that resets at a publicly known
+instant. A full budget can be spent at 23:59 and another at 00:00, so the true bound on any rolling
+24 hours is twice the configured value. To bound a rolling day at X, configure X/2. The budget is also
+**per asset**, so a fund with two enabled assets has twice that again in aggregate. `routers.json`'s
+starting values are written with this in mind; re-derive them if you change the asset set.
+
+### Why `maxFeeDilutionBps` is only partial
+
+It mirrors `WatermarkFee.calculatePerformanceFee` and therefore bounds **performance**-fee dilution only.
+Two gaps are deliberate and must be understood before relying on it:
+
+- **Management-fee dilution is not covered.** It accrues on every asset with no fee-module gate, and the
+  fund's `_managementFeeLastUpdate` is `private` with no getter, so the router cannot compute it. On a
+  fund with no performance-fee module — **the live kUSD configuration** — this guard is entirely inert
+  while management fees still mint ahead of pricing. At kUSD's 300 bps annual rate a one-day settlement
+  gap is ~0.8 bps but a 30-day gap is ~25 bps, landing on whichever single user crosses the fund's
+  six-hour fee gate. This is bounded operationally, by settlement cadence, not on-chain.
+- **It fails open** on a fee module that does not expose `highWatermark(address)`. That is a deliberate
+  availability choice: failing closed would brick the router the moment an admin swapped in a legitimate
+  module of a different shape. It does not widen admin power, since an admin who can set the fee module
+  can already cause `KpkShares._chargePerformanceFee` to mint an uncapped amount regardless of what this
+  router does.
 
 ### Why `maxDeviationBps` is advisory
 
@@ -149,11 +199,27 @@ about 1% for a performance-fee crossing.
 The fund's fee clocks are `private` with no getter (`:109`, `:112`), so the router cannot tell whether
 the gate will trip. It instead mirrors `WatermarkFee.calculatePerformanceFee` exactly, reads the public
 `highWatermark`, and refuses to settle when the potential dilution exceeds `maxFeeDilutionBps`
-(`FeeSettlementRequired`). The app then runs a fee-only settlement and re-quotes.
+(`FeeSettlementRequired`).
 
-Keep a scheduled fee-only settlement spaced just over `MIN_TIME_ELAPSED` (6 h) so investor traffic
-almost never crosses the gate. On a fund with `performanceFeeModule == address(0)` — which is the live
-kUSD configuration — this guard is a no-op.
+**The remedy is a fee-only settlement, but only once the fund's six-hour gate has reopened.** That
+qualifier is load-bearing and easy to get wrong: `_chargeFees` charges — and only then advances the
+watermark — when `perfTimeElapsed > MIN_TIME_ELAPSED`, and `_performanceFeeLastUpdate` is written only
+inside that branch (`kpkShares.sol:943-948`). A fee-only settlement attempted earlier mints nothing,
+moves no watermark, and leaves the block in place.
+
+So `FeeSettlementRequired` can persist for up to six hours in **both** directions, and the router arms it
+itself: a router settlement charges the fee, resets the fund's clock, and any subsequent price move past
+`maxFeeDilutionBps` blocks until the gate reopens. It is availability only — no fund loss, and
+`KpkShares.requestRedemption` stays permissionless so nobody is locked out of the fund — but the timing
+is adverse, because the block fires exactly when NAV has moved sharply and redeemers most want out. The
+only lever that shortens it today is an admin `setAssetConfig` widening the tolerance, i.e. relaxing the
+control that is blocking. **An operator escape hatch that does not require loosening the control is an
+open design question** — see the PR discussion.
+
+Keep a scheduled fee-only settlement spaced just over `MIN_TIME_ELAPSED` (6 h) so investor traffic almost
+never crosses the gate. On a fund with `performanceFeeModule == address(0)` — the live kUSD configuration
+— this guard never fires, which also means management-fee dilution there is unguarded; see the
+`maxFeeDilutionBps` note above.
 
 ## Wiring
 
@@ -198,7 +264,20 @@ or share balance at rest; `feeReceiver` balance jumps.
 Note that `SubscriptionRequest.investor` records the **router**, not the subscriber, so indexers must
 read the router's own `Subscribed` / `Redeemed` events for attribution.
 
+## Known asymmetry: batch delivery verification
+
+`redeem` verifies what the receiver **actually** received against the quoted `assetsOut`, which is the
+only check on a token that delivers less than it reports — `KpkShares` compares only numbers it computed
+itself (`:856`). `redeemBatch` omits that check, because all payouts land in one `processRequests` and
+two intents sharing a receiver make their individual deltas inseparable.
+
+The practical consequence is that **fee-on-transfer and rebasing assets are unsupported as redemption
+assets on the batch path**. They already break the fund's own accounting, and the admin controls which
+assets are redeemable, so the exposure is a configuration error rather than an attack. If such an asset
+is ever enabled, route it through single `redeem` only.
+
 ## Contract size
 
-23,089 bytes runtime against the EIP-170 limit of 24,576 — about 1.5 kB of margin. Adding surface here
-needs a size check, and some chains apply lower limits.
+24,131 bytes runtime against the EIP-170 limit of 24,576 — **about 445 bytes of margin**. This is tight:
+essentially any new external function or error will overflow it. Adding surface here requires a
+`forge build --sizes` check, and note some chains apply lower limits than mainnet.
