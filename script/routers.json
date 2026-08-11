@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "Per-fund KpkSharesRouter deployments. One router per KpkShares proxy.",
+    "",
+    "The limits below are STARTING VALUES, not decided risk policy. Whoever owns fund risk must review",
+    "them before the router is wired, because once atomic settlement is live they are the only economic",
+    "protection continuing shareholders have (see the contract-level NatSpec in KpkSharesRouter.sol).",
+    "",
+    "priceFloor / priceCeil are absolute 8-decimal bounds that do NOT track the fund's last settled",
+    "price, which is what makes them resistant to the per-call deviation ratchet. A growing fund will",
+    "eventually push priceCeil, and raising it is a deliberate admin action — that is the intent.",
+    "",
+    "maxNavTtl is the primary lever on stale-NAV arbitrage and doubles as the kill switch: if the",
+    "pricing service stops signing, atomic settlement stops on its own."
+  ],
+  "mainnet": {
+    "chain": {
+      "name": "Ethereum Mainnet",
+      "id": 1,
+      "routers": [
+        {
+          "fundName": "kUSD",
+          "environment": "production",
+          "shares": "0x6D1a4C0878aD24793b1655ae1f78Cfa4522Ba765",
+          "admin": "0x9D73C053afcbF6CD5c8986C3f049fD2Ce005730C",
+          "guardian": "0x7Bb5e307eDf80630f153BD28789b4365eFe4cce3",
+          "_adminNote": "Must be whichever Safe holds DEFAULT_ADMIN_ROLE on the fund at wiring time. As of docs/DEPLOYED_ADDRESSES.md that is the staging Sec Council Safe, with a handover to the production Sec Council pending — sequence the OPERATOR grant against whichever holds the role then.",
+          "_guardianNote": "Manager Safe. Add an ops hot key as a second GUARDIAN_ROLE holder so pausing does not need a multisig round trip.",
+          "assets": [
+            {
+              "symbol": "USDC",
+              "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+              "subscribeEnabled": true,
+              "redeemEnabled": true,
+              "maxNavTtl": 120,
+              "minHoldingPeriod": 0,
+              "maxDeviationBps": 200,
+              "maxFeeDilutionBps": 25,
+              "priceFloor": "90000000",
+              "priceCeil": "150000000",
+              "maxAssetsInPerTx": "1000000000000",
+              "maxSharesInPerTx": "1000000000000000000000000",
+              "maxSharesMintedPerDay": "5000000000000000000000000",
+              "maxAssetsOutPerDay": "5000000000000"
+            },
+            {
+              "symbol": "USDT",
+              "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+              "subscribeEnabled": true,
+              "redeemEnabled": true,
+              "maxNavTtl": 120,
+              "minHoldingPeriod": 0,
+              "maxDeviationBps": 200,
+              "maxFeeDilutionBps": 25,
+              "priceFloor": "90000000",
+              "priceCeil": "150000000",
+              "maxAssetsInPerTx": "1000000000000",
+              "maxSharesInPerTx": "1000000000000000000000000",
+              "maxSharesMintedPerDay": "5000000000000000000000000",
+              "maxAssetsOutPerDay": "5000000000000"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
