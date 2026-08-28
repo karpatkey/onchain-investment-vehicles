@@ -46,6 +46,29 @@ import {RecoverFunds} from "./utils/RecoverFunds.sol";
 ///         liveness: while the NAV is unhealthy the fund cannot mint or burn. Escrow stays
 ///         refundable throughout — cancellations need no price, and a `processRequests` call with an
 ///         empty approve list skips the NAV read entirely so the operator can always return funds.
+///
+///         TRUST ASSUMPTION: THE NAV CALCULATOR IS TAKEN TO BE CORRECT.
+///         A NAV that reports itself healthy is accepted and settled against without any bound on
+///         the resulting price. This is a deliberate decision, not an oversight, and it is the load-
+///         bearing assumption of the whole contract — so be clear about what it does and does not
+///         cover.
+///
+///         What it means in practice: a NAV that is WRONG BUT HEALTHY — a balance adapter that
+///         double-counts a position, a feed that is fresh and mispriced, a newly registered adapter
+///         with a decimals slip — passes every gate here and mints or burns at that price. Nothing
+///         in this contract caps how far a single settlement may move. `KpkShares` incidentally
+///         bounded that class with its +/-30% deviation guard; this contract has no equivalent, by
+///         design, because the guard bounded an OPERATOR-supplied price and there no longer is one.
+///
+///         What it does NOT waive: the health flags. Those are the NAV telling us it cannot vouch
+///         for itself right now, and trusting the calculator includes trusting that signal — which
+///         is why the gate in `NavPricingLib` is strict rather than advisory.
+///
+///         The consequence to hold in mind: this fund's share price is exactly as trustworthy as
+///         the NAV stack behind it, so the NAV calculator's access control is effectively this
+///         fund's access control. Whoever holds MANAGER there can re-point feeds and register
+///         adapters, and therefore reprice every share here. Treat a change of custody over that
+///         role as equivalent in impact to a change of custody over this contract's admin.
 contract KpkSharesNav is
     Initializable,
     UUPSUpgradeable,
