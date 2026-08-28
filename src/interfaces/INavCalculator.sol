@@ -6,7 +6,10 @@ pragma solidity ^0.8;
 /// @notice Minimal consumer-side mirror of karpatkey's `NAVCalculator`, the on-chain net-asset-value
 ///         oracle from https://github.com/karpatkey/onchain-accounting.
 /// @dev    MIRRORED SOURCE — `src/nav/INAVCalculator.sol` @ commit
-///         `d290a0427a81a84bf348a8f5e8b0aa8c38890b22` (2026-08-28). The accounting repo is not a
+///         `a0366f85221dfd798d764b3d0f5725b1682ab510` (2026-08-29; re-checked against this commit,
+///         which is two ops-only commits past the `d290a042` this file was first written against —
+///         the `NAV` and `PriceFeedData` structs and every mirrored signature are unchanged). The
+///         accounting repo is not a
 ///         submodule here, so this file is maintained by hand and only declares the surface
 ///         `KpkSharesNav` actually calls.
 ///

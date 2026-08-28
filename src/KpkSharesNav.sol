@@ -1041,6 +1041,25 @@ contract KpkSharesNav is
     ///      `_repriceAfterFees` derives immediately after this returns.
     ///      Unlike `KpkShares` there is no fee-module asset gate: the price is genuinely USD now, so
     ///      the high-watermark is one series across every asset rather than one asset's alone.
+    ///
+    ///      TWO MEASURED PROPERTIES OF THE PERFORMANCE FEE, both accepted rather than fixed:
+    ///
+    ///      1. It is PATH-DEPENDENT. Because the fee is denominated in shares, each crystallization
+    ///         divides the gain by the price at that moment, so sampling the same rise more often
+    ///         collects more: measured, a $1 -> $2 climb taken in eight steps mints ~14.3% more fee
+    ///         than the same climb taken in one. Anyone who can cause a pricing event can therefore
+    ///         raise total fees — and that is not only the operator, since a 1-unit `subscribe` is
+    ///         enough once synchronous deposits are enabled. This is inherent to share-denominated
+    ///         high-watermark fees and lives in the unchanged `WatermarkFee`; the mitigations are
+    ///         operational, not structural (launch with the rate at zero, and keep synchronous
+    ///         deposits closed).
+    ///      2. The fee base EXCLUDES the receiver's balance but not its escrow. `netSupply` subtracts
+    ///         `balanceOf(feeReceiver)`, and shares the receiver has placed in redemption escrow are
+    ///         held by this contract rather than by the receiver — so they inflate the base and the
+    ///         receiver is charged a fee on its own pending shares, at other holders' expense
+    ///         (measured at ~0.8% of a holder's value in a realistic case). Tracking per-owner escrow
+    ///         to net it out does not fit the remaining size budget; the operational rule is that the
+    ///         fee receiver should not leave a redemption pending across a fee event.
     function _chargeFees(uint256 sharePriceUsd) internal {
         uint256 managementFee;
         uint256 performanceFee;

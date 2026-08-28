@@ -363,6 +363,8 @@ interface IKpkSharesNav is IERC165 {
     /// @param assets The amount of assets to subscribe (in the asset's native decimals)
     /// @param subscriptionAsset The address of the asset being subscribed
     /// @return shares The amount of shares that would be received (18 decimals)
+    /// @dev Pre-fee-accrual, as for `previewRedemption` — but a fee moves the price DOWN, so a
+    ///      subscriber quoted here receives at least this many shares. The bound binds safely.
     function previewSubscription(uint256 assets, address subscriptionAsset) external view returns (uint256 shares);
 
     /// @notice Request a subscription of assets
@@ -411,7 +413,13 @@ interface IKpkSharesNav is IERC165 {
     /// @notice Preview the assets a redemption would produce at the current live price.
     /// @param shares The amount of shares to redeem (18 decimals)
     /// @param redemptionAsset The address of the asset to redeem for
-    /// @return assets The amount of assets that would be received, after fees
+    /// @return assets The amount of assets that would be received, after the redemption fee
+    /// @dev PREVIEWS ARE PRE-FEE-ACCRUAL. This quotes the price as it stands now; a management or
+    ///      performance fee crystallizing in the batch that settles the request mints shares and
+    ///      moves the price down before the request converts. A `minAssetsOut` taken straight from
+    ///      this figure will therefore be SKIPPED whenever a fee lands in the settling batch — which
+    ///      is exactly when redemptions cluster. Pad the bound. The contract cannot simulate the
+    ///      accrual here because `IPerfFeeModule.calculatePerformanceFee` is non-view.
     function previewRedemption(uint256 shares, address redemptionAsset) external view returns (uint256 assets);
 
     /// @notice Request to redeem shares for assets
