@@ -73,6 +73,19 @@ library NavPricingLib {
             shares.mulDiv(p.sharePriceUsd * (10 ** p.assetDecimals), p.shareUnit * p.assetPriceUsd, Math.Rounding.Floor);
     }
 
+    /// @notice Divides an already-read NAV by a share supply.
+    /// @param navValue The NAV in USD with 8 decimals, from an earlier health-gated read.
+    /// @param sharesSupply The supply to divide by.
+    /// @param shareUnit One whole share, i.e. `10 ** shareDecimals`.
+    /// @return The price per share in USD with 8 decimals, or 0 if it cannot be formed.
+    /// @dev Exists so a caller can re-derive the price after minting fee shares WITHOUT a second
+    ///      adapter scan. Minting fees changes the supply but not the NAV, so the correct settlement
+    ///      price is simply the same NAV over the new supply.
+    function sharePriceFrom(int256 navValue, uint256 sharesSupply, uint256 shareUnit) internal pure returns (uint256) {
+        if (navValue <= 0 || sharesSupply == 0) return 0;
+        return uint256(navValue).mulDiv(shareUnit, sharesSupply, Math.Rounding.Floor);
+    }
+
     /// @notice Derives a fund's price per share from its NAV and its share supply.
     /// @param navCalculator The NAV calculator to read from.
     /// @param account The account holding the fund's assets.

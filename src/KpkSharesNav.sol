@@ -279,6 +279,34 @@ contract KpkSharesNav is
         });
     }
 
+    /// @notice Re-derives the settlement price after fee shares have been minted
+    /// @param pricing The snapshot taken before the fee accrual, updated in place
+    /// @param navValue The NAV that snapshot came from
+    /// @param preFeeSupply The supply the snapshot priced against
+    /// @dev Fee shares dilute: they raise the supply while leaving the NAV untouched, so the price
+    ///      that was correct a moment ago is now too high. Settling requests at the pre-fee price
+    ///      splits that dilution unfairly in BOTH directions — a subscriber pays for fees that
+    ///      accrued before they joined, and a redeemer leaves without bearing fees they did accrue.
+    ///      The management fee makes this negligible (rate-capped and throttled to once per six
+    ///      hours), but the PERFORMANCE fee is a share of gains rather than a rate, so after a long
+    ///      interval it can be a large fraction of supply: a fund up 100% since its watermark mints
+    ///      ~10% of supply in one event, and a subscriber in that batch would be short-changed ~9%.
+    ///      Re-deriving costs one division and no second adapter scan, because the NAV has not moved.
+    function _repriceAfterFees(NavPricingLib.Pricing memory pricing, int256 navValue, uint256 preFeeSupply)
+        internal
+        view
+    {
+        // Nothing was outstanding to dilute (the bootstrap batch), so there is nothing to re-derive.
+        if (preFeeSupply == 0) return;
+
+        uint256 postFeeSupply = totalSupply();
+        if (postFeeSupply == preFeeSupply) return;
+
+        uint256 repriced = NavPricingLib.sharePriceFrom(navValue, postFeeSupply, pricing.shareUnit);
+        if (repriced == 0) revert SharePriceZero();
+        pricing.sharePriceUsd = repriced;
+    }
+
     /// @notice Record a pricing event for observability
     /// @param sharePriceUsd The price settled at
     /// @param navValue The NAV it came from
@@ -390,6 +418,8 @@ contract KpkSharesNav is
         // transfer would value the deposit against its own contribution and mint against it twice.
         (NavPricingLib.Pricing memory pricing, int256 navValue, uint256 sharesSupply) = _snapshot(subscriptionAsset);
         _chargeFees(pricing.sharePriceUsd);
+        // Fees just diluted the supply; price this deposit at the rate that reflects it.
+        _repriceAfterFees(pricing, navValue, sharesSupply);
 
         sharesOut = NavPricingLib.assetsToShares(assetsIn, pricing);
         if (sharesOut < minSharesOut) revert SlippageBoundNotMet();
@@ -523,6 +553,8 @@ contract KpkSharesNav is
         if (approveRequests.length != 0) {
             (NavPricingLib.Pricing memory pricing, int256 navValue, uint256 sharesSupply) = _snapshot(asset);
             _chargeFees(pricing.sharePriceUsd);
+            // Fees just diluted the supply; settle the batch at the price that reflects it.
+            _repriceAfterFees(pricing, navValue, sharesSupply);
             _processApproved(approveRequests, asset, pricing);
             _recordPricing(pricing.sharePriceUsd, navValue, sharesSupply);
         }

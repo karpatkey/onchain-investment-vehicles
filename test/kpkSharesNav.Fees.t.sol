@@ -128,6 +128,57 @@ contract kpkSharesNavFeesTest is kpkSharesNavTestBase {
         assertGt(fund.balanceOf(feeRecipient), 0, "performance fee accrued on a non-USD batch");
     }
 
+    /// @notice A batch settles at the price that reflects the fee shares minted in that same batch.
+    /// @dev Fee shares dilute: they raise the supply while the NAV is unchanged. Settling at the
+    ///      pre-fee snapshot would make a subscriber pay for fees that accrued before they joined
+    ///      (and let a redeemer leave without bearing fees they did accrue). The management fee makes
+    ///      this negligible, but the performance fee is a share of GAINS rather than a rate, so after
+    ///      a long interval it is a large fraction of supply — a fund up 100% since its watermark
+    ///      mints ~10% of supply at once, and the pre-fee price would short-change a subscriber ~9%.
+    function testBatchSettlesAtThePostFeePrice() public {
+        fund = _deployFund(0, 0, 2000); // 20% performance fee
+        vm.prank(safe);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(alice);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(bob);
+        usdc.approve(address(fund), type(uint256).max);
+
+        _seedFund(alice, 1_000e6);
+
+        // Settle once past MIN_TIME_ELAPSED so the watermark is genuinely seeded at $1.00
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+        vm.prank(bob);
+        _approve(fund.requestSubscription(1e6, 1, address(usdc), bob));
+        assertEq(fund.balanceOf(feeRecipient), 0, "watermark seeded, nothing charged");
+
+        // The fund doubles: a 100% gain over the watermark
+        _setSharePrice(2 * ONE_USD);
+        int256 navValue = int256((2 * ONE_USD * fund.totalSupply()) / 1e18);
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+
+        uint256 supplyBefore = fund.totalSupply();
+        uint256 bobBefore = fund.balanceOf(bob);
+
+        vm.prank(bob);
+        _approve(fund.requestSubscription(1_000e6, 1, address(usdc), bob));
+
+        uint256 feeShares = fund.balanceOf(feeRecipient);
+        assertGt(feeShares, 0, "a performance fee was actually charged");
+
+        // The price the batch should have used: same NAV, supply after the fee mint
+        uint256 postFeePrice = (uint256(navValue) * 1e18) / (supplyBefore + feeShares);
+        uint256 expected = (1_000e6 * ONE_USD * 1e18) / (1e6 * postFeePrice);
+
+        assertEq(fund.balanceOf(bob) - bobBefore, expected, "settled at the post-fee price");
+
+        // And the pre-fee price would have been materially worse for the subscriber
+        uint256 preFeePrice = (uint256(navValue) * 1e18) / supplyBefore;
+        uint256 wouldHaveBeen = (1_000e6 * ONE_USD * 1e18) / (1e6 * preFeePrice);
+        assertGt(expected, wouldHaveBeen, "post-fee pricing gives the subscriber more shares");
+        assertApproxEqRel(expected, (wouldHaveBeen * 110) / 100, 0.01e18, "~10% more, per the fee minted");
+    }
+
     function testSetPerformanceFeeRateRevertsWhileNavUnhealthy() public {
         fund = _deployFund(0, 0, 2000);
         vm.prank(safe);
