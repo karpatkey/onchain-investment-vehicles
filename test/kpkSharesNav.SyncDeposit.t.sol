@@ -63,20 +63,37 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         assertEq(fund.requestId(), 1, "no request created");
     }
 
-    /// @dev The invariant that matters: a deposit must not be valued against its own contribution.
-    ///      Here the NAV deliberately stays at the pre-deposit value; if the fund priced after the
-    ///      transfer it would still mint 1,000 shares, so instead we assert the price the deposit
-    ///      settled at is the pre-deposit price.
+    /// @notice A deposit must not be valued against its own contribution.
+    /// @dev This test is only meaningful if the mock's NAV actually responds to token movement. With
+    ///      a stored scalar NAV the reported value is identical whether the fund prices before or
+    ///      after the transfer, so the assertion would hold either way and prove nothing. So the
+    ///      mock is switched into balance-tracking mode: NAV = the safe's real USDC balance.
+    ///
+    ///      Priced BEFORE the transfer the safe holds 1,000 USDC → $1.00/share → 1,000 shares.
+    ///      Priced AFTER, it would hold 2,000 → $2.00/share → 500 shares. The two are
+    ///      distinguishable, which is what makes the ordering testable at all.
     function testSyncDepositIsPricedBeforeAssetsMove() public {
-        _seedFund(alice, 1_000e6);
+        // Start the safe empty so its balance is exactly what this test puts there
+        usdc.burn(safe, usdc.balanceOf(safe));
+
+        vm.prank(alice);
+        uint256 id = fund.requestSubscription(1_000e6, 1, address(usdc), alice);
+        _approve(id);
+        assertEq(usdc.balanceOf(safe), 1_000e6, "safe holds only the seed");
+        assertEq(fund.totalSupply(), 1_000e18);
+
+        // NAV now derives from the safe's live balance: 1 USDC unit (1e-6) = 100 USD-8dp units
+        nav.trackBalance(address(usdc), 100);
+        nav.setNavValue(0);
+        assertEq(fund.getSharePriceUsd(), ONE_USD, "seeded at $1.00/share");
+
         _enable();
 
-        uint256 priceBefore = fund.getSharePriceUsd();
-
         vm.prank(bob);
-        vm.expectEmit(true, true, true, true);
-        emit IKpkSharesNav.SyncSubscription(bob, bob, address(usdc), 1_000e6, 1_000e18, priceBefore);
-        fund.subscribe(1_000e6, 1, address(usdc), bob);
+        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), bob);
+
+        assertEq(shares, 1_000e18, "priced at the pre-deposit NAV, not including bob's own assets");
+        assertEq(usdc.balanceOf(safe), 2_000e6, "and the assets did land in the safe");
     }
 
     function testSyncDepositRespectsSlippageBound() public {
@@ -133,12 +150,19 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         assertEq(fund.balanceOf(alice), 1_000e18 + 1_000e18);
     }
 
-    function testSyncDepositOnEmptyFundUsesBootstrapPrice() public {
+    /// @notice The sync path refuses to be the one that opens a fund
+    /// @dev This asserted the opposite until pre-merge review. Bootstrapping prices at
+    ///      `initialSharePrice` without reading the NAV, so it is neither health gated nor connected
+    ///      to what the safe holds — and the window re-arms whenever the supply returns to zero.
+    ///      Opening a fund is now an operator decision. See `kpkSharesNav.ReviewFixes.t.sol` for the
+    ///      post-full-redemption case this closes.
+    function testSyncDepositCannotBootstrapAnEmptyFund() public {
         _enable();
+        assertEq(fund.totalSupply(), 0);
 
         vm.prank(alice);
-        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), alice);
-        assertEq(shares, 1_000e18);
+        vm.expectRevert(IKpkSharesNav.BootstrapRequiresOperator.selector);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
     }
 
     function testSyncDepositRecordsPricingEvent() public {

@@ -10,12 +10,24 @@ pragma solidity ^0.8;
 ///         submodule here, so this file is maintained by hand and only declares the surface
 ///         `KpkSharesNav` actually calls.
 ///
-///         STRUCT FIELD ORDER IS ABI-LOAD-BEARING. `NAV` is decoded from the live proxy's return
-///         data, so the field list below must match the deployed contract exactly. Upstream appends
-///         new fields rather than inserting them (see `irregularPriceAssets` onward), which means a
-///         drifted mirror makes `abi.decode` REVERT rather than silently return wrong numbers — the
-///         failure is loud and fail-closed, but it halts pricing until this file is updated.
-///         `KpkSharesNav.t.sol`'s fork test decodes against the live proxy to catch exactly that.
+///         STRUCT FIELD ORDER IS ABI-LOAD-BEARING, AND APPEND-DRIFT IS SILENT. `NAV` is decoded
+///         from the live proxy's return data, so the field list below must match the deployed
+///         contract. Upstream's convention is to APPEND new fields rather than insert them (see
+///         `irregularPriceAssets` onward, and `monitorsUnhealthyPriceAssets` after it) — and an
+///         appended field does NOT make `abi.decode` revert. The decoder reads this struct's head
+///         words and follows their self-describing offsets, so a longer upstream encoding decodes
+///         cleanly and the extra field is simply dropped. Verified by test, not assumed:
+///         `test/kpkSharesNav.NavFork.t.sol` proves a ten-field encoding decodes into these nine.
+///
+///         The consequence is the dangerous one: if upstream appends a NEW HEALTH SIGNAL, this fund
+///         keeps pricing and silently does not gate on it. The health gate in `NavPricingLib`
+///         enumerates the trouble fields by name, so it cannot notice a signal it has never heard
+///         of. That erodes the fail-closed guarantee quietly rather than loudly, which is why the
+///         fork test asserts the ENCODED LENGTH of the live response against a canonical re-encode
+///         of these nine fields, rather than merely asserting that decoding succeeded.
+///
+///         The reverse drift — this mirror carrying a field the deployed contract does not — DOES
+///         revert (the head is shorter than expected), which is fail-closed and self-announcing.
 ///
 ///         Deployed proxy (same address on every supported chain, redeployed 2026-08-18):
 ///         `0x54EaD2A1dB7456cA917675Ea8908ec8A997c6214`. The superseded proxy

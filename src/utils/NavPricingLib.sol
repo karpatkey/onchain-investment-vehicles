@@ -195,6 +195,15 @@ library NavPricingLib {
     ///      consumers must gate on it and must never recompute freshness from `updatedAt` and
     ///      `chainlinkHeartbeat`, which can read fresh while `stale` is true. Feed decimals are read
     ///      from the reading rather than assumed, because the NAV reports each feed's own scale.
+    ///
+    ///      ACCEPTED LIMITATION — down-scaling a feed with more than 8 decimals FLOORS, so the
+    ///      relative error is bounded by `1 / price8` and grows without bound as the price falls.
+    ///      It is also asymmetric: `sharesToAssets` divides by this price, so an understated price
+    ///      makes the fund pay out MORE tokens than the shares are worth. Immaterial above roughly
+    ///      $0.0001 per unit (and exactly zero for the 8-decimal feeds Chainlink USD pairs use,
+    ///      where this branch is a no-op), but it makes sub-cent assets priced by high-decimal feeds
+    ///      a listing-policy question rather than a code one. Do not list one without checking that
+    ///      `price8` is large enough that a one-unit truncation is negligible against the fee.
     function _normalize(INavCalculator.PriceFeedData memory data) private pure returns (uint256) {
         if (data.stale || data.sequencerDown || data.irregular || data.price <= 0) return 0;
 

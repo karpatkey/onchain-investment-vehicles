@@ -83,7 +83,7 @@ contract DeployKpkSharesNav is Script {
         address finalAdmin = json.readAddress(string.concat(base, ".admin"));
 
         KpkSharesNav.ConstructorParams memory params = _readParams(json, base, deployer);
-        _validate(params, operator, finalAdmin);
+        _validate(params, operator, finalAdmin, deployer);
 
         vm.startBroadcast(deployerKey);
 
@@ -135,13 +135,22 @@ contract DeployKpkSharesNav is Script {
     /// @param params The initialization parameters
     /// @param operator The address that will hold OPERATOR
     /// @param finalAdmin The address that will hold DEFAULT_ADMIN_ROLE
+    /// @param deployer The transient admin, which must not also be `finalAdmin`
     /// @dev The NAV calculator is probed live. A wrong address — most plausibly the superseded proxy
     ///      `0x80eD5cc6…`, which still answers — would otherwise only surface once the fund was
     ///      deployed and mispricing against an abandoned stack.
-    function _validate(KpkSharesNav.ConstructorParams memory params, address operator, address finalAdmin)
-        private
-        view
-    {
+    function _validate(
+        KpkSharesNav.ConstructorParams memory params,
+        address operator,
+        address finalAdmin,
+        address deployer
+    ) private view {
+        // The deployer holds admin only transiently and renounces it at the end. If it is also the
+        // intended final admin, that renounce removes the last holder and the fund is left with NO
+        // admin: no upgrades, no `setNavCalculator`, no toggles, forever. Configure a distinct
+        // owner (in practice a Safe) rather than the deploying key.
+        require(finalAdmin != deployer, "admin must not be the deployer key");
+
         require(params.asset != address(0), "asset must be set");
         require(params.safe != address(0), "safe must be set");
         require(params.feeReceiver != address(0), "feeReceiver must be set");
@@ -152,6 +161,13 @@ contract DeployKpkSharesNav is Script {
         require(params.managementFeeRate <= 2000, "managementFeeRate exceeds 20%");
         require(params.redemptionFeeRate <= 2000, "redemptionFeeRate exceeds 20%");
         require(params.performanceFeeRate <= 2000, "performanceFeeRate exceeds 20%");
+
+        // A non-zero rate with no module is silently inert: `_chargePerformanceFee` returns 0 on
+        // every call while the getter keeps reporting the configured rate. Fail the deploy instead.
+        require(
+            params.performanceFeeRate == 0 || params.performanceFeeModule != address(0),
+            "performanceFeeRate set with no performance fee module"
+        );
 
         require(params.navCalculator.code.length > 0, "navCalculator is not a contract");
         require(
@@ -169,6 +185,12 @@ contract DeployKpkSharesNav is Script {
     /// @param operator The address that will hold OPERATOR
     /// @param finalAdmin The address that will hold DEFAULT_ADMIN_ROLE
     /// @param deployer The transient admin to remove
+    /// @dev The post-conditions assert positively — that the intended holders HOLD their roles — not
+    ///      merely that the deployer has dropped its own. Checking only the negative is how a deploy
+    ///      can leave a fund with no admin at all: if `finalAdmin` is the deploying key, the grant is
+    ///      a no-op on a role it already holds, the renounce removes the only holder, and a
+    ///      deployer-only check passes precisely because nobody is left. `_validate` refuses that
+    ///      configuration outright; these assertions are the backstop.
     function _setupRoles(address proxy, address operator, address finalAdmin, address deployer) private {
         KpkSharesNav fund = KpkSharesNav(proxy);
 
@@ -176,6 +198,8 @@ contract DeployKpkSharesNav is Script {
         fund.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
         fund.renounceRole(DEFAULT_ADMIN_ROLE, deployer);
 
+        require(fund.hasRole(DEFAULT_ADMIN_ROLE, finalAdmin), "admin role was not handed over");
+        require(fund.hasRole(OPERATOR, operator), "operator role was not granted");
         require(!fund.hasRole(DEFAULT_ADMIN_ROLE, deployer), "deployer still holds admin");
     }
 }

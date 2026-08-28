@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {INavCalculator} from "../../src/interfaces/INavCalculator.sol";
 
 /// @title MockNavCalculator
@@ -59,6 +60,21 @@ contract MockNavCalculator {
 
     function setNavAccount(address account) external {
         navAccount = account;
+    }
+
+    /// @notice When set, the NAV additionally reflects this token's live balance at `navAccount`
+    /// @dev Without this, `navValue` is a stored scalar that no token movement can change — which
+    ///      makes any test claiming to verify "priced BEFORE the assets move" vacuous, since the
+    ///      reported NAV is identical either way. Tracking a real balance is what gives those tests
+    ///      teeth. Off by default so the scalar-NAV tests keep their simple arithmetic.
+    address public balanceToken;
+
+    /// @notice Multiplier converting one unit of `balanceToken` into USD with 8 decimals
+    uint256 public balanceScale;
+
+    function trackBalance(address token, uint256 scale) external {
+        balanceToken = token;
+        balanceScale = scale;
     }
 
     function setNavValue(int256 value) external {
@@ -159,7 +175,11 @@ contract MockNavCalculator {
     function getAccountNav(address account, address quoteAsset) external view returns (INavCalculator.NAV memory nav) {
         if (navReverts) revert AdapterGasExhausted();
 
-        nav.value = (navAccount == address(0) || navAccount == account) ? navValue : int256(0);
+        bool scoped = navAccount == address(0) || navAccount == account;
+        nav.value = scoped ? navValue : int256(0);
+        if (scoped && balanceToken != address(0)) {
+            nav.value += int256(IERC20(balanceToken).balanceOf(account) * balanceScale);
+        }
         nav.quoteAsset = INavCalculator.Asset({asset: quoteAsset, symbol: "USD", decimals: 8});
         nav.timestamp = uint64(block.timestamp);
         nav.sequencerDown = sequencerDown;
@@ -219,5 +239,54 @@ contract MockNavCalculator {
 contract MockWrongScaleNavCalculator {
     function usdDecimals() external pure returns (uint8) {
         return 18;
+    }
+}
+
+/// @notice A future NAV calculator that has APPENDED a tenth field to the `NAV` struct.
+/// @dev Models upstream's actual drift convention — `irregularPriceAssets`, `quoteAssetIrregular` and
+///      `monitorsUnhealthyPriceAssets` were all appended this way. The point of this mock is that the
+///      appended field is a HEALTH SIGNAL that is screaming while every field the nine-field mirror
+///      knows about reads perfectly healthy, which is precisely the scenario in which silent
+///      append-drift would cost money.
+contract MockNavCalculatorV10 {
+    struct AssetX {
+        address asset;
+        string symbol;
+        uint8 decimals;
+    }
+
+    struct NAV10 {
+        int256 value;
+        AssetX quoteAsset;
+        uint64 timestamp;
+        AssetX[] stalePriceAssets;
+        bool sequencerDown;
+        bool quoteAssetStale;
+        AssetX[] irregularPriceAssets;
+        bool quoteAssetIrregular;
+        AssetX[] monitorsUnhealthyPriceAssets;
+        AssetX[] newlyAppendedTroubleAssets;
+    }
+
+    int256 public navValue;
+
+    constructor(int256 value) {
+        navValue = value;
+    }
+
+    function getAccountNav(address, address quoteAsset) external view returns (NAV10 memory nav) {
+        nav.value = navValue;
+        nav.quoteAsset = AssetX({asset: quoteAsset, symbol: "USD", decimals: 8});
+        nav.timestamp = uint64(block.timestamp);
+        // Everything the nine-field mirror gates on is healthy...
+        nav.stalePriceAssets = new AssetX[](0);
+        nav.irregularPriceAssets = new AssetX[](0);
+        nav.monitorsUnhealthyPriceAssets = new AssetX[](0);
+        // ...while the signal it cannot see reports three troubled assets.
+        nav.newlyAppendedTroubleAssets = new AssetX[](3);
+    }
+
+    function usdDecimals() external pure returns (uint8) {
+        return 8;
     }
 }

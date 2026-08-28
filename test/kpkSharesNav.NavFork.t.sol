@@ -7,10 +7,12 @@ import {INavCalculator} from "../src/interfaces/INavCalculator.sol";
 /// @title kpkSharesNavForkTest
 /// @notice Guards `INavCalculator` against drift from the deployed `NAVCalculator`.
 /// @dev `src/interfaces/INavCalculator.sol` is a hand-maintained mirror, because the accounting repo
-///      is not a submodule here. Its `NAV` struct is decoded from the live proxy's return data, so a
-///      field appended upstream makes `abi.decode` REVERT rather than return wrong numbers. That is
-///      fail-closed, but it halts a fund's pricing until the mirror is updated — so it is worth
-///      finding here rather than in production.
+///      is not a submodule here. A field APPENDED upstream does NOT make `abi.decode` revert — the
+///      decoder follows this struct's self-describing offsets and silently drops the extra field
+///      (proved in `test/kpkSharesNav.Drift.t.sol`). If that appended field is a new health signal,
+///      the fund keeps pricing and never gates on it. So decodability is not the thing to assert:
+///      this test compares the ENCODED LENGTH of the live response against a canonical re-encode of
+///      the nine fields the mirror declares, which turns real upstream drift into a red CI run.
 ///
 ///      Skips when `MAINNET_URL` is unset, so it does not break a local run without an RPC. The
 ///      repo's other fork suites (`KpkOivFactory.t.sol`, `CcipOivDeployer.t.sol`) fail hard in
@@ -29,20 +31,32 @@ contract kpkSharesNavForkTest is Test {
         return true;
     }
 
-    /// @notice The mirrored `NAV` struct still decodes against the deployed contract
-    function testNavStructStillDecodes() public {
+    /// @notice The deployed `NAV` struct still has exactly the nine fields this repo mirrors
+    /// @dev Asserting decodability alone would pass even after upstream appended a tenth field, so
+    ///      this compares encoded lengths. A longer live response means upstream has appended
+    ///      something the health gate in `NavPricingLib` cannot possibly be checking.
+    function testNavStructHasNotDrifted() public {
         if (!_fork()) {
             console.log("MAINNET_URL unset - skipping NAV interface drift check");
             return;
         }
         require(NAV_CALCULATOR.code.length > 0, "no code at the configured NAV proxy");
 
-        // Any account works; an empty one returns a zero NAV rather than reverting. What is being
-        // asserted is that the return data decodes into our struct at all.
-        INavCalculator.NAV memory nav = INavCalculator(NAV_CALCULATOR).getAccountNav(address(this), address(0));
+        (bool ok, bytes memory raw) =
+            NAV_CALCULATOR.staticcall(abi.encodeCall(INavCalculator.getAccountNav, (address(this), address(0))));
+        require(ok, "getAccountNav reverted on the live proxy");
+
+        // Any account works; an empty one returns a zero NAV rather than reverting.
+        INavCalculator.NAV memory nav = abi.decode(raw, (INavCalculator.NAV));
 
         assertEq(nav.quoteAsset.decimals, 8, "USD quote should carry 8 decimals");
         assertEq(nav.timestamp, uint64(block.timestamp), "timestamp is the read's own block time");
+
+        assertEq(
+            raw.length,
+            abi.encode(nav).length,
+            "NAV struct drifted: the live response carries fields src/interfaces/INavCalculator.sol does not declare"
+        );
     }
 
     /// @notice The USD scale this contract's arithmetic assumes still holds

@@ -314,12 +314,18 @@ contract KpkSharesNav is
 
         if (!_approvedAssetsMap[subscriptionAsset].canDeposit) revert NotAnApprovedAsset();
 
-        // Transfer assets from investor first (before updating state)
-        IERC20(subscriptionAsset).safeTransferFrom(msg.sender, address(this), assetsIn);
-
+        // Record the escrow BEFORE pulling the assets. `RecoverFunds.recoverAssets` is permissionless
+        // and carries no reentrancy guard of its own, so `nonReentrant` here does not cover it: with a
+        // callback-bearing token, the transfer's hook lands in a window where the fund's balance has
+        // already risen while `subscriptionAssets` and `_pendingRequestsCount` still read zero — and
+        // both of those are exactly what `_assetRecoverableAmount` consults before allowing a sweep.
+        // Crediting first collapses the window. (`KpkShares` has the opposite order; it is frozen and
+        // cannot be corrected there.)
         subscriptionAssets[subscriptionAsset] += assetsIn;
         _pendingRequestsCount[subscriptionAsset]++;
         uint256 currentRequestId = ++requestId;
+
+        IERC20(subscriptionAsset).safeTransferFrom(msg.sender, address(this), assetsIn);
 
         uint64 currentTimestamp = uint64(block.timestamp);
         uint64 expiryAt = currentTimestamp + MAX_TTL;
@@ -367,6 +373,16 @@ contract KpkSharesNav is
         returns (uint256 sharesOut)
     {
         if (!syncDepositsEnabled) revert SyncDepositsDisabled();
+
+        // The bootstrap branch prices at `initialSharePrice` WITHOUT reading the NAV — so while the
+        // supply is zero there is no health gate and no relationship between the price and what the
+        // safe actually holds. That window is not only the fund's launch: it re-arms every time the
+        // supply returns to zero, which a full redemption does while the safe still carries anything
+        // a payout could not drain. Left open, the next caller mints 100% of the supply at a
+        // constant price and captures the residual. Bootstrapping is therefore operator-only; the
+        // permissionless path refuses to be the one that opens a fund.
+        if (totalSupply() == 0) revert BootstrapRequiresOperator();
+
         _requireValidRequestParams(assetsIn, minSharesOut, receiver);
         if (!_approvedAssetsMap[subscriptionAsset].canDeposit) revert NotAnApprovedAsset();
 
@@ -576,12 +592,15 @@ contract KpkSharesNav is
         _validateNavCalculator(newNavCalculator);
 
         // Refuse a NAV that cannot price what this fund already lists, which would leave the fund
-        // unable to settle anything until the asset were delisted.
+        // unable to settle anything until the asset were delisted — and the last asset cannot be
+        // delisted at all. This applies exactly the same test the listing path applies, against the
+        // CANDIDATE: registration alone is not enough. A registry that merely knows an asset but has
+        // no feed for it bricks settlement, and one that disagrees with the token's decimals is
+        // worse than bricked — it silently rescales the safe's valuation by a power of ten.
         uint256 length = _approvedAssets.length;
         for (uint256 i; i < length; i++) {
-            if (!INavCalculator(newNavCalculator).isAssetRegistered(_approvedAssets[i])) {
-                revert AssetNotRegisteredInNav();
-            }
+            address listed = _approvedAssets[i];
+            _requireNavSupportsAsset(newNavCalculator, listed, _approvedAssetsMap[listed].decimals);
         }
 
         if (navCalculator != newNavCalculator) {
@@ -698,6 +717,14 @@ contract KpkSharesNav is
         if (params.managementFeeRate > MAX_FEE_RATE) revert FeeRateLimitExceeded();
         if (params.performanceFeeRate > MAX_FEE_RATE) revert FeeRateLimitExceeded();
         if (params.redemptionFeeRate > MAX_FEE_RATE) revert FeeRateLimitExceeded();
+
+        // A performance fee rate with no module to compute it is silently inert:
+        // `_chargePerformanceFee` returns 0 on every call while `performanceFeeRate()` keeps
+        // reporting the configured rate. Refuse the pairing rather than ship a fund whose stated
+        // fee never accrues.
+        if (params.performanceFeeRate > 0 && params.performanceFeeModule == address(0)) {
+            revert InvalidArguments();
+        }
 
         _validateNavCalculator(params.navCalculator);
     }
@@ -868,6 +895,12 @@ contract KpkSharesNav is
     /// @notice Reject a subscription request and return the escrowed assets
     /// @param id The ID of the request to reject
     /// @param request The request being rejected
+    /// @dev ACCEPTED: a refund transfer that reverts — an investor added to a token's blocklist while
+    ///      their request was in flight, say — reverts the whole batch, unlike the slippage path
+    ///      which skips. The operator's remedy is to exclude that id from the batch; the escrow then
+    ///      stays stranded and its pending count keeps the asset from being delisted. Isolating each
+    ///      refund would need a try/catch per request and a place to record the failure, which does
+    ///      not fit the remaining size budget. Revisit if a blocklisting asset is ever listed.
     function _rejectSubscriptionRequest(uint256 id, UserRequest memory request) internal {
         // --- Effects ---
         _requests[id].requestStatus = RequestStatus.REJECTED;
@@ -1026,7 +1059,7 @@ contract KpkSharesNav is
                 delete _approvedAssetsMap[asset];
                 emit AssetRemove(asset);
             } else {
-                _requireNavSupportsAsset(asset, _approvedAssetsMap[asset].decimals);
+                _requireNavSupportsAsset(navCalculator, asset, _approvedAssetsMap[asset].decimals);
                 _approvedAssetsMap[asset].canDeposit = canDeposit;
                 _approvedAssetsMap[asset].canRedeem = canRedeem;
                 emit AssetUpdate(asset, canDeposit, canRedeem);
@@ -1037,7 +1070,7 @@ contract KpkSharesNav is
             uint8 thisDecimals = IERC20Metadata(asset).decimals();
             if (thisDecimals > MAX_ASSET_DECIMALS) revert InvalidArguments();
 
-            _requireNavSupportsAsset(asset, thisDecimals);
+            _requireNavSupportsAsset(navCalculator, asset, thisDecimals);
 
             _approvedAssetsMap[asset].asset = asset;
             _approvedAssetsMap[asset].decimals = thisDecimals;
@@ -1055,14 +1088,16 @@ contract KpkSharesNav is
     /// @param expectedDecimals The decimals this contract has recorded for the asset
     /// @dev The decimals cross-check catches a NAV registry that disagrees with the token itself,
     ///      which would silently scale every conversion for that asset by a power of ten.
-    function _requireNavSupportsAsset(address asset, uint8 expectedDecimals) internal view {
-        (INavCalculator.Asset memory info, bool found) = INavCalculator(navCalculator).getRegisteredAsset(asset);
+    ///      `nav` is a parameter rather than the stored calculator so `setNavCalculator` can apply
+    ///      this same test to a CANDIDATE before adopting it.
+    function _requireNavSupportsAsset(address nav, address asset, uint8 expectedDecimals) internal view {
+        (INavCalculator.Asset memory info, bool found) = INavCalculator(nav).getRegisteredAsset(asset);
         if (!found) revert AssetNotRegisteredInNav();
         if (info.decimals != expectedDecimals) revert InvalidArguments();
 
         // An unregistered asset, one with no feed, and one whose feed is currently unhealthy all
         // mean the same thing for listing purposes: this fund could not settle a batch in it.
-        if (!NavPricingLib.isAssetPriceable(navCalculator, asset)) revert AssetNotPriceable();
+        if (!NavPricingLib.isAssetPriceable(nav, asset)) revert AssetNotPriceable();
     }
 
     /// @notice Remove an asset from the approved assets list
@@ -1111,6 +1146,11 @@ contract KpkSharesNav is
 
     /// @notice Set the management fee rate, settling anything accrued under the old rate first
     /// @param newRate The new management fee rate in basis points
+    /// @dev ACCEPTED: unlike every other minting path, this one reads no NAV and so is not health
+    ///      gated — it can mint fee shares while the fund is unpriceable and holders cannot exit.
+    ///      That is tolerable because the management fee is purely time-based: nothing here is
+    ///      *mispriced*, it is dilution that had already accrued. Gating it on NAV health would let
+    ///      an oracle outage silently forgive fees instead.
     function _setManagementFeeRate(uint256 newRate) internal {
         if (managementFeeRate > 0) {
             _chargeManagementFee(block.timestamp - _managementFeeLastUpdate);

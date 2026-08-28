@@ -62,6 +62,12 @@ interface IKpkSharesNav is IERC165 {
     /// @notice Error when a synchronous deposit is attempted while the admin has them disabled
     error SyncDepositsDisabled();
 
+    /// @notice Error when a synchronous deposit would be the one to bootstrap the fund
+    /// @dev While the supply is zero the price is `initialSharePrice` and the NAV is never read, so
+    ///      there is no health gate and no link between the price and the safe's contents. Opening a
+    ///      fund is an operator decision, not a permissionless one.
+    error BootstrapRequiresOperator();
+
     /// @notice Error when the proposed NAV calculator address fails validation
     error InvalidNavCalculator();
 
