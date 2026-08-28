@@ -1,5 +1,25 @@
 # KpkSharesNav — NAV-oracle-priced shares for a single-chain fund
 
+> **Read this first — the plan below is a historical record, and implementation disproved parts of it.**
+> It is kept as written so the reasoning survives, but two claims in it are now known to be FALSE and
+> one section describes an API that was never shipped. Corrections, with the corrected source of
+> truth in each case:
+>
+> 1. **"An appended NAV field makes decoding revert"** (risks section) — **false, verified by test.**
+>    An appended field decodes cleanly and is silently dropped, so a newly appended NAV *health
+>    signal* would simply not be gated. The reverse direction (this mirror ahead of the deployment)
+>    does not reliably revert either. See `src/interfaces/INavCalculator.sol` for the corrected
+>    explanation and `test/kpkSharesNav.Drift.t.sol` for the proof. The fork test therefore asserts
+>    encoded LENGTH, not decodability.
+> 2. **`assetsToShares` / `sharesToAssets` as external views** (external surface section) — **not
+>    shipped.** Both were cut to fit EIP-170; they were exactly redundant with `previewSubscription`
+>    and `previewRedemption`, which are the supported entry points. Do not integrate against them.
+> 3. **"Fees are minted after the price snapshot, so a batch settles pre-dilution"** — changed during
+>    review. Batches now settle at the POST-fee price via `_repriceAfterFees`, because the pre-fee
+>    price short-changed a subscriber by up to ~9% when a performance fee landed in the batch.
+>
+> The full list of what pre-merge review changed is in PR #45's description.
+
 ## Context
 
 Today `KpkShares` has no on-chain price source. The operator passes a share price as a raw calldata
@@ -130,8 +150,9 @@ plus `uint256 initialSharePrice; uint256 lastSharePriceUsd;`.
 function processRequests(uint256[] calldata approve, uint256[] calldata reject, address asset) external;
 function previewSubscription(uint256 assets, address asset) external view returns (uint256);
 function previewRedemption(uint256 shares, address asset) external view returns (uint256);
-function assetsToShares(uint256 assetAmount, address asset) external view returns (uint256);
-function sharesToAssets(uint256 shares, address asset) external view returns (uint256);
+// NOT SHIPPED - both were cut for EIP-170; they duplicated the two preview functions above:
+// function assetsToShares(uint256 assetAmount, address asset) external view returns (uint256);
+// function sharesToAssets(uint256 shares, address asset) external view returns (uint256);
 function updateAsset(address asset, bool canDeposit, bool canRedeem) external;   // NAV gate; isFeeModuleAsset dropped
 function setPerformanceFeeRate(uint256 newRate) external;                        // usdAsset dropped
 
@@ -214,9 +235,11 @@ manipulate-deposit-redeem round trip.
 - **EIP-170.** Decoding `NAV memory` (three dynamic `Asset[]` carrying strings) is codegen-heavy under
   `via_ir`. If over 24,576 bytes, cut in this order: live conversion/preview views, then
   `getSharePriceUsd`, then move the math to a linked library.
-- **Interface drift.** An appended NAV field makes decoding of the shorter struct revert rather than
-  corrupt — fail-closed, but it halts the fund. Pin the commit and add a fork test that decodes
-  against the live proxy.
+- **Interface drift.** ~~An appended NAV field makes decoding of the shorter struct revert rather than
+  corrupt — fail-closed, but it halts the fund.~~ **CORRECTED: this was wrong.** An appended field
+  decodes cleanly and is silently dropped, so a new health signal would go ungated. Pin the commit
+  and add a fork test that compares the live response's ENCODED LENGTH against a canonical
+  re-encode — decodability alone proves nothing.
 - **Trust.** `setNavCalculator` is mint-anything power, but the admin already holds `_authorizeUpgrade`.
   Separately, the NAV `MANAGER` role is still a deployer EOA (handoff to the security-council Safe is
   deferred) — document as a launch-checklist item, not a code fix.

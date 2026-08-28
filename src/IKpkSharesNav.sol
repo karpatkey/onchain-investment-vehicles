@@ -17,7 +17,7 @@ interface IKpkSharesNav is IERC165 {
     // Errors
     //
 
-    /// @notice Error when attempting to cancel a request that hasn't passed his TTL yet
+    /// @notice Error when attempting to cancel a request before its TTL has elapsed
     error RequestNotPastTtl();
 
     /// @notice Error when attempting to cancel a request that is not pending
