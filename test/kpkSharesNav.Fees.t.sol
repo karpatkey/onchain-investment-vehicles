@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
 
+import {Vm} from "forge-std/Vm.sol";
 import {kpkSharesNavTestBase} from "./kpkSharesNav.TestBase.sol";
 import {IKpkSharesNav} from "../src/IKpkSharesNav.sol";
 import {KpkSharesNav} from "../src/KpkSharesNav.sol";
@@ -177,6 +178,88 @@ contract kpkSharesNavFeesTest is kpkSharesNavTestBase {
         uint256 wouldHaveBeen = (1_000e6 * ONE_USD * 1e18) / (1e6 * preFeePrice);
         assertGt(expected, wouldHaveBeen, "post-fee pricing gives the subscriber more shares");
         assertApproxEqRel(expected, (wouldHaveBeen * 110) / 100, 0.01e18, "~10% more, per the fee minted");
+    }
+
+    /// @notice The synchronous path settles at the post-fee price too.
+    /// @dev The scoped review found the `processRequests` version of this test did not cover
+    ///      `subscribe`: deleting the repricing call there left the whole suite green while a
+    ///      depositor lost ~10%. This is the twin that binds it, and it matters more than the batch
+    ///      case because this path is permissionless once the admin enables it.
+    function testSyncDepositSettlesAtThePostFeePrice() public {
+        fund = _deployFund(0, 0, 2000);
+        vm.prank(safe);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(alice);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(bob);
+        usdc.approve(address(fund), type(uint256).max);
+
+        _seedFund(alice, 1_000e6);
+
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+        vm.prank(bob);
+        _approve(fund.requestSubscription(1e6, 1, address(usdc), bob));
+        assertEq(fund.balanceOf(feeRecipient), 0, "watermark seeded, nothing charged");
+
+        _setSharePrice(2 * ONE_USD);
+        int256 navValue = int256((2 * ONE_USD * fund.totalSupply()) / 1e18);
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+
+        vm.prank(admin);
+        fund.setSyncDepositsEnabled(true);
+
+        uint256 supplyBefore = fund.totalSupply();
+        vm.prank(bob);
+        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), bob);
+
+        uint256 feeShares = fund.balanceOf(feeRecipient);
+        assertGt(feeShares, 0, "a performance fee was actually charged");
+
+        uint256 postFeePrice = (uint256(navValue) * 1e18) / (supplyBefore + feeShares);
+        assertEq(shares, (1_000e6 * ONE_USD * 1e18) / (1e6 * postFeePrice), "settled at the post-fee price");
+
+        uint256 preFeePrice = (uint256(navValue) * 1e18) / supplyBefore;
+        assertGt(shares, (1_000e6 * ONE_USD * 1e18) / (1e6 * preFeePrice), "and not at the stale pre-fee price");
+    }
+
+    /// @notice The settlement event reports a price and a supply that agree with each other
+    /// @dev It previously emitted the post-fee PRICE alongside the pre-fee SUPPLY, so anyone
+    ///      recomputing `navValue / sharesSupply` from the event — the natural cross-check for a
+    ///      field documented as "the supply the price was derived against" — got a different number
+    ///      than the fund actually settled at, off by the whole performance fee.
+    function testSettlementEventPriceAndSupplyAgree() public {
+        fund = _deployFund(0, 0, 2000);
+        vm.prank(safe);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(alice);
+        usdc.approve(address(fund), type(uint256).max);
+        vm.prank(bob);
+        usdc.approve(address(fund), type(uint256).max);
+
+        _seedFund(alice, 1_000e6);
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+        vm.prank(bob);
+        _approve(fund.requestSubscription(1e6, 1, address(usdc), bob));
+
+        _setSharePrice(2 * ONE_USD);
+        vm.warp(vm.getBlockTimestamp() + 7 hours);
+
+        vm.recordLogs();
+        vm.prank(bob);
+        _approve(fund.requestSubscription(1_000e6, 1, address(usdc), bob));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("SharePriceSettlement(uint256,int256,uint256)");
+        bool seen;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig) continue;
+            (uint256 price, int256 navValue, uint256 sharesSupply) =
+                abi.decode(logs[i].data, (uint256, int256, uint256));
+            assertEq(price, (uint256(navValue) * 1e18) / sharesSupply, "event is internally consistent");
+            assertEq(price, fund.lastSharePriceUsd(), "and matches the recorded settled price");
+            seen = true;
+        }
+        assertTrue(seen, "a settlement event was emitted");
     }
 
     function testSetPerformanceFeeRateRevertsWhileNavUnhealthy() public {

@@ -292,19 +292,23 @@ contract KpkSharesNav is
     ///      interval it can be a large fraction of supply: a fund up 100% since its watermark mints
     ///      ~10% of supply in one event, and a subscriber in that batch would be short-changed ~9%.
     ///      Re-deriving costs one division and no second adapter scan, because the NAV has not moved.
+    /// @return pricedSupply The supply the returned price actually corresponds to, so the caller can
+    ///         report a price and a supply that agree with each other
     function _repriceAfterFees(NavPricingLib.Pricing memory pricing, int256 navValue, uint256 preFeeSupply)
         internal
         view
+        returns (uint256 pricedSupply)
     {
         // Nothing was outstanding to dilute (the bootstrap batch), so there is nothing to re-derive.
-        if (preFeeSupply == 0) return;
+        if (preFeeSupply == 0) return preFeeSupply;
 
         uint256 postFeeSupply = totalSupply();
-        if (postFeeSupply == preFeeSupply) return;
+        if (postFeeSupply == preFeeSupply) return preFeeSupply;
 
         uint256 repriced = NavPricingLib.sharePriceFrom(navValue, postFeeSupply, pricing.shareUnit);
         if (repriced == 0) revert SharePriceZero();
         pricing.sharePriceUsd = repriced;
+        return postFeeSupply;
     }
 
     /// @notice Record a pricing event for observability
@@ -419,7 +423,7 @@ contract KpkSharesNav is
         (NavPricingLib.Pricing memory pricing, int256 navValue, uint256 sharesSupply) = _snapshot(subscriptionAsset);
         _chargeFees(pricing.sharePriceUsd);
         // Fees just diluted the supply; price this deposit at the rate that reflects it.
-        _repriceAfterFees(pricing, navValue, sharesSupply);
+        sharesSupply = _repriceAfterFees(pricing, navValue, sharesSupply);
 
         sharesOut = NavPricingLib.assetsToShares(assetsIn, pricing);
         if (sharesOut < minSharesOut) revert SlippageBoundNotMet();
@@ -554,7 +558,7 @@ contract KpkSharesNav is
             (NavPricingLib.Pricing memory pricing, int256 navValue, uint256 sharesSupply) = _snapshot(asset);
             _chargeFees(pricing.sharePriceUsd);
             // Fees just diluted the supply; settle the batch at the price that reflects it.
-            _repriceAfterFees(pricing, navValue, sharesSupply);
+            sharesSupply = _repriceAfterFees(pricing, navValue, sharesSupply);
             _processApproved(approveRequests, asset, pricing);
             _recordPricing(pricing.sharePriceUsd, navValue, sharesSupply);
         }
@@ -608,6 +612,9 @@ contract KpkSharesNav is
     /// @inheritdoc IKpkSharesNav
     function setPerformanceFeeRate(uint256 newRate) external isAdmin {
         if (newRate > MAX_FEE_RATE) revert FeeRateLimitExceeded();
+        // Same pairing the initializer enforces: a rate with no module to compute it is inert, and
+        // `performanceFeeRate()` would report a fee that can never accrue.
+        if (newRate > 0 && performanceFeeModule == address(0)) revert InvalidArguments();
         if (performanceFeeRate != newRate) {
             _setPerformanceFeeRate(newRate);
         }
@@ -615,7 +622,9 @@ contract KpkSharesNav is
 
     /// @inheritdoc IKpkSharesNav
     function setPerformanceFeeModule(address newPerfFeeModule) external isAdmin {
-        // address(0) disables performance fees
+        // address(0) disables performance fees, but only once the rate is zero too — otherwise the
+        // pairing enforced at initialization could be walked back into in two admin calls.
+        if (newPerfFeeModule == address(0) && performanceFeeRate > 0) revert InvalidArguments();
         _setPerformanceFeeModule(newPerfFeeModule);
     }
 
@@ -1001,10 +1010,12 @@ contract KpkSharesNav is
     //
 
     /// @notice Charge management and performance fees based on time elapsed
-    /// @param sharePriceUsd The price per share this event settled at (USD, 8 decimals)
-    /// @dev Called after the price snapshot and before any request settles. Fee shares are minted,
-    ///      which dilutes the price; taking the snapshot first means every request in a batch settles
-    ///      at the same pre-dilution price, as it did before this contract derived prices itself.
+    /// @param sharePriceUsd The PRE-dilution price, i.e. the snapshot the fee is measured against —
+    ///        not the price the batch goes on to settle at
+    /// @dev Called after the price snapshot and before any request settles. The fee must be measured
+    ///      against the pre-dilution price, because that is the price the high-watermark series is
+    ///      expressed in; the requests themselves then settle at the post-fee price, which
+    ///      `_repriceAfterFees` derives immediately after this returns.
     ///      Unlike `KpkShares` there is no fee-module asset gate: the price is genuinely USD now, so
     ///      the high-watermark is one series across every asset rather than one asset's alone.
     function _chargeFees(uint256 sharePriceUsd) internal {

@@ -17,17 +17,24 @@ pragma solidity ^0.8;
 ///         appended field does NOT make `abi.decode` revert. The decoder reads this struct's head
 ///         words and follows their self-describing offsets, so a longer upstream encoding decodes
 ///         cleanly and the extra field is simply dropped. Verified by test, not assumed:
-///         `test/kpkSharesNav.NavFork.t.sol` proves a ten-field encoding decodes into these nine.
+///         `test/kpkSharesNav.Drift.t.sol` decodes a ten-field encoding into these nine.
 ///
-///         The consequence is the dangerous one: if upstream appends a NEW HEALTH SIGNAL, this fund
-///         keeps pricing and silently does not gate on it. The health gate in `NavPricingLib`
-///         enumerates the trouble fields by name, so it cannot notice a signal it has never heard
-///         of. That erodes the fail-closed guarantee quietly rather than loudly, which is why the
-///         fork test asserts the ENCODED LENGTH of the live response against a canonical re-encode
-///         of these nine fields, rather than merely asserting that decoding succeeded.
+///         DRIFT IN EITHER DIRECTION CAN BE SILENT, so do not reason about which is "safe":
+///         - Deployment ahead of this mirror (upstream appended a field): decodes, extra field
+///           dropped. If it was a new HEALTH SIGNAL, this fund keeps pricing and never gates on it,
+///           because the gate in `NavPricingLib` enumerates the trouble fields by name and cannot
+///           notice one it has never heard of.
+///         - This mirror ahead of the deployment (a field added here first, or a chain still
+///           running an older proxy): also verified NOT to revert for a trailing STATIC field. The
+///           decoder reads a head word that actually lies in the tail; for the call shape this fund
+///           uses — `getAccountNav(safe, address(0))` — that word is `quoteAsset.asset`, i.e. zero,
+///           which decodes as a clean `false`. A new health flag would therefore read "healthy" on
+///           every chain whose proxy predates it. A trailing dynamic array is likelier to revert,
+///           but that is a weaker guarantee than it sounds and must not be relied on.
 ///
-///         The reverse drift — this mirror carrying a field the deployed contract does not — DOES
-///         revert (the head is shorter than expected), which is fail-closed and self-announcing.
+///         So decodability proves nothing in either direction, and the real alarm is structural:
+///         `test/kpkSharesNav.NavFork.t.sol` compares the ENCODED LENGTH of the live response
+///         against a canonical re-encode of these nine fields. Keep that assertion.
 ///
 ///         Deployed proxy (same address on every supported chain, redeployed 2026-08-18):
 ///         `0x54EaD2A1dB7456cA917675Ea8908ec8A997c6214`. The superseded proxy

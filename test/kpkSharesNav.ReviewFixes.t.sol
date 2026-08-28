@@ -280,6 +280,45 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
     // A performance fee rate with no module is refused
     //
 
+    /// @dev The initializer's pairing guard is worth nothing if two admin calls can walk back into
+    ///      the state it forbids, which is exactly what the scoped review found: clear the module
+    ///      (explicitly allowed, it disables performance fees), then set a rate.
+    function testSetPerformanceFeeRateRequiresAModule() public {
+        // A fund whose module has been cleared
+        vm.prank(admin);
+        fund.setPerformanceFeeModule(address(0));
+
+        vm.prank(admin);
+        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
+        fund.setPerformanceFeeRate(2000);
+
+        assertEq(fund.performanceFeeRate(), 0, "no fee that could never accrue");
+    }
+
+    function testCannotClearModuleWhileRateIsLive() public {
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(2000);
+
+        vm.prank(admin);
+        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
+        fund.setPerformanceFeeModule(address(0));
+
+        assertEq(fund.performanceFeeModule(), address(perfFeeModule), "module still in place");
+    }
+
+    /// @notice Clearing the module is still possible once the rate is zeroed first
+    function testModuleCanBeClearedAfterZeroingTheRate() public {
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(2000);
+
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(0);
+        vm.prank(admin);
+        fund.setPerformanceFeeModule(address(0));
+
+        assertEq(fund.performanceFeeModule(), address(0));
+    }
+
     function testInitializeRejectsPerformanceRateWithoutModule() public {
         address impl = address(new KpkSharesNav());
 
