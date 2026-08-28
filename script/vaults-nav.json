@@ -1,0 +1,23 @@
+{
+  "_comment": "Configuration for DeployKpkSharesNav. navCalculator is karpatkey's NAVCalculator proxy, redeployed 2026-08-18 and identical on every supported chain. The superseded proxy 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d still answers but is abandoned in place - never point a fund at it. initialSharePrice is USD with 8 decimals, so 100000000 = $1.00.",
+  "vaults": {
+    "example": {
+      "chainId": 1,
+      "name": "kpk NAV Fund",
+      "symbol": "kpkNAV",
+      "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "safe": "0x0000000000000000000000000000000000000000",
+      "admin": "0x0000000000000000000000000000000000000000",
+      "operator": "0x0000000000000000000000000000000000000000",
+      "feeReceiver": "0x0000000000000000000000000000000000000000",
+      "subscriptionRequestTtl": 86400,
+      "redemptionRequestTtl": 86400,
+      "managementFeeRate": 0,
+      "redemptionFeeRate": 0,
+      "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+      "performanceFeeRate": 0,
+      "navCalculator": "0x54EaD2A1dB7456cA917675Ea8908ec8A997c6214",
+      "initialSharePrice": 100000000
+    }
+  }
+}
