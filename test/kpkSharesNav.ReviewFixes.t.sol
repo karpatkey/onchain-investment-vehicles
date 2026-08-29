@@ -29,7 +29,7 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
 
         vm.prank(alice);
         vm.expectRevert(IKpkSharesNav.BootstrapRequiresOperator.selector);
-        fund.subscribe(1_000e6, address(usdc), alice);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
     }
 
     /// @notice The window re-arms after a full redemption, and is still closed to the sync path
@@ -51,7 +51,7 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
         // Without the guard, 1 USDC would mint 100% of the supply and capture the residual $500
         vm.prank(bob);
         vm.expectRevert(IKpkSharesNav.BootstrapRequiresOperator.selector);
-        fund.subscribe(1e6, address(usdc), bob);
+        fund.subscribe(1e6, 1, address(usdc), bob);
     }
 
     /// @notice Once seeded, the sync path works normally
@@ -62,7 +62,7 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
         fund.setSyncDepositsEnabled(true);
 
         vm.prank(bob);
-        assertEq(fund.subscribe(1_000e6, address(usdc), bob), 1_000e18);
+        assertEq(fund.subscribe(1_000e6, 1, address(usdc), bob), 1_000e18);
     }
 
     //

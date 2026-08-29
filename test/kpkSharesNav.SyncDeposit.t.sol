@@ -11,7 +11,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
 
         vm.prank(alice);
         vm.expectRevert(IKpkSharesNav.SyncDepositsDisabled.selector);
-        fund.subscribe(1_000e6, address(usdc), alice);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
     }
 
     function testOnlyAdminCanToggleSyncDeposits() public {
@@ -37,7 +37,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
 
         vm.prank(alice);
         vm.expectRevert(IKpkSharesNav.SyncDepositsDisabled.selector);
-        fund.subscribe(1_000e6, address(usdc), alice);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
     }
 
     function _enable() internal {
@@ -52,7 +52,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         uint256 safeBefore = usdc.balanceOf(safe);
 
         vm.prank(bob);
-        uint256 shares = fund.subscribe(1_000e6, address(usdc), bob);
+        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), bob);
 
         assertEq(shares, 1_000e18, "shares minted at $1.00");
         assertEq(fund.balanceOf(bob), 1_000e18);
@@ -90,68 +90,34 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         _enable();
 
         vm.prank(bob);
-        uint256 shares = fund.subscribe(1_000e6, address(usdc), bob);
+        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), bob);
 
         assertEq(shares, 1_000e18, "priced at the pre-deposit NAV, not including bob's own assets");
         assertEq(usdc.balanceOf(safe), 2_000e6, "and the assets did land in the safe");
     }
 
-    /// @notice The sync path takes NO slippage bound: the caller accepts the price at inclusion.
-    /// @dev This replaces a test that asserted a `minSharesOut` bound was honoured. The argument was
-    ///      removed, so the behaviour it guarded is gone: a price that has moved against the caller
-    ///      no longer causes a revert, it simply mints fewer shares. Pinned here so the exposure is
-    ///      visible rather than implied by an absence.
-    function testSyncDepositHasNoSlippageBound() public {
+    function testSyncDepositRespectsSlippageBound() public {
         _seedFund(alice, 1_000e6);
-        // The price doubles between the caller's decision and inclusion
+        // Share price doubles, so 1,000 USDC now buys only 500 shares
         nav.setNavValue(int256(2_000 * 1e8));
         _enable();
 
         vm.prank(bob);
-        uint256 shares = fund.subscribe(1_000e6, address(usdc), bob);
-
-        // Half what the pre-move price would have given, and it went through regardless
-        assertEq(shares, 500e18, "the caller absorbs the move with no floor to refuse it");
-    }
-
-    /// @notice A deposit too small to mint a single share unit reverts rather than donating.
-    /// @dev The only floor left on this path. Conversions floor, so without this guard the assets
-    ///      would move to the safe and the caller would receive nothing. Previously this was a side
-    ///      effect of `minSharesOut` being required non-zero; it is now explicit.
-    function testSyncDepositRevertsRatherThanMintingZeroShares() public {
-        _seedFund(alice, 1_000e6);
-        // shares = assetsIn * assetPrice * 1e18 / (1e6 * sharePrice), so one unit of a 6-decimal
-        // asset floors to zero once the share price passes 1e20 (USD-8dp). A NAV of 1e24 against
-        // 1,000e18 shares puts the price at 1e21, comfortably past it.
-        nav.setNavValue(int256(1e24));
-        _enable();
+        vm.expectRevert(IKpkSharesNav.SlippageBoundNotMet.selector);
+        fund.subscribe(1_000e6, 501e18, address(usdc), bob);
 
         vm.prank(bob);
-        vm.expectRevert(IKpkSharesNav.ZeroSharesOut.selector);
-        fund.subscribe(1, address(usdc), bob);
+        uint256 shares = fund.subscribe(1_000e6, 500e18, address(usdc), bob);
+        assertEq(shares, 500e18);
     }
 
-    /// @notice The nearest legitimate deposit still succeeds, so the guard is not over-broad.
-    function testSyncDepositOfOneShareUnitSucceeds() public {
-        _seedFund(alice, 1_000e6);
-        _enable();
-
-        vm.prank(bob);
-        uint256 shares = fund.subscribe(1, address(usdc), bob);
-        assertGt(shares, 0, "a deposit that can mint something is not refused");
-    }
-
-    function testSyncDepositRejectsZeroAmountAndZeroReceiver() public {
+    function testSyncDepositRejectsZeroSlippageBound() public {
         _seedFund(alice, 1_000e6);
         _enable();
 
         vm.prank(bob);
         vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
-        fund.subscribe(0, address(usdc), bob);
-
-        vm.prank(bob);
-        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
-        fund.subscribe(1_000e6, address(usdc), address(0));
+        fund.subscribe(1_000e6, 0, address(usdc), bob);
     }
 
     function testSyncDepositRejectsUnapprovedAsset() public {
@@ -160,7 +126,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
 
         vm.prank(bob);
         vm.expectRevert(IKpkSharesNav.NotAnApprovedAsset.selector);
-        fund.subscribe(1_000e6, makeAddr("random"), bob);
+        fund.subscribe(1_000e6, 1, makeAddr("random"), bob);
     }
 
     function testSyncDepositHaltsWhenNavUnhealthy() public {
@@ -170,7 +136,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
 
         vm.prank(bob);
         vm.expectRevert(IKpkSharesNav.NavUnhealthy.selector);
-        fund.subscribe(1_000e6, address(usdc), bob);
+        fund.subscribe(1_000e6, 1, address(usdc), bob);
     }
 
     function testSyncDepositToDifferentReceiver() public {
@@ -178,7 +144,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         _enable();
 
         vm.prank(bob);
-        fund.subscribe(1_000e6, address(usdc), alice);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
 
         assertEq(fund.balanceOf(bob), 0);
         assertEq(fund.balanceOf(alice), 1_000e18 + 1_000e18);
@@ -196,7 +162,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
 
         vm.prank(alice);
         vm.expectRevert(IKpkSharesNav.BootstrapRequiresOperator.selector);
-        fund.subscribe(1_000e6, address(usdc), alice);
+        fund.subscribe(1_000e6, 1, address(usdc), alice);
     }
 
     function testSyncDepositRecordsPricingEvent() public {
@@ -204,7 +170,7 @@ contract kpkSharesNavSyncDepositTest is kpkSharesNavTestBase {
         _enable();
 
         vm.prank(bob);
-        fund.subscribe(1_000e6, address(usdc), bob);
+        fund.subscribe(1_000e6, 1, address(usdc), bob);
 
         assertEq(fund.lastSharePriceUsd(), ONE_USD);
         assertEq(fund.lastPricedAt(), uint64(block.timestamp));

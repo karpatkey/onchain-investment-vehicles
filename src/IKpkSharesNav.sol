@@ -71,11 +71,8 @@ interface IKpkSharesNav is IERC165 {
     /// @notice Error when the proposed NAV calculator address fails validation
     error InvalidNavCalculator();
 
-    /// @notice Error when a synchronous deposit would mint no shares at all
-    /// @dev `subscribe` takes no slippage bound, so this is the only floor on that path. Conversions
-    ///      floor, so a deposit small enough relative to the share price would otherwise transfer
-    ///      assets to the safe and mint nothing.
-    error ZeroSharesOut();
+    /// @notice Error when the amount produced is below the caller's slippage bound
+    error SlippageBoundNotMet();
 
     //
     // Structs
@@ -383,20 +380,14 @@ interface IKpkSharesNav is IERC165 {
 
     /// @notice Deposit assets and receive shares in the same transaction.
     /// @param assetsIn The amount of assets to deposit
+    /// @param minSharesOut The minimum amount of shares to accept (slippage protection, must be > 0)
     /// @param subscriptionAsset The address of the asset being deposited
     /// @param receiver The address that will receive the shares
     /// @return sharesOut The amount of shares minted
     /// @dev Only callable while the admin has synchronous deposits enabled. Assets go straight to
     ///      the portfolio safe without passing through request escrow. The NAV is read BEFORE the
     ///      assets move, so a deposit is never priced against its own contribution.
-    ///
-    ///      TAKES NO SLIPPAGE BOUND. The caller accepts whatever the NAV reports at inclusion; the
-    ///      price can move between submission and inclusion and there is no floor to refuse it. The
-    ///      only guarantee is that the deposit cannot mint nothing (`ZeroSharesOut`).
-    ///      `previewSubscription` quotes the current price, but that quote is indicative rather than
-    ///      binding — and it is pre-fee-accrual besides. If the guarantee matters, use
-    ///      `requestSubscription`, which keeps its `minSharesOut`.
-    function subscribe(uint256 assetsIn, address subscriptionAsset, address receiver)
+    function subscribe(uint256 assetsIn, uint256 minSharesOut, address subscriptionAsset, address receiver)
         external
         returns (uint256 sharesOut);
 

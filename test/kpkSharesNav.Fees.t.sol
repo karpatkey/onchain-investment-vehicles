@@ -210,7 +210,7 @@ contract kpkSharesNavFeesTest is kpkSharesNavTestBase {
 
         uint256 supplyBefore = fund.totalSupply();
         vm.prank(bob);
-        uint256 shares = fund.subscribe(1_000e6, address(usdc), bob);
+        uint256 shares = fund.subscribe(1_000e6, 1, address(usdc), bob);
 
         uint256 feeShares = fund.balanceOf(feeRecipient);
         assertGt(feeShares, 0, "a performance fee was actually charged");
