@@ -414,15 +414,23 @@ contract KpkSharesNav is
     }
 
     /// @inheritdoc IKpkSharesNav
-    /// @dev DONATION HAZARD. The price is `NAV / totalSupply`, and the NAV measures a safe that
-    ///      anyone can send tokens to. Rounding-to-zero theft is blocked because `minSharesOut` must
-    ///      be non-zero, so a caller quoted too few shares reverts rather than donating. The residual
-    ///      is that while the supply is dust — at launch, or after a full redemption that leaves the
-    ///      safe holding assets — a donation moves the price for whoever is left. The control is
-    ///      operational: `syncDepositsEnabled` starts false, so seed the fund through an
+    /// @dev NO SLIPPAGE BOUND. This path deliberately takes no `minSharesOut`: the caller accepts
+    ///      whatever the NAV reports at inclusion, with no floor of their own. That is a real
+    ///      exposure — the price can move between submission and inclusion, and the caller has no
+    ///      way to refuse the result — so quote with `previewSubscription` and understand that the
+    ///      quote is indicative, not binding. The asynchronous path keeps its bound; use it when the
+    ///      guarantee matters.
+    ///
+    ///      DONATION HAZARD. The price is `NAV / totalSupply`, and the NAV measures a safe that
+    ///      anyone can send tokens to. The `ZeroSharesOut` guard below preserves the one protection
+    ///      the removed bound was providing structurally — a deposit can never mint nothing — but
+    ///      nothing now protects a caller who would be minted *few* shares rather than none. The
+    ///      residual is that while the supply is dust — at launch, or after a full redemption that
+    ///      leaves the safe holding assets — a donation moves the price for whoever is left. The
+    ///      control is operational: `syncDepositsEnabled` starts false, so seed the fund through an
     ///      operator-approved request before opening this path, and close it again if the supply is
     ///      ever fully redeemed.
-    function subscribe(uint256 assetsIn, uint256 minSharesOut, address subscriptionAsset, address receiver)
+    function subscribe(uint256 assetsIn, address subscriptionAsset, address receiver)
         external
         nonReentrant
         returns (uint256 sharesOut)
@@ -438,7 +446,7 @@ contract KpkSharesNav is
         // permissionless path refuses to be the one that opens a fund.
         if (totalSupply() == 0) revert BootstrapRequiresOperator();
 
-        _requireValidRequestParams(assetsIn, minSharesOut, receiver);
+        _requireAmountAndReceiver(assetsIn, receiver);
         if (!_approvedAssetsMap[subscriptionAsset].canDeposit) revert NotAnApprovedAsset();
 
         // Price BEFORE the assets move. The NAV is read for the portfolio safe, so pricing after the
@@ -449,7 +457,10 @@ contract KpkSharesNav is
         sharesSupply = _repriceAfterFees(pricing, navValue, sharesSupply);
 
         sharesOut = NavPricingLib.assetsToShares(assetsIn, pricing);
-        if (sharesOut < minSharesOut) revert SlippageBoundNotMet();
+        // With no caller-supplied bound, this is the only thing standing between a deposit and a
+        // mint of nothing: conversions floor, so a deposit small enough relative to the share price
+        // would otherwise hand the safe its assets and return zero shares.
+        if (sharesOut == 0) revert ZeroSharesOut();
 
         _mint(receiver, sharesOut);
         _recordPricing(pricing.sharePriceUsd, navValue, sharesSupply);
@@ -838,14 +849,25 @@ contract KpkSharesNav is
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
+    /// @notice Require an amount and a receiver that are not obviously nonsense
+    /// @param amountIn The amount (assets or shares) supplied
+    /// @param receiver The receiver address
+    /// @dev The part both entry points share. `subscribe` needs only this, because it takes no
+    ///      slippage bound; the request path adds the bound check on top.
+    function _requireAmountAndReceiver(uint256 amountIn, address receiver) internal pure {
+        if (amountIn == 0 || receiver == address(0)) revert InvalidArguments();
+    }
+
     /// @notice Require valid request parameters (reverts on invalid)
     /// @param amountIn The amount (assets or shares) supplied
     /// @param amountOut The caller's minimum acceptable output
     /// @param receiver The receiver address
-    /// @dev A zero `amountOut` is rejected, so no caller can waive slippage protection entirely.
-    ///      That is what makes a round-to-zero mint impossible on both the request and sync paths.
+    /// @dev A zero `amountOut` is rejected on the REQUEST paths, so a caller using them cannot waive
+    ///      slippage protection entirely. `subscribe` has no such bound to check — it guards a
+    ///      round-to-zero mint with an explicit `ZeroSharesOut` instead.
     function _requireValidRequestParams(uint256 amountIn, uint256 amountOut, address receiver) internal pure {
-        if (amountIn == 0 || amountOut == 0 || receiver == address(0)) revert InvalidArguments();
+        _requireAmountAndReceiver(amountIn, receiver);
+        if (amountOut == 0) revert InvalidArguments();
     }
 
     /// @notice Require the caller may cancel this request
