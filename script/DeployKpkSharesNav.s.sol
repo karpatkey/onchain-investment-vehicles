@@ -70,6 +70,8 @@ contract DeployKpkSharesNav is Script {
     ///      check here passes for it — only naming it catches the mistake. The accounting repo's
     ///      older docs still list it as canonical, which is precisely how it gets copied into a
     ///      config.
+    ///      NOTE: `KpkSharesNav` carries the same literal privately for the on-chain check. This copy
+    ///      exists because a script cannot read a private constant; keep the two in step.
     address private constant SUPERSEDED_NAV_CALCULATOR = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
 
     /// @notice Deploys one vault from the JSON configuration

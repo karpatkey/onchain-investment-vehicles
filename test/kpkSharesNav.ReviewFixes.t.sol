@@ -328,10 +328,14 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
     ///      list it as canonical, which is exactly how it ends up copied into a config.
     function testSupersededNavCalculatorIsRefused() public {
         address superseded = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
-        // Give it code and the right answers, so only the blocklist can reject it
-        MockNavCalculator impostor = new MockNavCalculator();
-        impostor.registerAsset(address(usdc), 6, int256(ONE_USD), 8);
-        vm.etch(superseded, address(impostor).code);
+
+        // `vm.etch` copies BYTECODE ONLY — never storage — so there is no point configuring the
+        // mock before etching it: any `registerAsset` call would write to the mock's own slots and
+        // those are not transplanted. That does not weaken the test, because the blocklist is
+        // checked before anything state-dependent: an etched contract that answers `usdDecimals()`
+        // from code is enough to get past the earlier gates and reach it. Removing the blocklist
+        // makes this revert differently, which is what makes the assertion bind.
+        vm.etch(superseded, address(new MockNavCalculator()).code);
 
         vm.prank(admin);
         vm.expectRevert(IKpkSharesNav.InvalidNavCalculator.selector);

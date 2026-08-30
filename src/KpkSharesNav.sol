@@ -98,6 +98,9 @@ contract KpkSharesNav is
     ///      no longer receives new assets or feeds, and drifts from its true NAV with nothing
     ///      reverting. The repo's own docs and the stale local clone of the accounting repo both
     ///      still name it, so a misconfiguration here is a likely mistake rather than an exotic one.
+    ///      NOTE: `script/DeployKpkSharesNav.s.sol` carries the same literal for its pre-flight check
+    ///      (a script cannot read a private constant). If this address is ever changed, change it
+    ///      there too — nothing enforces that they agree.
     address private constant _SUPERSEDED_NAV_CALCULATOR = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
 
     uint256 private constant _PRECISION_BPS = 10_000;
