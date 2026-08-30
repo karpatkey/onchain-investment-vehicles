@@ -178,6 +178,14 @@ contract DeployKpkSharesNav is Script {
             "performanceFeeRate set with no performance fee module"
         );
 
+        // A nonzero module with no code is the misconfiguration that actually reaches production:
+        // one wrong address in this config satisfies every check above. `initialize` now refuses it
+        // too, so this is a pre-flight that fails before broadcasting rather than the only guard.
+        require(
+            params.performanceFeeModule == address(0) || params.performanceFeeModule.code.length > 0,
+            "performanceFeeModule is not a contract"
+        );
+
         require(params.navCalculator.code.length > 0, "navCalculator is not a contract");
         require(
             params.navCalculator != SUPERSEDED_NAV_CALCULATOR,

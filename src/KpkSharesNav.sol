@@ -1141,7 +1141,12 @@ contract KpkSharesNav is
     ///      Skipped is not forgiven. A high-water-mark module keeps its mark across the failure, so
     ///      once a working module is in place the same gain is charged from where it left off.
     function _chargePerformanceFee(uint256 sharePriceUsd, uint256 timeElapsed) internal returns (uint256) {
-        if (performanceFeeModule == address(0)) return 0;
+        // Covers BOTH "no module configured" and "the configured module has no code". The second is
+        // not reachable through the setter, but a module can be a proxy that is later pointed at
+        // nothing, and the `try` below cannot absorb it: a high-level call to a codeless address
+        // reverts on Solidity's `extcodesize` probe in THIS frame, before the call, so there is no
+        // callee revert for `catch` to see and the whole batch would go down with it.
+        if (performanceFeeModule.code.length == 0) return 0;
 
         uint256 feeReceiverBalance = balanceOf(feeReceiver);
         uint256 netSupply = totalSupply() - feeReceiverBalance;
@@ -1269,6 +1274,19 @@ contract KpkSharesNav is
 
     /// @notice Set the fee receiver address
     /// @param newFeeReceiver The new fee receiver address
+    /// @dev ACCEPTED: the handover does not crystallize. Two consequences, both under-collecting and
+    ///      both in the fee recipient's own disfavour rather than any holder's. First, the accrual
+    ///      since the last fee event pays out to the NEW receiver. Second, and the sharper one,
+    ///      `_chargePerformanceFee` computes its base as `totalSupply() - balanceOf(feeReceiver)`, so
+    ///      naming an address that already holds shares excludes that holding from the performance
+    ///      fee base for as long as it is the receiver.
+    ///
+    ///      Not fixed deliberately. Crystallizing here needs a share price, which would make routine
+    ///      receiver rotation revert whenever the NAV is unhealthy — the exact coupling that made a
+    ///      broken fee module brick the fund in an earlier round. And the cheap alternative,
+    ///      requiring `balanceOf(newFeeReceiver) == 0`, breaks the ordinary case: a receiver
+    ///      accumulates fee shares, so rotating away and back would be refused. An admin who wants to
+    ///      forgive fees can already call `setPerformanceFeeRate(0)`; this grants no new power.
     function _setFeeReceiver(address newFeeReceiver) internal {
         feeReceiver = newFeeReceiver;
         emit FeeReceiverUpdate(newFeeReceiver);
@@ -1303,6 +1321,13 @@ contract KpkSharesNav is
     ///      intended trade: the alternative is minting fee shares at a price the contract cannot
     ///      currently justify. When the old rate is zero there is nothing to settle and no NAV is
     ///      read — which is also what keeps `initialize` from touching the NAV.
+    ///
+    ///      ACCEPTED consequence of that skip: turning the fee ON from zero does not call the module,
+    ///      so a high-water-mark module is left unseeded. It seeds instead at the first pricing event
+    ///      afterwards, and the gain between activation and that event is never charged. This
+    ///      under-collects and never over-charges a holder. Seeding at activation would require a NAV
+    ///      read here, making fee activation fail while the NAV is unhealthy and dragging the NAV
+    ///      into `initialize`; where the baseline sits is the module's semantics, not the fund's.
     function _setPerformanceFeeRate(uint256 newRate) internal {
         if (performanceFeeRate > 0) {
             uint256 sharesSupply = totalSupply();
@@ -1321,6 +1346,14 @@ contract KpkSharesNav is
     /// @notice Set the performance fee module address
     /// @param newPerformanceFeeModule The new performance fee module address
     function _setPerformanceFeeModule(address newPerformanceFeeModule) internal {
+        // A nonzero address with no code satisfies every other check and still cannot be called;
+        // see `_chargePerformanceFee` for why `try/catch` does not save it. Configured alongside a
+        // live rate it is a brick: the rate cannot be zeroed, because zeroing settles through the
+        // module, so the module cannot be swapped. `address(0)` stays allowed — it is the supported
+        // way to REMOVE the module, and rejecting it would weld shut the escape hatch.
+        if (newPerformanceFeeModule != address(0) && newPerformanceFeeModule.code.length == 0) {
+            revert InvalidArguments();
+        }
         performanceFeeModule = newPerformanceFeeModule;
         emit PerformanceFeeModuleUpdate(newPerformanceFeeModule);
     }
