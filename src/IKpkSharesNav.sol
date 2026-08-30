@@ -275,6 +275,15 @@ interface IKpkSharesNav is IERC165 {
     /// @param newRate The new performance fee (in basis points, 2000 = 20%)
     event PerformanceFeeRateUpdate(uint256 newRate);
 
+    /// @notice Event emitted when the performance fee module failed and its fee was skipped
+    /// @param module The module that reverted
+    /// @dev Settlement continues when the fee module reverts, because a fee must not be able to
+    ///      halt subscriptions and redemptions. That makes the failure silent unless it is announced,
+    ///      so it is announced. A high-water-mark module keeps its mark, so the skipped fee is
+    ///      deferred rather than forgiven — but a fund emitting this repeatedly has a broken module
+    ///      and is not charging what it thinks it is.
+    event PerformanceFeeSkipped(address indexed module);
+
     /// @notice Event emitted when performance fee module is updated
     /// @param newPerformanceFeeModule The new performance fee module address
     event PerformanceFeeModuleUpdate(address indexed newPerformanceFeeModule);

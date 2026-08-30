@@ -98,6 +98,11 @@ contract KpkSharesNav is
     ///      no longer receives new assets or feeds, and drifts from its true NAV with nothing
     ///      reverting. The repo's own docs and the stale local clone of the accounting repo both
     ///      still name it, so a misconfiguration here is a likely mistake rather than an exotic one.
+    ///      Verified 2026-08-30 against the accounting repo's own `script/deploy/DEPLOYED_ADDRESSES.md`,
+    ///      which lists this address under "Superseded 2026-08-18 (do not call)" and names
+    ///      `0x54EaD2A1dB7456cA917675Ea8908ec8A997c6214` as the one consumers should call. No test can
+    ///      prove that from inside this repo — both tests `vm.etch` the address, which would pass for
+    ///      any value — so the check rests on that lookup.
     ///      NOTE: `script/DeployKpkSharesNav.s.sol` carries the same literal for its pre-flight check
     ///      (a script cannot read a private constant). If this address is ever changed, change it
     ///      there too — nothing enforces that they agree.
@@ -1124,17 +1129,35 @@ contract KpkSharesNav is
     /// @param sharePriceUsd The current price per share in USD (8 decimals)
     /// @param timeElapsed The time elapsed since the last fee calculation
     /// @return The amount of performance fee charged, in shares
+    /// @dev The module call is wrapped because the module is an independently deployed contract this
+    ///      fund reaches only through an interface — it can be a proxy that gets upgraded, can
+    ///      acquire access control, or can simply revert on an edge case, and nothing here can
+    ///      verify it. Unwrapped, a module that stopped answering would take the whole fund with it:
+    ///      `_chargeFees` runs on every settlement path, so six hours later every subscription and
+    ///      every redemption would revert — and the recovery route is shut too, because zeroing the
+    ///      rate in order to swap the module itself runs through the module. A fee is an accounting
+    ///      detail; it must not be able to stop people getting their money.
+    ///
+    ///      Skipped is not forgiven. A high-water-mark module keeps its mark across the failure, so
+    ///      once a working module is in place the same gain is charged from where it left off.
     function _chargePerformanceFee(uint256 sharePriceUsd, uint256 timeElapsed) internal returns (uint256) {
         if (performanceFeeModule == address(0)) return 0;
 
         uint256 feeReceiverBalance = balanceOf(feeReceiver);
         uint256 netSupply = totalSupply() - feeReceiverBalance;
-        uint256 performanceFee = IPerfFeeModule(performanceFeeModule)
-            .calculatePerformanceFee(sharePriceUsd, timeElapsed, performanceFeeRate, netSupply);
-        if (performanceFee > 0) {
-            _mint(feeReceiver, performanceFee);
+
+        try IPerfFeeModule(performanceFeeModule)
+            .calculatePerformanceFee(sharePriceUsd, timeElapsed, performanceFeeRate, netSupply) returns (
+            uint256 performanceFee
+        ) {
+            if (performanceFee > 0) {
+                _mint(feeReceiver, performanceFee);
+            }
+            return performanceFee;
+        } catch {
+            emit PerformanceFeeSkipped(performanceFeeModule);
+            return 0;
         }
-        return performanceFee;
     }
 
     //

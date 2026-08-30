@@ -211,6 +211,43 @@ contract kpkSharesNavGuardsTest is kpkSharesNavTestBase {
         assertFalse(fund.isApprovedAsset(address(weth)), "delist succeeds once escrow is zero");
     }
 
+    /// @notice A live pending request ALONE blocks delisting, with no escrow help.
+    /// @dev The mirror of `testEscrowAloneBlocksDelisting`, and the third time this PR has hit the
+    ///      same trap: `_updateAsset`'s removal branch checks escrow first and the pending count
+    ///      second, so a test using a SUBSCRIPTION trips the escrow guard and never reaches this one
+    ///      — deleting it left all 794 tests green. A REDEMPTION isolates it honestly and without
+    ///      `vm.store`: it escrows shares and raises `_pendingRequestsCount[asset]` while leaving
+    ///      `subscriptionAssets[asset]` at zero, so only the pending-count guard can refuse.
+    function testPendingRequestAloneBlocksDelisting() public {
+        Mock_ERC20 weth = new Mock_ERC20("WETH", 18);
+        nav.registerAsset(address(weth), 18, int256(4_000 * 1e8), 8);
+        vm.prank(ops);
+        fund.updateAsset(address(weth), true, true);
+
+        _seedFund(alice, 1_000e6);
+
+        // A redemption denominated in WETH: shares go to escrow, no WETH escrow is recorded
+        vm.prank(alice);
+        uint256 id = fund.requestRedemption(100e18, 1, address(weth), alice);
+        assertEq(fund.subscriptionAssets(address(weth)), 0, "no asset escrow - only the count is set");
+
+        vm.prank(ops);
+        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
+        fund.updateAsset(address(weth), false, false);
+
+        // Once the request is gone the same delist succeeds, so the guard is not over-broad.
+        // Rejected against WETH specifically: the shared `_reject` helper targets the base asset,
+        // and `_processRejected` filters on `request.asset`, so it would silently skip this one.
+        uint256[] memory rejections = new uint256[](1);
+        rejections[0] = id;
+        vm.prank(ops);
+        fund.processRequests(new uint256[](0), rejections, address(weth));
+
+        vm.prank(ops);
+        fund.updateAsset(address(weth), false, false);
+        assertFalse(fund.isApprovedAsset(address(weth)), "delist succeeds once nothing is pending");
+    }
+
     /// @notice The fund advertises its own interface via ERC-165.
     /// @dev Mutation testing showed `supportsInterface` could return the wrong id with every test
     ///      still green — integrators that feature-detect would silently see the wrong contract.

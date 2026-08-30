@@ -12,10 +12,13 @@ pragma solidity ^0.8;
 ///         ops and config only.
 ///
 ///         Upstream moves faster than this pin. Between 2026-08-28 and 2026-08-30 it advanced twice
-///         and, more importantly, REGISTERED A NEW BALANCE ADAPTER — which changed nothing about this
-///         interface but raised the cost of `getAccountNav` by roughly 30% overnight. Treat a stale
-///         pin as a prompt to re-check gas as well as shape; the fork test asserts both. The
-///         accounting repo is not a
+///         and registered a new balance adapter — which changed nothing about this interface but
+///         does change what `getAccountNav` costs, because the scan walks every registered adapter.
+///         That particular registration was cheap: CI brackets it at 14,802,176 -> 14,820,545 gas,
+///         +0.12%. The point is not that one registration was expensive but that the cost moves
+///         without anything in this repo changing, so a stale pin is a prompt to re-check gas as
+///         well as shape. `test/kpkSharesNav.NavFork.t.sol` asserts both. The accounting repo is
+///         not a
 ///         submodule here, so this file is maintained by hand and only declares the surface
 ///         `KpkSharesNav` actually calls.
 ///

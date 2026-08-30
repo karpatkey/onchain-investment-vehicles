@@ -61,10 +61,12 @@ contract kpkSharesNavForkTest is Test {
 
     /// @notice The NAV scan still fits in a sane fraction of a block.
     /// @dev This is a trend alarm, not a correctness test. `getAccountNav` is a full adapter scan
-    ///      whose cost grows every time upstream registers a new balance adapter — with no change to
-    ///      this repo. It moved ~30% in a single day on 2026-08-28 when a rewards adapter was
-    ///      registered, and nothing here noticed. Because the fund is fail-closed, a scan that
-    ///      eventually exceeds the block limit does not misprice, it HALTS settlement permanently.
+    ///      whose cost moves every time upstream registers a new balance adapter — with no change to
+    ///      this repo, and with nothing here to notice it. Individual registrations have been cheap
+    ///      so far: the rewards adapter added on 2026-08-28 cost +0.12% (CI brackets it at
+    ///      14,802,176 -> 14,820,545 gas). This alarm exists for the accumulation, not for any one
+    ///      of them. Because the fund is fail-closed, a scan that eventually exceeds the block limit
+    ///      does not misprice, it HALTS settlement permanently.
     ///
     ///      Asserted as a fraction of `block.gaslimit` rather than an absolute number, because the
     ///      absolute number is upstream's to move and a hardcoded one would only rot. The account is
