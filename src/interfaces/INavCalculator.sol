@@ -6,9 +6,15 @@ pragma solidity ^0.8;
 /// @notice Minimal consumer-side mirror of karpatkey's `NAVCalculator`, the on-chain net-asset-value
 ///         oracle from https://github.com/karpatkey/onchain-accounting.
 /// @dev    MIRRORED SOURCE — `src/nav/INAVCalculator.sol` @ commit
-///         `a0366f85221dfd798d764b3d0f5725b1682ab510` (2026-08-29; re-checked against this commit,
-///         which is two ops-only commits past the `d290a042` this file was first written against —
-///         the `NAV` and `PriceFeedData` structs and every mirrored signature are unchanged). The
+///         `ab824675c8c38baf0d6407ecdc978ebe4e390db2` (2026-08-30). Re-verified against this commit:
+///         the `NAV` and `PriceFeedData` structs and every mirrored signature are byte-identical to
+///         the `d290a042` this file was first written against — upstream's commits since have been
+///         ops and config only.
+///
+///         Upstream moves faster than this pin. Between 2026-08-28 and 2026-08-30 it advanced twice
+///         and, more importantly, REGISTERED A NEW BALANCE ADAPTER — which changed nothing about this
+///         interface but raised the cost of `getAccountNav` by roughly 30% overnight. Treat a stale
+///         pin as a prompt to re-check gas as well as shape; the fork test asserts both. The
 ///         accounting repo is not a
 ///         submodule here, so this file is maintained by hand and only declares the surface
 ///         `KpkSharesNav` actually calls.

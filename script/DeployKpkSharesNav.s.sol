@@ -65,6 +65,13 @@ contract DeployKpkSharesNav is Script {
     /// @notice The USD scale this fund's arithmetic assumes of the NAV calculator
     uint8 private constant EXPECTED_USD_DECIMALS = 8;
 
+    /// @notice The abandoned NAV proxy, refused before a deployment can point at it
+    /// @dev Superseded 2026-08-18. It still has code and still reports 8-decimal USD, so every other
+    ///      check here passes for it — only naming it catches the mistake. The accounting repo's
+    ///      older docs still list it as canonical, which is precisely how it gets copied into a
+    ///      config.
+    address private constant SUPERSEDED_NAV_CALCULATOR = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
+
     /// @notice Deploys one vault from the JSON configuration
     /// @param vaultName Name of the vault to deploy; must be non-empty
     function run(string memory vaultName) external returns (address proxy) {
@@ -171,12 +178,30 @@ contract DeployKpkSharesNav is Script {
 
         require(params.navCalculator.code.length > 0, "navCalculator is not a contract");
         require(
+            params.navCalculator != SUPERSEDED_NAV_CALCULATOR,
+            "navCalculator is the superseded proxy - use 0x54EaD2A1dB7456cA917675Ea8908ec8A997c6214"
+        );
+        require(
             INavCalculator(params.navCalculator).usdDecimals() == EXPECTED_USD_DECIMALS,
             "navCalculator does not report 8-decimal USD"
         );
         require(
             INavCalculator(params.navCalculator).isAssetRegistered(params.asset),
             "base asset is not registered in the NAV calculator"
+        );
+
+        // Drift probe, on the DEPLOYMENT chain at deployment time. The CI fork test runs this same
+        // assertion, but only against mainnet and only when someone pushes — neither of which covers
+        // the chain you are about to deploy to, at the moment you deploy. An appended field decodes
+        // silently and would leave a new health signal ungated, so compare the raw response against a
+        // canonical re-encode of the nine fields this repo mirrors.
+        (bool ok, bytes memory raw) =
+            params.navCalculator.staticcall(abi.encodeCall(INavCalculator.getAccountNav, (params.safe, address(0))));
+        require(ok, "getAccountNav reverted for the portfolio safe on this chain");
+        INavCalculator.NAV memory nav = abi.decode(raw, (INavCalculator.NAV));
+        require(
+            raw.length == abi.encode(nav).length,
+            "NAV struct drifted: src/interfaces/INavCalculator.sol does not match this chain's proxy"
         );
     }
 

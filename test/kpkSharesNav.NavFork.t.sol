@@ -59,6 +59,38 @@ contract kpkSharesNavForkTest is Test {
         );
     }
 
+    /// @notice The NAV scan still fits in a sane fraction of a block.
+    /// @dev This is a trend alarm, not a correctness test. `getAccountNav` is a full adapter scan
+    ///      whose cost grows every time upstream registers a new balance adapter — with no change to
+    ///      this repo. It moved ~30% in a single day on 2026-08-28 when a rewards adapter was
+    ///      registered, and nothing here noticed. Because the fund is fail-closed, a scan that
+    ///      eventually exceeds the block limit does not misprice, it HALTS settlement permanently.
+    ///
+    ///      Asserted as a fraction of `block.gaslimit` rather than an absolute number, because the
+    ///      absolute number is upstream's to move and a hardcoded one would only rot. The account is
+    ///      one with no positions, so this is a floor: a real portfolio costs strictly more.
+    function testNavScanFitsInABlock() public {
+        if (!_fork()) {
+            console.log("MAINNET_URL unset - skipping NAV gas headroom check");
+            return;
+        }
+
+        uint256 before = gasleft();
+        (bool ok,) =
+            NAV_CALCULATOR.staticcall(abi.encodeCall(INavCalculator.getAccountNav, (address(this), address(0))));
+        uint256 used = before - gasleft();
+        require(ok, "getAccountNav reverted on the live proxy");
+
+        console.log("getAccountNav gas (empty account):", used);
+        console.log("block gas limit:", block.gaslimit);
+
+        assertLt(
+            used,
+            block.gaslimit / 3,
+            "NAV scan exceeds a third of a block for an EMPTY account - settlement headroom is gone"
+        );
+    }
+
     /// @notice The USD scale this contract's arithmetic assumes still holds
     function testUsdDecimalsIsEight() public {
         if (!_fork()) {

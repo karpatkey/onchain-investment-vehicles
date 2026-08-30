@@ -145,6 +145,81 @@ contract kpkSharesNavGuardsTest is kpkSharesNavTestBase {
         assertEq(fund.subscriptionAssets(address(weth)), 1e18, "books untouched");
     }
 
+    /// @notice Delisting removes the RIGHT asset from the enumerable list.
+    /// @dev `_shadowAsset` swaps the target with the last element before popping. Mutation testing
+    ///      showed that popping without the swap left the whole suite green: the map entry for the
+    ///      intended asset is deleted either way, so counts and `isApprovedAsset` still look right —
+    ///      but the list would silently lose a DIFFERENT, still-listed asset, desyncing
+    ///      `getApprovedAssets()` from `_approvedAssetsMap`. That list is what `setNavCalculator`
+    ///      iterates, so a stale entry would validate a NAV against an asset the fund no longer
+    ///      lists, and a dropped one would skip an asset it does. Asserted by address, not count.
+    function testDelistingRemovesTheCorrectAssetFromTheList() public {
+        Mock_ERC20 weth = new Mock_ERC20("WETH", 18);
+        Mock_ERC20 wbtc = new Mock_ERC20("WBTC", 8);
+        nav.registerAsset(address(weth), 18, int256(4_000 * 1e8), 8);
+        nav.registerAsset(address(wbtc), 8, int256(60_000 * 1e8), 8);
+
+        vm.prank(ops);
+        fund.updateAsset(address(weth), true, true);
+        vm.prank(ops);
+        fund.updateAsset(address(wbtc), true, true);
+
+        // [usdc, weth, wbtc] — delist the MIDDLE one, so a bare pop would drop wbtc instead
+        assertEq(fund.getApprovedAssets().length, 3);
+        vm.prank(ops);
+        fund.updateAsset(address(weth), false, false);
+
+        address[] memory remaining = fund.getApprovedAssets();
+        assertEq(remaining.length, 2, "one asset removed");
+
+        bool sawUsdc;
+        bool sawWbtc;
+        for (uint256 i; i < remaining.length; i++) {
+            if (remaining[i] == address(usdc)) sawUsdc = true;
+            if (remaining[i] == address(wbtc)) sawWbtc = true;
+            assertTrue(remaining[i] != address(weth), "the delisted asset is gone");
+        }
+        assertTrue(sawUsdc, "usdc survived");
+        assertTrue(sawWbtc, "wbtc survived - a bare pop would have dropped it");
+    }
+
+    /// @notice Recorded subscription escrow ALONE blocks delisting, with no pending-request help.
+    /// @dev Delisting clears the map entry, which the conversion paths and `_assetRecoverableAmount`
+    ///      both read — so escrowed assets would become unsettleable and unrecoverable. The guard had
+    ///      no binding test: a real pending subscription raises `_pendingRequestsCount` too, and that
+    ///      separate guard reverts first, so deleting this one changed nothing observable. Planting
+    ///      the escrow figure directly (slot 55, verified via `forge inspect`) with nothing pending
+    ///      is what isolates it.
+    function testEscrowAloneBlocksDelisting() public {
+        Mock_ERC20 weth = new Mock_ERC20("WETH", 18);
+        nav.registerAsset(address(weth), 18, int256(4_000 * 1e8), 8);
+        vm.prank(ops);
+        fund.updateAsset(address(weth), true, true);
+
+        // Escrow recorded, but no request pending — only the escrow guard can refuse
+        vm.store(address(fund), keccak256(abi.encode(address(weth), uint256(55))), bytes32(uint256(1e18)));
+        assertEq(fund.subscriptionAssets(address(weth)), 1e18, "escrow recorded");
+
+        vm.prank(ops);
+        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
+        fund.updateAsset(address(weth), false, false);
+
+        // And with the escrow cleared, the same delist succeeds — the guard is not over-broad
+        vm.store(address(fund), keccak256(abi.encode(address(weth), uint256(55))), bytes32(uint256(0)));
+        vm.prank(ops);
+        fund.updateAsset(address(weth), false, false);
+        assertFalse(fund.isApprovedAsset(address(weth)), "delist succeeds once escrow is zero");
+    }
+
+    /// @notice The fund advertises its own interface via ERC-165.
+    /// @dev Mutation testing showed `supportsInterface` could return the wrong id with every test
+    ///      still green — integrators that feature-detect would silently see the wrong contract.
+    function testSupportsItsOwnInterface() public view {
+        assertTrue(fund.supportsInterface(type(IKpkSharesNav).interfaceId), "own interface");
+        assertTrue(fund.supportsInterface(0x01ffc9a7), "ERC-165 itself");
+        assertFalse(fund.supportsInterface(0xdeadbeef), "and not an arbitrary id");
+    }
+
     /// @notice Recorded subscription escrow alone blocks a sweep, with no pending-request help.
     /// @dev The two guards in `_assetRecoverableAmount` were only ever exercised together, so
     ///      neutering the escrow one left every test green. Here the request is settled — which

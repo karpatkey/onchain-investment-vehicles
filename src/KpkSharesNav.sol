@@ -92,6 +92,14 @@ contract KpkSharesNav is
     ///      many decimals, which is what lets them be divided against each other directly.
     uint8 private constant _EXPECTED_USD_DECIMALS = 8;
 
+    /// @notice The abandoned NAV calculator proxy, refused outright
+    /// @dev Superseded on 2026-08-18 and identical on every chain it was deployed to. It still
+    ///      answers, which is exactly the problem: a fund pointed at it prices against a stack that
+    ///      no longer receives new assets or feeds, and drifts from its true NAV with nothing
+    ///      reverting. The repo's own docs and the stale local clone of the accounting repo both
+    ///      still name it, so a misconfiguration here is a likely mistake rather than an exotic one.
+    address private constant _SUPERSEDED_NAV_CALCULATOR = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
+
     uint256 private constant _PRECISION_BPS = 10_000;
 
     /// @notice Maximum time-to-live for requests (7 days)
@@ -645,9 +653,13 @@ contract KpkSharesNav is
 
     /// @inheritdoc IKpkSharesNav
     function setPerformanceFeeModule(address newPerfFeeModule) external isAdmin {
-        // address(0) disables performance fees, but only once the rate is zero too — otherwise the
-        // pairing enforced at initialization could be walked back into in two admin calls.
-        if (newPerfFeeModule == address(0) && performanceFeeRate > 0) revert InvalidArguments();
+        // ANY module change requires the rate to be zero first — not just clearing it to address(0).
+        // A module holds the fee's accrued state (a high-water mark, in the module this fund ships
+        // with), and that state does not travel: swap a module while the rate is live and the
+        // replacement starts from nothing, seeding a fresh baseline on its next call and silently
+        // forgiving everything owed since the last crystallization. Requiring rate == 0 forces the
+        // migration through `setPerformanceFeeRate(0)`, which settles against the OLD module first.
+        if (performanceFeeRate > 0) revert InvalidArguments();
         _setPerformanceFeeModule(newPerfFeeModule);
     }
 
@@ -801,6 +813,13 @@ contract KpkSharesNav is
     ///      `_authorizeUpgrade` and can replace this logic wholesale.
     function _validateNavCalculator(address candidate) internal view {
         if (candidate == address(0) || candidate.code.length == 0) revert InvalidNavCalculator();
+
+        // The superseded NAV proxy passes every other check here — it still has code, still answers
+        // `usdDecimals()` with 8, and still knows the assets it knew before — while quietly serving a
+        // NAV that no longer tracks the funds, because new assets and feeds land only on the current
+        // stack. So the checks below cannot catch it and only an explicit refusal can. Same spirit as
+        // `OivInfraConstants`' legacy-factory entry: this address is a blocklist, not a record.
+        if (candidate == _SUPERSEDED_NAV_CALCULATOR) revert InvalidNavCalculator();
 
         try INavCalculator(candidate).usdDecimals() returns (uint8 usdDecimals) {
             if (usdDecimals != _EXPECTED_USD_DECIMALS) revert InvalidNavCalculator();

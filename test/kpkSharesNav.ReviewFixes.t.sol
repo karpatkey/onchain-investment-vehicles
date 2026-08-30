@@ -7,6 +7,7 @@ import {KpkSharesNav} from "../src/KpkSharesNav.sol";
 import {Mock_ERC20} from "./mocks/tokens.sol";
 import {MockNavCalculator} from "./mocks/MockNavCalculator.sol";
 import {Mock_HookERC20} from "./mocks/HookERC20.sol";
+import {WatermarkFee} from "../src/FeeModules/WatermarkFee.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 /// @title kpkSharesNavReviewFixesTest
@@ -317,6 +318,54 @@ contract kpkSharesNavReviewFixesTest is kpkSharesNavTestBase {
         fund.setPerformanceFeeModule(address(0));
 
         assertEq(fund.performanceFeeModule(), address(0));
+    }
+
+    /// @notice The superseded NAV proxy is refused even though it passes every other check.
+    /// @dev It still has code and still reports 8-decimal USD, so `_validateNavCalculator`'s other
+    ///      gates all pass for it — while it serves a NAV that no longer tracks the funds, because
+    ///      new assets and feeds land only on the current stack. Nothing reverts; the fund just
+    ///      drifts. Only naming the address catches it, and the accounting repo's older docs still
+    ///      list it as canonical, which is exactly how it ends up copied into a config.
+    function testSupersededNavCalculatorIsRefused() public {
+        address superseded = 0x80eD5cc6cEbAe4fEE1eD8687279aa492A50afa8d;
+        // Give it code and the right answers, so only the blocklist can reject it
+        MockNavCalculator impostor = new MockNavCalculator();
+        impostor.registerAsset(address(usdc), 6, int256(ONE_USD), 8);
+        vm.etch(superseded, address(impostor).code);
+
+        vm.prank(admin);
+        vm.expectRevert(IKpkSharesNav.InvalidNavCalculator.selector);
+        fund.setNavCalculator(superseded);
+    }
+
+    /// @notice Swapping the fee module while a rate is live is refused.
+    /// @dev A module holds the fee's accrued state, and that state does not travel with a swap: the
+    ///      replacement starts from nothing and silently forgives everything owed since the last
+    ///      crystallization. Requiring the rate to be zero first forces the migration through
+    ///      `setPerformanceFeeRate(0)`, which settles against the OLD module.
+    function testCannotSwapFeeModuleWhileRateIsLive() public {
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(2000);
+
+        address replacement = address(new WatermarkFee());
+        vm.prank(admin);
+        vm.expectRevert(IKpkSharesNav.InvalidArguments.selector);
+        fund.setPerformanceFeeModule(replacement);
+    }
+
+    /// @notice The migration path still works once the rate is settled to zero.
+    /// @dev The other direction: the guard must not make a legitimate module swap impossible.
+    function testFeeModuleCanBeSwappedAfterZeroingTheRate() public {
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(2000);
+
+        address replacement = address(new WatermarkFee());
+        vm.prank(admin);
+        fund.setPerformanceFeeRate(0);
+        vm.prank(admin);
+        fund.setPerformanceFeeModule(replacement);
+
+        assertEq(fund.performanceFeeModule(), replacement, "swap succeeds once nothing is accrued");
     }
 
     function testInitializeRejectsPerformanceRateWithoutModule() public {
