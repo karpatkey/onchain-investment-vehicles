@@ -7,6 +7,8 @@ import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {IKpkSharesNav} from "src/IKpkSharesNav.sol";
 import {KpkSharesNav} from "src/KpkSharesNav.sol";
 import {KpkSharesNavFactory} from "src/KpkSharesNavFactory.sol";
+import {DeployKpkSharesNavFactory} from "script/DeployKpkSharesNavFactory.s.sol";
+import {DeployOiv} from "script/DeployOiv.s.sol";
 import {MockNavCalculator} from "test/mocks/MockNavCalculator.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 
@@ -265,6 +267,78 @@ contract KpkSharesNavFactoryTest is OivTestConstants {
 
         assertEq(inst.navImpl, navImpl, "the deployed fund's recorded implementation changed");
         assertEq(KpkSharesNav(inst.navProxy).portfolioSafe(), inst.avatarSafe, "existing fund disturbed");
+    }
+
+    // ── The deploy script ──────────────────────────────────────────────────────
+
+    /// @notice The script deploys an implementation and a wired, owned factory.
+    function test_deployScript_deploysAndWiresTheFactory() public {
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+        (address impl, address deployed) = script.run(navFactoryOwner, address(oivFactory), address(0));
+
+        assertTrue(impl.code.length > 0, "implementation has no code");
+        KpkSharesNavFactory built = KpkSharesNavFactory(deployed);
+        assertEq(address(built.oivFactory()), address(oivFactory), "oivFactory not wired");
+        assertEq(built.navImplementation(), impl, "implementation not set");
+        assertEq(built.owner(), navFactoryOwner, "ownership not assigned");
+
+        // And the result is actually usable, which is the only claim that matters.
+        vm.prank(navFactoryOwner);
+        KpkSharesNavFactory.NavFundInstance memory inst = built.deployNavFund(_config(200));
+        assertTrue(inst.navProxy != address(0), "the deployed factory cannot mint a fund");
+    }
+
+    /// @notice Passing an existing implementation reuses it instead of deploying another.
+    function test_deployScript_reusesAnExistingImplementation() public {
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+        (address impl,) = script.run(navFactoryOwner, address(oivFactory), navImpl);
+
+        assertEq(impl, navImpl, "a fresh implementation was deployed instead of reusing");
+    }
+
+    /// @notice The default path resolves to the canonical factory — and it is live on mainnet.
+    /// @dev Also a standing check that `DeployOiv.FACTORY` still has code on the chain this runs
+    ///      against, which is what makes the zero-argument form safe to use in production.
+    function test_deployScript_defaultsToTheCanonicalFactory() public {
+        address canonical = new DeployOiv().FACTORY();
+        assertTrue(canonical.code.length > 0, "canonical KpkOivFactory has no code on this fork");
+
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+        (, address deployed) = script.run(navFactoryOwner);
+
+        assertEq(address(KpkSharesNavFactory(deployed).oivFactory()), canonical, "did not use the canonical factory");
+    }
+
+    /// @notice The owner must not be the broadcasting key.
+    /// @dev The owner can point every FUTURE fund at an implementation of its choosing. Leaving that
+    ///      on a hot deploy key fails silently — nothing reverts, and it only shows up in the next
+    ///      fund minted.
+    function test_deployScript_rejectsTheDeployingKeyAsOwner() public {
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+
+        // `msg.sender` inside the script is this test contract, so passing it is the rejected case.
+        vm.expectRevert(bytes("factoryOwner must not be the broadcasting key"));
+        script.run(address(this), address(oivFactory), address(0));
+    }
+
+    /// @notice The pre-v2.1.1 factory is refused by address.
+    /// @dev It has code and answers every other probe exactly like the good one, so only naming it
+    ///      catches the mistake. Given code here so the check under test is the blocklist rather
+    ///      than the code-length check that would otherwise fire first.
+    function test_deployScript_rejectsTheLegacyFactory() public {
+        address legacy = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
+        vm.etch(legacy, address(oivFactory).code);
+
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+        vm.expectRevert(bytes("oivFactory is the legacy pre-v2.1.1 factory"));
+        script.run(navFactoryOwner, legacy, address(0));
+    }
+
+    function test_deployScript_rejectsAFactoryWithNoCode() public {
+        DeployKpkSharesNavFactory script = new DeployKpkSharesNavFactory();
+
+        vm.expectRevert(bytes("oivFactory is not a contract on this chain"));
+        script.run(navFactoryOwner, makeAddr("notAFactory"), address(0));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
