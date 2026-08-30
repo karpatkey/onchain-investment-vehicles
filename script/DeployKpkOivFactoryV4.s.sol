@@ -132,20 +132,41 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
 
         KpkOivFactoryV4 f = KpkOivFactoryV4(factory);
 
-        if (f.kpkSharesDeployer() != sharesDeployer) {
+        // Every wiring step below is three-way idempotent — do it / already done / unexpected, the
+        // last one refusing loudly. Re-running this script is a NORMAL operational act during a
+        // 19-chain rollout (a retry after a dropped or reverted transaction), and under
+        // `forge script` each call is its own broadcast TRANSACTION. So a step that is merely
+        // "unconditional plus an onlyOwner call" does not fail atomically on a rerun: the earlier
+        // transactions land and only the owner-gated one reverts, leaving debris behind.
+        if (f.kpkSharesDeployer() == address(0)) {
             f.setKpkSharesDeployer(sharesDeployer);
             console.log("[OK]   kpkSharesDeployer wired");
-        } else {
+        } else if (f.kpkSharesDeployer() == sharesDeployer) {
             console.log("[SKIP] kpkSharesDeployer already wired");
+        } else {
+            revert("kpkSharesDeployer is set to an unexpected address");
         }
 
-        // Plain CREATE — see the header on why this one is not address-deterministic.
-        navImplementation = address(new KpkSharesNav());
-        f.setNavImplementation(navImplementation);
-        console.log("[OK]   KpkSharesNav implementation:  ", navImplementation);
+        // Reuse the configured implementation if there is one. Deploying unconditionally would, on a
+        // rerun after ownership handover, broadcast a fresh implementation (which LANDS, and is then
+        // orphaned) before `setNavImplementation` reverts as a non-owner. Plain CREATE — see the
+        // header on why this one is not address-deterministic.
+        navImplementation = f.navImplementation();
+        if (navImplementation == address(0)) {
+            navImplementation = address(new KpkSharesNav());
+            f.setNavImplementation(navImplementation);
+            console.log("[OK]   KpkSharesNav implementation:  ", navImplementation);
+        } else {
+            console.log("[SKIP] KpkSharesNav implementation already set:", navImplementation);
+        }
 
-        if (f.owner() != finalOwner) {
+        if (f.owner() == eoaOwner) {
             f.transferOwnership(finalOwner);
+            console.log("[OK]   ownership transferred");
+        } else if (f.owner() == finalOwner) {
+            console.log("[SKIP] already owned by the final owner");
+        } else {
+            revert("factory.owner is unexpected; refusing to hand off");
         }
 
         vm.stopBroadcast();

@@ -9,6 +9,7 @@ import {IKpkSharesNav} from "src/IKpkSharesNav.sol";
 import {KpkSharesNav} from "src/KpkSharesNav.sol";
 import {MockNavCalculator} from "test/mocks/MockNavCalculator.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
+import {ISafe} from "src/interfaces/ISafe.sol";
 import {DeployKpkOivFactoryV4} from "script/DeployKpkOivFactoryV4.s.sol";
 import {DeployOiv} from "script/DeployOiv.s.sol";
 
@@ -305,6 +306,165 @@ contract KpkOivFactoryV4Test is OivTestConstants {
 
         vm.expectRevert(bytes("finalOwner must not be the deploying key"));
         script.run(address(this), address(this));
+    }
+
+    // ── Round-6 invariant pins ─────────────────────────────────────────────────
+
+    /// @notice Reusing one salt across two entry points REVERTS rather than aliasing a Safe.
+    /// @dev The five stack addresses derive from `_deriveSalts(config.salt, msg.sender)` with the
+    ///      same component indices 0-4 for ALL THREE entry points, so the same `(caller, salt)`
+    ///      targets the SAME Avatar Safe regardless of which entry point asks for it. The only thing
+    ///      standing between that and a NAV fund silently adopting an existing KpkShares fund's
+    ///      Avatar Safe — pricing itself off someone else's book and minting against it — is that
+    ///      the Zodiac `ModuleProxyFactory` reverts `TakenAddress` on an occupied address.
+    ///
+    ///      That guarantee lives in third-party deployed bytecode and is asserted NOWHERE in this
+    ///      repo; the factory codehash-checks `EMPTY_CONTRACT` and the MultiSends but not the module
+    ///      or Safe proxy factories. In V3 this was unreachable — there was one fund-minting entry
+    ///      point. V4 makes it reachable, so it is pinned here. If a target chain ever hosts a
+    ///      module factory that overwrites instead of reverting, this test is what fails.
+    ///
+    ///      A bare `expectRevert` on purpose: the revert comes from external bytecode whose exact
+    ///      error may differ by chain and version, and pinning the selector would make this test
+    ///      fail for the wrong reason on a chain that still behaves correctly.
+    function test_sameSaltAcrossEntryPointsReverts() public {
+        factory.deployOiv(_oivConfig(777));
+        vm.expectRevert();
+        factory.deployNavFund(_navConfig(777));
+    }
+
+    function test_sameSaltAcrossEntryPointsRevertsInTheOtherOrder() public {
+        factory.deployNavFund(_navConfig(888));
+        vm.expectRevert();
+        factory.deployOiv(_oivConfig(888));
+    }
+
+    function test_sameSaltAfterDeployStackReverts() public {
+        address[] memory owners = new address[](1);
+        owners[0] = managerSigner;
+        factory.deployStack(
+            KpkOivFactoryV4.StackConfig({
+                managerSafe: KpkOivFactoryV4.SafeConfig({owners: owners, threshold: 1}),
+                execRolesMod: KpkOivFactoryV4.RolesModifierConfig({finalOwner: admin}),
+                subRolesMod: KpkOivFactoryV4.RolesModifierConfig({finalOwner: address(0)}),
+                managerRolesMod: KpkOivFactoryV4.RolesModifierConfig({finalOwner: address(0)}),
+                salt: 999
+            })
+        );
+        vm.expectRevert();
+        factory.deployNavFund(_navConfig(999));
+    }
+
+    /// @notice `canDeposit` and `canRedeem` are threaded INDEPENDENTLY, and only redeemables get an
+    ///         allowance.
+    /// @dev The existing listing test used `canDeposit = canRedeem = true` and asserted only
+    ///      `canRedeem`, so swapping the two adjacent bools at the `updateAsset` call site would
+    ///      compile, deploy, and pass the whole suite while shipping funds with inverted permissions.
+    ///      Asymmetric flags are what make the assertion bind. The allowance check pins the other
+    ///      half: `_grantApprovals` deliberately approves only assets marked redeemable.
+    function test_assetFlagsAreThreadedIndependently() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(41);
+        cfg.additionalAssets[0].canDeposit = true;
+        cfg.additionalAssets[0].canRedeem = false;
+
+        KpkOivFactoryV4.NavFundInstance memory inst = factory.deployNavFund(cfg);
+        IKpkSharesNav.ApprovedAsset memory dai = KpkSharesNav(inst.navProxy).getApprovedAsset(DAI);
+
+        assertTrue(dai.canDeposit, "canDeposit should be true");
+        assertFalse(dai.canRedeem, "canRedeem should be false - the two flags may be swapped");
+        assertEq(
+            IERC20(DAI).allowance(inst.avatarSafe, inst.navProxy), 0, "a non-redeemable asset must not be approved"
+        );
+    }
+
+    /// @notice A fund can never be deployed holding an asset the NAV calculator cannot price.
+    function test_deployNavFund_revertsWhenTheBaseAssetIsNotRegistered() public {
+        nav.unregisterAsset(USDC);
+        vm.expectRevert();
+        factory.deployNavFund(_navConfig(42));
+    }
+
+    function test_deployNavFund_revertsWhenAnAdditionalAssetIsNotRegistered() public {
+        nav.unregisterAsset(DAI);
+        vm.expectRevert();
+        factory.deployNavFund(_navConfig(43));
+    }
+
+    /// @notice The factory must not remain an enabled module on the Avatar Safe.
+    /// @dev The module window is the only interval in which the factory can execute as the Safe. If
+    ///      it ever survived the call, the factory — permissionless, and able to run caller-supplied
+    ///      calculator code — would be a standing backdoor into a live fund's assets.
+    function test_factoryIsNotAModuleAfterDeployNavFund() public {
+        KpkOivFactoryV4.NavFundInstance memory inst = factory.deployNavFund(_navConfig(44));
+        assertFalse(
+            ISafe(inst.avatarSafe).isModuleEnabled(address(factory)), "factory is still an enabled Avatar Safe module"
+        );
+    }
+
+    /// @notice End to end: money actually moves, using the allowance the factory granted.
+    /// @dev This is the test that proves why V4 exists rather than the standalone factory it
+    ///      replaced. That one could not grant the Avatar Safe's approvals, so a redemption reverted
+    ///      on payout until somebody sent a manual Roles-routed transaction. Asserting the allowance
+    ///      VALUE (as the other test does) only shows a number in a mapping; this asserts a redeemer
+    ///      is actually paid out of the Safe through it.
+    function test_endToEnd_subscribeThenRedeemThroughFactoryGrantedApprovals() public {
+        KpkOivFactoryV4.NavFundInstance memory inst = factory.deployNavFund(_navConfig(45));
+        KpkSharesNav fund = KpkSharesNav(inst.navProxy);
+
+        // Price the fund off the Avatar Safe's real USDC balance, so settlement is not measured
+        // against a static number that would make the assertions vacuous.
+        nav.setNavAccount(inst.avatarSafe);
+        nav.trackBalance(USDC, 1e2); // 6-decimal USDC -> 8-decimal USD
+
+        address investor = makeAddr("investor");
+        deal(USDC, investor, 1_000e6);
+        vm.prank(investor);
+        IERC20(USDC).approve(address(fund), type(uint256).max);
+
+        vm.prank(investor);
+        uint256 subId = fund.requestSubscription(1_000e6, 1, USDC, investor);
+
+        uint256[] memory approveIds = new uint256[](1);
+        approveIds[0] = subId;
+        uint256[] memory none = new uint256[](0);
+
+        vm.prank(inst.managerSafe);
+        fund.processRequests(approveIds, none, USDC);
+
+        assertGt(fund.balanceOf(investor), 0, "no shares minted");
+        assertEq(IERC20(USDC).balanceOf(inst.avatarSafe), 1_000e6, "deposit did not reach the Avatar Safe");
+
+        // Redeem. The payout pulls from the Avatar Safe via the allowance the FACTORY granted.
+        uint256 shares = fund.balanceOf(investor);
+        vm.prank(investor);
+        uint256 redId = fund.requestRedemption(shares, 1, USDC, investor);
+
+        approveIds[0] = redId;
+        vm.prank(inst.managerSafe);
+        fund.processRequests(approveIds, none, USDC);
+
+        assertEq(IERC20(USDC).balanceOf(investor), 1_000e6, "redeemer was not paid out of the Avatar Safe");
+        assertEq(fund.balanceOf(investor), 0, "shares not burned");
+    }
+
+    /// @notice Re-running the deploy script after ownership handover is a clean no-op.
+    /// @dev Under `forge script` each call is its own broadcast TRANSACTION, so an unconditional
+    ///      `new KpkSharesNav()` followed by an owner-only `setNavImplementation` does not fail
+    ///      atomically: the implementation deploy LANDS and only the setter reverts, leaving an
+    ///      orphan contract and burnt gas. Re-running is a normal operational act during a 19-chain
+    ///      rollout — a retry after a dropped transaction — and the script's own `[SKIP]` branches
+    ///      advertise idempotency it did not actually have.
+    function test_deployScript_isIdempotentOnRerun() public {
+        DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
+        address finalOwner = makeAddr("v4RerunOwner");
+
+        (address f1, address d1, address impl1) = script.run(address(this), finalOwner);
+        (address f2, address d2, address impl2) = script.run(address(this), finalOwner);
+
+        assertEq(f2, f1, "factory address changed on rerun");
+        assertEq(d2, d1, "shares deployer address changed on rerun");
+        assertEq(impl2, impl1, "rerun deployed a second implementation instead of reusing the configured one");
+        assertEq(KpkOivFactoryV4(f1).owner(), finalOwner, "ownership disturbed by the rerun");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
