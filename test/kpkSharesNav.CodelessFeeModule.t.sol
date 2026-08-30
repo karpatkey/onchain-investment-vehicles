@@ -24,6 +24,11 @@ import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 ///      Two layers, tested separately because they fail in different places. The setter refuses to
 ///      CREATE the state; `_chargePerformanceFee` tolerates the state ARISING anyway, which the
 ///      setter cannot prevent for a module that loses its code after being configured.
+///
+///      NOTE: the codeless case is the narrow one. A module that HAS code and returns fewer than 32
+///      bytes bricks the fund identically, passes both guards here, and is more reachable — that is
+///      what `kpkSharesNav.MalformedFeeModule.t.sol` covers, and why `_chargePerformanceFee` no
+///      longer relies on `try/catch` or on a code-length check to stay alive.
 contract kpkSharesNavCodelessFeeModuleTest is kpkSharesNavTestBase {
     address internal healthyModule;
 
@@ -86,8 +91,11 @@ contract kpkSharesNavCodelessFeeModuleTest is kpkSharesNavTestBase {
     }
 
     /// @notice A module that LOSES its code cannot halt settlement — the case the setter cannot catch.
-    /// @dev The setter validates at write time; nothing stops a module from being a proxy that is
-    ///      later pointed at nothing. `_chargePerformanceFee` must therefore check at call time too.
+    /// @dev The setter validates at write time and cannot bind later. `_chargePerformanceFee` is
+    ///      therefore written to survive ANY reply, using a low-level call: a call to a codeless
+    ///      address succeeds with zero return bytes, which it treats as a skipped fee. See
+    ///      `kpkSharesNav.MalformedFeeModule.t.sol` for the wider shape space, including the module
+    ///      that has code and still returns nothing.
     function testModuleThatLosesItsCodeCannotBrickTheFund() public {
         vm.etch(healthyModule, ""); // the module's code goes away underneath the fund
         vm.warp(vm.getBlockTimestamp() + 7 hours);

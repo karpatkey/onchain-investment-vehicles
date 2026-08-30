@@ -1141,28 +1141,42 @@ contract KpkSharesNav is
     ///      Skipped is not forgiven. A high-water-mark module keeps its mark across the failure, so
     ///      once a working module is in place the same gain is charged from where it left off.
     function _chargePerformanceFee(uint256 sharePriceUsd, uint256 timeElapsed) internal returns (uint256) {
-        // Covers BOTH "no module configured" and "the configured module has no code". The second is
-        // not reachable through the setter, but a module can be a proxy that is later pointed at
-        // nothing, and the `try` below cannot absorb it: a high-level call to a codeless address
-        // reverts on Solidity's `extcodesize` probe in THIS frame, before the call, so there is no
-        // callee revert for `catch` to see and the whole batch would go down with it.
-        if (performanceFeeModule.code.length == 0) return 0;
+        address module = performanceFeeModule;
+        if (module == address(0)) return 0;
 
-        uint256 feeReceiverBalance = balanceOf(feeReceiver);
-        uint256 netSupply = totalSupply() - feeReceiverBalance;
+        uint256 netSupply = totalSupply() - balanceOf(feeReceiver);
 
-        try IPerfFeeModule(performanceFeeModule)
-            .calculatePerformanceFee(sharePriceUsd, timeElapsed, performanceFeeRate, netSupply) returns (
-            uint256 performanceFee
-        ) {
-            if (performanceFee > 0) {
-                _mint(feeReceiver, performanceFee);
-            }
-            return performanceFee;
-        } catch {
-            emit PerformanceFeeSkipped(performanceFeeModule);
+        // A LOW-LEVEL call, deliberately, because `try/catch` cannot contain this callee. It absorbs
+        // a callee revert and nothing else, and two of the three ways a fee module fails are not
+        // callee reverts at all — they are reverts raised in THIS frame, around the call:
+        //   - a codeless callee reverts on Solidity's `extcodesize` probe, BEFORE the call;
+        //   - a callee returning fewer than 32 bytes reverts in the return-data decode, AFTER a call
+        //     that SUCCEEDED.
+        // Neither is a `catch`. Both take the whole batch down, and both are ordinary: an upgraded
+        // module that renames the selector falls through to a fallback returning nothing, and a proxy
+        // module pointed at a codeless implementation delegatecalls successfully and returns zero
+        // bytes while still reporting `code.length > 0` itself.
+        //
+        // So we make no assumption about the reply at all: any failure, and any answer too short to
+        // be a `uint256`, is a skipped fee rather than a halted fund. A fee is an accounting detail;
+        // no accounting detail may stop people getting their money.
+        (bool ok, bytes memory ret) = module.call(
+            abi.encodeCall(
+                IPerfFeeModule.calculatePerformanceFee, (sharePriceUsd, timeElapsed, performanceFeeRate, netSupply)
+            )
+        );
+        if (!ok || ret.length < 32) {
+            emit PerformanceFeeSkipped(module);
             return 0;
         }
+
+        // Skipped is not forgiven: a high-water-mark module keeps its mark across the failure, so a
+        // later working module charges the same gain from where it left off.
+        uint256 performanceFee = abi.decode(ret, (uint256));
+        if (performanceFee > 0) {
+            _mint(feeReceiver, performanceFee);
+        }
+        return performanceFee;
     }
 
     //
@@ -1346,11 +1360,11 @@ contract KpkSharesNav is
     /// @notice Set the performance fee module address
     /// @param newPerformanceFeeModule The new performance fee module address
     function _setPerformanceFeeModule(address newPerformanceFeeModule) internal {
-        // A nonzero address with no code satisfies every other check and still cannot be called;
-        // see `_chargePerformanceFee` for why `try/catch` does not save it. Configured alongside a
-        // live rate it is a brick: the rate cannot be zeroed, because zeroing settles through the
-        // module, so the module cannot be swapped. `address(0)` stays allowed — it is the supported
-        // way to REMOVE the module, and rejecting it would weld shut the escape hatch.
+        // Reject a nonzero address with no code. `_chargePerformanceFee` survives one anyway, so this
+        // is not what keeps the fund alive — it is here to fail a plainly wrong configuration loudly
+        // and immediately, rather than accepting it and silently never charging the fee the admin
+        // just asked for. `address(0)` stays allowed: it is the supported way to REMOVE the module,
+        // and rejecting it would weld shut the escape hatch next to the footgun.
         if (newPerformanceFeeModule != address(0) && newPerformanceFeeModule.code.length == 0) {
             revert InvalidArguments();
         }
