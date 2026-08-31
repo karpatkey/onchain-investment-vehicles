@@ -467,6 +467,94 @@ contract KpkOivFactoryV4Test is OivTestConstants {
         assertEq(KpkOivFactoryV4(f1).owner(), finalOwner, "ownership disturbed by the rerun");
     }
 
+    // ── `_validateNavFundConfig` negative paths ────────────────────────────────
+    //
+    // The NAV validator is a hand-written near-duplicate of `_validateOivConfig`, not a shared
+    // helper — deliberately, because sharing them would have meant editing the copied body and
+    // giving up the "frozen bytes + 4 hunks" property that makes this contract reviewable. The cost
+    // of that choice is that the two can drift, and until these tests existed NOTHING exercised the
+    // NAV copy's rejections: the repo's `DuplicateAsset` / `ZeroAddress` / `InvalidSharesParams`
+    // expectations all run against the frozen V3 contract and never construct a V4 at all.
+
+    function test_deployNavFund_revertsOnDuplicateAdditionalAssets() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(50);
+        cfg.additionalAssets = new KpkOivFactoryV4.AssetConfig[](2);
+        cfg.additionalAssets[0] = KpkOivFactoryV4.AssetConfig({asset: DAI, canDeposit: true, canRedeem: true});
+        cfg.additionalAssets[1] = KpkOivFactoryV4.AssetConfig({asset: DAI, canDeposit: true, canRedeem: true});
+
+        vm.expectRevert(KpkOivFactoryV4.DuplicateAsset.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    /// @dev Re-listing the base asset would overwrite its flags with whatever is passed here. Unlike
+    ///      the KpkShares path there is no `isFeeModuleAsset` field to make the mistake surface
+    ///      elsewhere, so a base asset silently re-listed with `canDeposit = false` would ship a
+    ///      fund nobody can subscribe to.
+    function test_deployNavFund_revertsWhenAnAdditionalAssetIsTheBaseAsset() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(51);
+        cfg.additionalAssets[0].asset = USDC;
+
+        vm.expectRevert(KpkOivFactoryV4.DuplicateAsset.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    function test_deployNavFund_revertsOnZeroAdditionalAsset() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(52);
+        cfg.additionalAssets[0].asset = address(0);
+
+        vm.expectRevert(KpkOivFactoryV4.ZeroAddress.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    function test_deployNavFund_revertsOnZeroBaseAsset() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(53);
+        cfg.sharesParams.asset = address(0);
+
+        vm.expectRevert(KpkOivFactoryV4.ZeroAddress.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    function test_deployNavFund_revertsOnUnsetFeeReceiver() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(54);
+        cfg.sharesParams.feeReceiver = address(0);
+
+        vm.expectRevert(KpkOivFactoryV4.InvalidSharesParams.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    function test_deployNavFund_revertsOnZeroTtl() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(55);
+        cfg.sharesParams.subscriptionRequestTtl = 0;
+
+        vm.expectRevert(KpkOivFactoryV4.InvalidSharesParams.selector);
+        factory.deployNavFund(cfg);
+    }
+
+    /// @notice A fund with NO additional assets — the most likely production shape — deploys and
+    ///         wires correctly.
+    /// @dev Every other test in this suite lists DAI, so `additionalAssets.length == 0` never ran.
+    ///      That branch skips the `grantRole(OPERATOR, this)` / `revokeRole(OPERATOR, this)` bracket
+    ///      in `_deployNavProxy` entirely, taking a different route through the `RoleHandoverFailed`
+    ///      backstop — the one where the factory never holds OPERATOR in the first place. Worth
+    ///      pinning precisely because it is the path a real deployment is most likely to take.
+    function test_deployNavFund_withNoAdditionalAssets() public {
+        KpkOivFactoryV4.NavFundConfig memory cfg = _navConfig(56);
+        cfg.additionalAssets = new KpkOivFactoryV4.AssetConfig[](0);
+
+        KpkOivFactoryV4.NavFundInstance memory inst = factory.deployNavFund(cfg);
+        KpkSharesNav fund = KpkSharesNav(inst.navProxy);
+
+        assertTrue(fund.hasRole(0x00, admin), "admin does not hold DEFAULT_ADMIN_ROLE");
+        assertTrue(fund.hasRole(fund.OPERATOR(), inst.managerSafe), "manager Safe does not hold OPERATOR");
+        assertFalse(fund.hasRole(fund.OPERATOR(), address(factory)), "factory retained OPERATOR");
+        assertFalse(fund.hasRole(0x00, address(factory)), "factory retained admin");
+        assertEq(
+            IERC20(USDC).allowance(inst.avatarSafe, inst.navProxy),
+            type(uint256).max,
+            "base asset allowance not granted"
+        );
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     function _navConfig(uint256 salt) internal view returns (KpkOivFactoryV4.NavFundConfig memory cfg) {

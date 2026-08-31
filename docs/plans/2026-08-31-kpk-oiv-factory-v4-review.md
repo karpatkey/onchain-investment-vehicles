@@ -94,6 +94,20 @@ from the Vigilo audit). All revert-probed against a deliberately broken subject:
 4. **Trusted factory owner.** `setNavImplementation` decides what every FUTURE NAV fund delegates to.
    The deploy script refuses `finalOwner == eoaOwner` so it cannot be left on a hot key.
 5. **Trusted NAV calculator** — adjudicated separately and unchanged.
+6. **No expected V4 address is pinned per chain.** The factory's CREATE2 address is a function of
+   the `eoaOwner` argument, and nothing asserts an expected address. Deploying one of the 19 chains
+   with a different key silently yields a *different* factory address there, and the script still
+   reports success — it logs the address, but nothing compares it. `FactoryAddressSync` pins the v3
+   stack this way; there is no v4 equivalent yet, and there cannot be until the intended owner is
+   fixed and a first deployment establishes the address. *Mitigation: after the first chain, record
+   the address and add a sync test before rolling out the remaining 18.*
+7. **The deploy script's `require`s are simulation-time, not chain-time.** Under
+   `forge script --broadcast` the whole `run()` body executes during simulation, before any
+   transaction is sent; `vm.stopBroadcast()` ends call recording rather than executing anything. The
+   post-conditions therefore catch a wiring or argument-order mistake in the script but prove nothing
+   about the chain afterwards. They are real post-conditions only in the fork test that calls `run()`
+   directly. An earlier version of the comment in that script claimed otherwise; corrected in place.
+   *Confirm a live rollout by reading the logged addresses back on-chain.*
 
 ## Termination
 

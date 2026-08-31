@@ -171,7 +171,16 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
 
         vm.stopBroadcast();
 
-        // Post-conditions. These run OUTSIDE the broadcast, against the deployed state.
+        // Post-conditions.
+        //
+        // CORRECTION: an earlier version of this comment claimed these "run OUTSIDE the broadcast,
+        // against the deployed state". That is wrong under `forge script --broadcast`. The whole
+        // `run()` body — these `require`s included — executes during SIMULATION, before any
+        // transaction is sent; `vm.stopBroadcast()` ends the recording of calls, it does not
+        // execute them. So these assert against simulated state, which catches an argument-order
+        // or wiring mistake in this script but does NOT prove anything about the chain afterwards.
+        // They are real post-conditions only in the fork test that calls `run()` directly.
+        // Confirm a live rollout by reading the logged addresses back on-chain.
         require(f.kpkSharesDeployer() == sharesDeployer, "kpkSharesDeployer not wired");
         require(f.navImplementation() == navImplementation, "navImplementation not set");
         require(f.owner() == finalOwner, "ownership not transferred");
