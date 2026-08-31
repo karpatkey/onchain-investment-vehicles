@@ -555,6 +555,35 @@ contract KpkOivFactoryV4Test is OivTestConstants {
         );
     }
 
+    /// @notice A rerun with the implementation unset but ownership already handed over refuses in
+    ///         SIMULATION rather than burning an implementation deploy on-chain.
+    /// @dev The state the first idempotency fix missed. Its three branches each guard on their own
+    ///      variable, but `setNavImplementation` is `onlyOwner`, so the implementation branch has a
+    ///      SECOND precondition it never checked. With `navImplementation == 0` and ownership
+    ///      already transferred, the script did exactly what that fix was written to prevent: under
+    ///      `forge script --broadcast` the three wiring calls are three nonce-ordered transactions,
+    ///      so `new KpkSharesNav()` lands as its own transaction (~4.9M gas, orphaned) and only the
+    ///      following setter reverts.
+    ///
+    ///      Reachable without anyone touching a setter by hand: cancelling a stuck transaction —
+    ///      replacing nonce N with a 0-value self-send — is an ordinary operator move during a
+    ///      19-chain rollout, and cancelling either the implementation deploy or the setter leaves
+    ///      exactly this state. Worse, it never self-heals: every subsequent rerun burns another
+    ///      orphan, and recovery needs a Safe transaction.
+    function test_deployScript_refusesRerunWhenImplementationIsUnsetAfterHandover() public {
+        DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
+        address finalOwner = makeAddr("v4StuckOwner");
+        (address deployed,,) = script.run(address(this), finalOwner);
+
+        // Slot 16 is `navImplementation` (forge inspect storage-layout). Simulates the cancelled
+        // transaction rather than a hand-called setter, which is the realistic route in.
+        vm.store(deployed, bytes32(uint256(16)), bytes32(0));
+        assertEq(KpkOivFactoryV4(deployed).navImplementation(), address(0), "precondition not established");
+
+        vm.expectRevert(bytes("navImplementation unset but ownership already handed over"));
+        script.run(address(this), finalOwner);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     function _navConfig(uint256 salt) internal view returns (KpkOivFactoryV4.NavFundConfig memory cfg) {

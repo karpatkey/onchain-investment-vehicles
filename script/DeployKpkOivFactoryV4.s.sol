@@ -132,8 +132,11 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
 
         KpkOivFactoryV4 f = KpkOivFactoryV4(factory);
 
-        // Every wiring step below is three-way idempotent — do it / already done / unexpected, the
-        // last one refusing loudly. Re-running this script is a NORMAL operational act during a
+        // Every wiring step below is idempotent. The deployer and ownership steps are three-way —
+        // do it / already done / unexpected, the last refusing loudly. The implementation step is
+        // only two-way (deploy one / accept whatever is already configured): there is no third arm
+        // available, because a plain-CREATE address cannot be predicted and so cannot be compared
+        // against an expected value the way the CREATE2 addresses can. Re-running this script is a NORMAL operational act during a
         // 19-chain rollout (a retry after a dropped or reverted transaction), and under
         // `forge script` each call is its own broadcast TRANSACTION. So a step that is merely
         // "unconditional plus an onlyOwner call" does not fail atomically on a rerun: the earlier
@@ -153,6 +156,15 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
         // header on why this one is not address-deterministic.
         navImplementation = f.navImplementation();
         if (navImplementation == address(0)) {
+            // The second precondition this branch needs and does not otherwise have.
+            // `setNavImplementation` is `onlyOwner`, so "no implementation yet" is not sufficient —
+            // ownership must also still be here. Without this, the state
+            // (navImplementation == 0, owner == finalOwner) reproduces the very bug the idempotency
+            // work was for: the deploy below LANDS as its own broadcast transaction and only the
+            // setter reverts. That state is reachable by CANCELLING a stuck transaction, an ordinary
+            // operator move, and it never self-heals — each rerun burns another orphan.
+            // Refuse in simulation instead, before anything is broadcast.
+            require(f.owner() == eoaOwner, "navImplementation unset but ownership already handed over");
             navImplementation = address(new KpkSharesNav());
             f.setNavImplementation(navImplementation);
             console.log("[OK]   KpkSharesNav implementation:  ", navImplementation);
@@ -182,7 +194,11 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
         // They are real post-conditions only in the fork test that calls `run()` directly.
         // Confirm a live rollout by reading the logged addresses back on-chain.
         require(f.kpkSharesDeployer() == sharesDeployer, "kpkSharesDeployer not wired");
+        // Asserted as "non-zero and a contract" rather than "equals the local variable": on the skip
+        // path that variable was READ FROM this same getter moments ago, so comparing them proves
+        // nothing. This form binds on both paths.
         require(f.navImplementation() == navImplementation, "navImplementation not set");
+        require(navImplementation.code.length > 0, "navImplementation is not a contract");
         require(f.owner() == finalOwner, "ownership not transferred");
         require(KpkSharesDeployer(sharesDeployer).factory() == factory, "shares deployer locked to a different factory");
 
