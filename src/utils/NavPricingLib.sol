@@ -103,6 +103,103 @@ library NavPricingLib {
         return _navSharePrice(navCalculator, account, sharesSupply, shareUnit);
     }
 
+    /// @notice A non-reverting view of the NAV and every signal behind the health decision.
+    /// @dev Deliberately parallel to the gate in `_navSharePrice`, and deliberately unable to revert
+    ///      where that one does. The settlement path must fail closed; a monitor must not, because
+    ///      "the fund cannot price right now" is precisely the state an operator needs to be able to
+    ///      READ. A probe that reverted in exactly that state would be useless for the job.
+    struct NavStatus {
+        /// @notice False when the calculator did not answer at all — a revert, or a reply too short
+        ///         to decode. Distinct from "answered, and the answer is unhealthy": every other
+        ///         field is meaningless when this is false.
+        bool answered;
+        /// @notice True when the fund could price against this NAV right now. Combines the health
+        ///         flags with the positive-value requirement, because both halt settlement.
+        bool healthy;
+        /// @notice The NAV in USD with 8 decimals, as reported. Negative means debts exceed holdings.
+        int256 navUsd;
+        /// @notice The calculator's own read timestamp.
+        uint64 timestamp;
+        bool sequencerDown;
+        bool quoteAssetStale;
+        bool quoteAssetIrregular;
+        /// @notice The assets actually responsible, not just a count — "which feed is stale" is the
+        ///         question an operator has at 3am. Addresses only: the calculator's `Asset` struct
+        ///         also carries a `string symbol`, and dragging string encoding through here would
+        ///         cost far more than it tells anyone.
+        address[] stalePriceAssets;
+        address[] irregularPriceAssets;
+        address[] monitorsUnhealthyPriceAssets;
+    }
+
+    /// @notice Probes the NAV without reverting.
+    /// @param navCalculator The NAV calculator to read from.
+    /// @param account The account holding the fund's assets.
+    /// @return status Every signal behind the health decision; see `NavStatus`.
+    function navStatus(address navCalculator, address account) external view returns (NavStatus memory status) {
+        return _navStatus(navCalculator, account);
+    }
+
+    /// @notice The share price the fund would use right now, and whether it could use it.
+    /// @dev Returns `(0, false)` rather than reverting when the NAV is unhealthy, unreachable or
+    ///      non-positive. A zero price is never a usable price, so the caller cannot mistake the
+    ///      failure case for an answer.
+    /// @param navCalculator The NAV calculator to read from.
+    /// @param account The account holding the fund's assets.
+    /// @param sharesSupply The fund's share supply; must be non-zero.
+    /// @param shareUnit One whole share, i.e. `10 ** shareDecimals`.
+    function sharePriceStatus(address navCalculator, address account, uint256 sharesSupply, uint256 shareUnit)
+        external
+        view
+        returns (uint256 price, bool healthy)
+    {
+        if (sharesSupply == 0) return (0, false);
+
+        NavStatus memory status = _navStatus(navCalculator, account);
+        if (!status.healthy) return (0, false);
+
+        price = uint256(status.navUsd).mulDiv(shareUnit, sharesSupply, Math.Rounding.Floor);
+        healthy = price != 0;
+        if (!healthy) price = 0;
+    }
+
+    /// @dev A LOW-LEVEL staticcall, not a high-level one, for the same reason the fund's fee-module
+    ///      call is low-level: a high-level call to a codeless address reverts on the `extcodesize`
+    ///      probe before the call, and a reply too short to decode reverts after it — both in THIS
+    ///      frame, where no `try/catch` can absorb them. Since the whole point of this function is
+    ///      not to revert, it has to make no assumption about the reply.
+    function _navStatus(address navCalculator, address account) private view returns (NavStatus memory status) {
+        (bool ok, bytes memory ret) =
+            navCalculator.staticcall(abi.encodeCall(INavCalculator.getAccountNav, (account, address(0))));
+
+        // The NAV struct's fixed head is nine words; anything shorter cannot be one.
+        if (!ok || ret.length < 288) return status;
+
+        INavCalculator.NAV memory nav = abi.decode(ret, (INavCalculator.NAV));
+
+        status.answered = true;
+        status.navUsd = nav.value;
+        status.timestamp = nav.timestamp;
+        status.sequencerDown = nav.sequencerDown;
+        status.quoteAssetStale = nav.quoteAssetStale;
+        status.quoteAssetIrregular = nav.quoteAssetIrregular;
+        status.stalePriceAssets = _addresses(nav.stalePriceAssets);
+        status.irregularPriceAssets = _addresses(nav.irregularPriceAssets);
+        status.monitorsUnhealthyPriceAssets = _addresses(nav.monitorsUnhealthyPriceAssets);
+
+        status.healthy = nav.value > 0 && !nav.sequencerDown && !nav.quoteAssetStale && !nav.quoteAssetIrregular
+            && nav.stalePriceAssets.length == 0 && nav.irregularPriceAssets.length == 0
+            && nav.monitorsUnhealthyPriceAssets.length == 0;
+    }
+
+    /// @dev Strips an `Asset[]` down to its addresses, dropping the symbol strings.
+    function _addresses(INavCalculator.Asset[] memory assets) private pure returns (address[] memory out) {
+        out = new address[](assets.length);
+        for (uint256 i; i < assets.length; i++) {
+            out[i] = assets[i].asset;
+        }
+    }
+
     /// @notice Reads the NAV, gates its health, and divides it by the share supply.
     /// @param navCalculator The NAV calculator to read from.
     /// @param account The account holding the fund's assets.
