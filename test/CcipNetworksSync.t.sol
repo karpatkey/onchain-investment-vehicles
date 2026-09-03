@@ -25,6 +25,7 @@ import {Deploy_Ink} from "../script/chains/Deploy_Ink.s.sol";
 import {Deploy_Bob} from "../script/chains/Deploy_Bob.s.sol";
 import {Deploy_Berachain} from "../script/chains/Deploy_Berachain.s.sol";
 import {Deploy_Katana} from "../script/chains/Deploy_Katana.s.sol";
+import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 
 /// @title  CcipNetworksSyncTest
 /// @notice Guards against drift between the hardcoded per-chain CCIP_ROUTER / LINK_TOKEN / CHAIN_ID
@@ -186,5 +187,48 @@ contract CcipNetworksSyncTest is Test {
             bytes4(keccak256("multiSend(bytes)")),
             "MULTI_SEND_SELECTOR is not bytes4(keccak256('multiSend(bytes)'))"
         );
+    }
+
+    /// @notice `CcipOivDeployer._seedKnownChains` bakes the wired topology into the orchestrator's
+    ///         constructor, so a fresh instance needs no owner seeding. That list is a hand-written
+    ///         copy of the wired subset of this registry, which makes it exactly the kind of thing
+    ///         that rots: editing the JSON without editing the constructor would leave every
+    ///         orchestrator silently missing a chain, or fanning out to one with no infrastructure and
+    ///         burning non-refundable CCIP fees on messages whose delivery reverts.
+    ///
+    ///         Asserts both directions — every wired chain is baked with the right selector, and
+    ///         nothing is baked that the registry does not list as wired.
+    function test_bakedTopologyMatchesRegistry() public {
+        string memory json = vm.readFile("script/ccip-networks.json");
+        CcipOivDeployer orch = new CcipOivDeployer(address(this), address(this));
+
+        uint256 wired;
+        for (uint256 i = 0;; i++) {
+            string memory base = string.concat(".networks[", vm.toString(i), "]");
+            if (!vm.keyExists(json, string.concat(base, ".chainId"))) break;
+
+            string memory name = json.readString(string.concat(base, ".name"));
+            uint256 chainId = json.readUint(string.concat(base, ".chainId"));
+            string memory verdict = json.readString(string.concat(base, ".verdict"));
+            bool excluded =
+                vm.keyExists(json, string.concat(base, ".excluded")) && json.readBool(string.concat(base, ".excluded"));
+            bool isWired = !excluded
+                && (keccak256(bytes(verdict)) == keccak256(bytes("READY"))
+                    || keccak256(bytes(verdict)) == keccak256(bytes("READY-AFTER-EMPTY")));
+
+            uint64 baked = orch.chainSelectorOf(chainId);
+            if (isWired) {
+                wired++;
+                assertEq(
+                    baked,
+                    uint64(json.readUint(string.concat(base, ".ccipChainSelector"))),
+                    string.concat(name, ": wired in the registry but not baked with that selector")
+                );
+            } else {
+                assertEq(baked, 0, string.concat(name, ": not wired in the registry but baked anyway"));
+            }
+        }
+
+        assertEq(orch.getChainIdCount(), wired, "baked set size must equal the registry's wired count");
     }
 }

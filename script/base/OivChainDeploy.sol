@@ -346,11 +346,8 @@ abstract contract OivChainDeploy is Script {
         }
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         if (orch.owner() == eoaOwner) {
-            if (
-                orch.router() != ccipRouter || orch.linkToken() != linkToken
-                    || orch.mainnetChainSelector() != MAINNET_SELECTOR
-            ) {
-                orch.configure(ccipRouter, linkToken, MAINNET_SELECTOR);
+            if (orch.router() != ccipRouter || orch.linkToken() != linkToken) {
+                orch.configure(ccipRouter, linkToken);
                 console.log("[OK]   orchestrator configured");
             }
             if (eoaOwner != finalOwner) orch.transferOwnership(finalOwner);
@@ -365,8 +362,7 @@ abstract contract OivChainDeploy is Script {
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
 
-        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken
-            && orch.mainnetChainSelector() == MAINNET_SELECTOR;
+        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken;
         if (!configured) {
             // The orchestrator is owned by finalOwner but not (correctly) configured — only reachable
             // on a re-run of a chain whose first deploy handed off ownership before `configure()` landed
@@ -377,7 +373,6 @@ abstract contract OivChainDeploy is Script {
             console.log("  configure(router, link, mainnetSelector):");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
-            console.log("  selector:", MAINNET_SELECTOR);
             return;
         }
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");

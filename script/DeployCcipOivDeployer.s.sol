@@ -83,11 +83,8 @@ contract DeployCcipOivDeployer is OivChainDeploy {
         CcipOivDeployer orchestrator = CcipOivDeployer(payable(predicted));
 
         if (orchestrator.owner() == eoaOwner) {
-            if (
-                orchestrator.router() != ccipRouter || orchestrator.linkToken() != linkToken
-                    || orchestrator.mainnetChainSelector() != mainnetSelector
-            ) {
-                orchestrator.configure(ccipRouter, linkToken, mainnetSelector);
+            if (orchestrator.router() != ccipRouter || orchestrator.linkToken() != linkToken) {
+                orchestrator.configure(ccipRouter, linkToken);
                 console.log("[OK]   configure() done");
             } else {
                 console.log("[SKIP] already configured");
@@ -106,8 +103,7 @@ contract DeployCcipOivDeployer is OivChainDeploy {
 
         require(address(orchestrator.factory()) == factory, "post-flight: factory mismatch");
 
-        bool configured = orchestrator.router() == ccipRouter && orchestrator.linkToken() == linkToken
-            && orchestrator.mainnetChainSelector() == mainnetSelector;
+        bool configured = orchestrator.router() == ccipRouter && orchestrator.linkToken() == linkToken;
 
         console.log("==========================================");
         if (configured) {
@@ -116,7 +112,6 @@ contract DeployCcipOivDeployer is OivChainDeploy {
             console.log("[WARN] deployed but NOT fully configured; finalOwner must call configure() with:");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
-            console.log("  selector:", mainnetSelector);
         } else {
             revert("post-flight: orchestrator not configured as expected");
         }

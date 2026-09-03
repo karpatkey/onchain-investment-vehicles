@@ -73,14 +73,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         chain, so it is safe to bake into the constructor (init-code stays chain-identical).
     KpkOivFactory public immutable factory;
 
-    /// @notice Chain id of the deployment SOURCE — Ethereum mainnet. `deployEverywhere` / `dispatchTo`
-    ///         (which run the local `deployOiv` and originate the CCIP fan-out) are restricted to it,
-    ///         so the full OIV can never be deployed on a destination chain and pre-occupy the
-    ///         deterministic stack addresses the cross-chain fan-out targets. This matches the rest of
-    ///         the system, which is hardcoded to fan out FROM mainnet (the trusted `mainnetChainSelector`
-    ///         source); a different source chain (e.g. a testnet) requires changing this constant.
-    uint256 public constant SOURCE_CHAIN_ID = 1;
-
     // ── Per-chain config (wired post-deploy via `configure`) ────────────────────
 
     /// @notice CCIP Router for the current chain. Differs per chain, so set after construction.
@@ -89,8 +81,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice LINK token used to pay CCIP fees on the current chain. Differs per chain.
     address public linkToken;
 
-    /// @notice CCIP chain selector of Ethereum mainnet — the only source `ccipReceive` accepts.
-    uint64 public mainnetChainSelector;
+    /// @dev True for every selector currently in the registry. `ccipReceive` needs to answer "is this
+    ///      a chain I know?" in O(1); iterating `_chainIds` would cost ~19 cold SLOADs on a path that
+    ///      has to fit inside CCIP's destination gas budget. Maintained in lockstep with
+    ///      `chainSelectorOf`.
+    mapping(uint64 => bool) private _isKnownSelector;
 
     /// @notice CCIP chain selector for a destination chain id. This is the lookup that lets callers of
     ///         `deployEverywhere`/`dispatchTo` pass plain chain IDs instead of raw CCIP selectors.
@@ -110,7 +105,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     // ── Events ───────────────────────────────────────────────────────────────────
 
     /// @notice Emitted when `configure` wires the per-chain CCIP parameters.
-    event Configured(address indexed router, address indexed linkToken, uint64 mainnetChainSelector);
+    event Configured(address indexed router, address indexed linkToken);
 
     /// @notice Emitted when the owner sets or updates a chain id → CCIP selector mapping.
     event ChainSelectorSet(uint256 indexed chainId, uint64 indexed ccipChainSelector);
@@ -154,8 +149,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     error ZeroChainId();
     /// @notice Thrown when `setChainSelectors` is given arrays of differing lengths.
     error LengthMismatch();
-    /// @notice Thrown when `deployEverywhere`/`dispatchTo` is called on a chain other than the source.
-    error NotSourceChain(uint256 chainId);
     /// @notice Thrown when `withdrawLink` is called but no LINK token is configured (native fees).
     error NoLinkToken();
 
@@ -169,12 +162,78 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     constructor(address _owner, address _factory) Ownable(_owner) {
         if (_factory == address(0)) revert ZeroAddress();
         factory = KpkOivFactory(_factory);
+        _seedKnownChains();
     }
 
-    /// @dev Restricts the local-`deployOiv` + fan-out entry points to the source chain (mainnet), so
-    ///      the full OIV can't be deployed on a destination chain and grief the cross-chain stack.
-    modifier onlySourceChain() {
-        if (block.chainid != SOURCE_CHAIN_ID) revert NotSourceChain(block.chainid);
+    /// @dev Seeds the destination registry with every wired chain, at construction.
+    ///
+    ///      This used to be an owner-only step after deployment, and it was the sharpest operational
+    ///      edge in the rollout: a freshly CREATE2'd orchestrator started with an EMPTY registry, the
+    ///      seeding had to happen from the EOA before ownership moved to the Safe, and getting it
+    ///      wrong was not hypothetical — the first attempt wrote 20 entries including two chains with
+    ///      no infrastructure, which had to be removed before handover or the no-array
+    ///      `deployEverywhere` would have spent non-refundable CCIP fees on messages whose delivery
+    ///      reverts.
+    ///
+    ///      Seeding in the constructor removes the step, and with it that whole failure class. The
+    ///      list is identical on every chain, so it does not disturb the orchestrator's
+    ///      same-address-everywhere property. `setChainSelector` / `removeChainSelector` still work
+    ///      exactly as before, for chains added or lanes retired later.
+    ///
+    ///      COUPLING: this list is the wired subset of `script/ccip-networks.json` — every entry whose
+    ///      verdict is READY* and which is not `excluded`. `test/CcipNetworksSync.t.sol` asserts the
+    ///      two agree, so editing the registry file without editing this list fails CI.
+    function _seedKnownChains() private {
+        _seed(1, 5009297550715157269); // ethereum
+        _seed(10, 3734403246176062136); // optimism
+        _seed(100, 465200170687744372); // gnosis
+        _seed(8453, 15971525489660198786); // base
+        _seed(42161, 4949039107694359620); // arbitrum
+        _seed(56, 11344663589394136015); // bnb
+        _seed(137, 4051577828743386545); // polygon
+        _seed(43114, 6433500567565415381); // avalanche
+        _seed(42220, 1346049177634351622); // celo
+        _seed(59144, 4627098889531055414); // linea
+        _seed(534352, 13204309965629103672); // scroll
+        _seed(146, 1673871237479749969); // sonic
+        _seed(130, 1923510103922296319); // unichain
+        _seed(480, 2049429975587534727); // worldchain
+        _seed(999, 2442541497099098535); // hyperevm
+        _seed(5000, 1556008542357238666); // mantle
+        _seed(9745, 9335212494177455608); // plasma
+        _seed(57073, 3461204551265785888); // ink
+        _seed(80094, 1294465214383781161); // berachain
+    }
+
+    /// @dev Registry write shared by the constructor and `setChainSelector`. Keeps `chainSelectorOf`,
+    ///      the enumerable `_chainIds` set and `_isKnownSelector` in step; separated out so the
+    ///      constructor path cannot drift from the owner path.
+    function _seed(uint256 chainId, uint64 ccipChainSelector) private {
+        if (chainSelectorOf[chainId] == 0) {
+            _chainIds.push(chainId);
+            _chainIdIndex[chainId] = _chainIds.length; // 1-based
+        } else {
+            // Correcting an existing entry: the old selector stops being a trusted source.
+            _isKnownSelector[chainSelectorOf[chainId]] = false;
+        }
+        chainSelectorOf[chainId] = ccipChainSelector;
+        _isKnownSelector[ccipChainSelector] = true;
+    }
+
+    /// @dev The fan-out entry points require only that the LOCAL chain is one this orchestrator
+    ///      knows. Previously they were pinned to Ethereum, which made the whole system
+    ///      hub-and-spoke: a fund could only be fanned out from mainnet.
+    ///
+    ///      Nothing about the address invariant depended on that. The orchestrator is the uniform
+    ///      `msg.sender` into the factory on every chain, and the salt is
+    ///      `keccak256(abi.encode(config))` composed once on the origin chain and shipped — so the
+    ///      origin never entered the derivation. A fund fanned out from Base lands at exactly the
+    ///      addresses it would have from Ethereum.
+    ///
+    ///      The check that remains is worth keeping: fanning out from a chain absent from the
+    ///      registry would produce messages every sibling rejects, after the fees were already paid.
+    modifier onlyWiredChain() {
+        if (chainSelectorOf[block.chainid] == 0) revert UnknownChain(block.chainid);
         _;
     }
 
@@ -188,16 +247,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @param _linkToken            LINK token, retained only for the `withdrawLink` sweep escape hatch
     ///                              — fees are paid in native, so this MAY be `address(0)` on a lane
     ///                              with no LINK fee token (the chain is still usable).
-    /// @param _mainnetChainSelector CCIP selector of Ethereum mainnet (the trusted source).
-    function configure(address _router, address _linkToken, uint64 _mainnetChainSelector) external onlyOwner {
+    function configure(address _router, address _linkToken) external onlyOwner {
         // Only the router is mandatory; LINK is no longer the fee mechanism (native fees), so a zero
         // linkToken is allowed (just disables `withdrawLink`).
         if (_router == address(0)) revert ZeroAddress();
-        if (_mainnetChainSelector == 0) revert ZeroChainSelector();
         router = _router;
         linkToken = _linkToken;
-        mainnetChainSelector = _mainnetChainSelector;
-        emit Configured(_router, _linkToken, _mainnetChainSelector);
+        emit Configured(_router, _linkToken);
     }
 
     // ── Destination-chain selector registry (owner-managed) ──────────────────────
@@ -210,12 +266,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     function setChainSelector(uint256 chainId, uint64 ccipChainSelector) public onlyOwner {
         if (chainId == 0) revert ZeroChainId();
         if (ccipChainSelector == 0) revert ZeroChainSelector();
-        // First time we see this chain id, append it to the enumerable set.
-        if (chainSelectorOf[chainId] == 0) {
-            _chainIds.push(chainId);
-            _chainIdIndex[chainId] = _chainIds.length; // 1-based
-        }
-        chainSelectorOf[chainId] = ccipChainSelector;
+        _seed(chainId, ccipChainSelector);
         emit ChainSelectorSet(chainId, ccipChainSelector);
     }
 
@@ -241,6 +292,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         _chainIdIndex[lastChainId] = idx;
         _chainIds.pop();
         delete _chainIdIndex[chainId];
+        // Retiring a lane must also stop it being an accepted CCIP source, not merely a destination.
+        _isKnownSelector[chainSelectorOf[chainId]] = false;
         delete chainSelectorOf[chainId];
 
         emit ChainSelectorRemoved(chainId);
@@ -293,7 +346,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         external
         payable
         nonReentrant
-        onlySourceChain
+        onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
         return _deployEverywhere(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
@@ -311,7 +364,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         external
         payable
         nonReentrant
-        onlySourceChain
+        onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
         return _deployEverywhere(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
@@ -351,7 +404,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         external
         payable
         nonReentrant
-        onlySourceChain
+        onlyWiredChain
         returns (bytes32[] memory messageIds)
     {
         uint64[] memory destSelectors = _resolveSelectors(destChainIds);
@@ -452,11 +505,21 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      delivery enters CCIP's FAILED state and can be manually re-executed.
     function ccipReceive(Client.Any2EVMMessage calldata message) external override {
         if (msg.sender != router) revert InvalidRouter(msg.sender);
-        if (message.sourceChainSelector != mainnetChainSelector) {
+        // Any chain in the registry may be a source, not just Ethereum. The registry is seeded at
+        // construction with the same 19 chains everywhere, so every orchestrator accepts every other
+        // one and a fan-out can be initiated from any of them.
+        //
+        // The load-bearing guard is the sender check below, not this one: only a contract at THIS
+        // address can be the source sender, and that address is a deterministic function of the
+        // orchestrator's creation code. This check narrows it further, to the chains we actually
+        // wired — without it, anyone could CREATE2 the same bytecode on any CCIP-supported chain and
+        // send from there. Worth noting the blast radius either way is bounded: `deployStack` is
+        // permissionless, so a forged message can only do what any caller can already do directly.
+        if (!_isKnownSelector[message.sourceChainSelector]) {
             revert InvalidSourceChain(message.sourceChainSelector);
         }
         // By the same-address-on-every-chain property, the trusted source sender is this very
-        // address — the sibling orchestrator on mainnet.
+        // address — the sibling orchestrator on whichever chain initiated.
         address sourceSender = abi.decode(message.sender, (address));
         if (sourceSender != address(this)) revert InvalidSourceSender(sourceSender);
 

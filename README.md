@@ -5,7 +5,7 @@ Tooling and smart contracts for deploying **tokenized funds ("OIVs") entirely on
 A fund is not a single contract. It is a small stack of Safe + [Zodiac Roles](https://www.zodiac.wiki/documentation/roles-modifier) contracts plus an ERC-20 shares token, wired together. This repo provides:
 
 - **`KpkOivFactory`** — an on-chain factory that deploys and wires a complete fund stack in **one transaction**, at deterministic addresses.
-- **`CcipOivDeployer`** — a Chainlink CCIP orchestrator that, from **one mainnet transaction**, fans the operational stack out to multiple sidechains so the fund lands at the **same addresses everywhere**.
+- **`CcipOivDeployer`** — a Chainlink CCIP orchestrator that, from **one transaction on any wired chain**, fans the operational stack out to the others so the fund lands at the **same addresses everywhere**.
 - **`kpkShares`** — the fund's ERC-20 shares token (request-based subscribe/redeem, fees, multi-asset). This is the externally-audited core; its detailed reference lives in **[docs/KpkShares.md](docs/KpkShares.md)**.
 
 ---
@@ -71,7 +71,8 @@ Because `KpkOivFactory` mixes `msg.sender` into its salts, identical addresses a
 - **`deployEverywhere(config, gasLimit)`** (or `deployEverywhere(config, destChainIds, gasLimit)` to target an explicit subset) — deploys the full OIV locally (mainnet) and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain.
 - **`dispatchTo(config, destChainIds, gasLimit)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
 - **Permissionless.** `deployEverywhere` and `dispatchTo` are permissionless; only infrastructure setters (`configure` / `withdraw*`) are owner-gated.
-- **Security.** `ccipReceive` accepts a message only from the configured router, the mainnet source chain, and a source sender equal to its own (sibling) address.
+- **Security.** `ccipReceive` accepts a message only from the configured router, a chain in its own registry, and a source sender equal to its own (sibling) address. The sender check is the load-bearing one — only a contract at that same deterministic address can pass it.
+- **Symmetric.** Any wired chain can initiate. The origin never entered the address derivation: the orchestrator is the uniform factory caller everywhere and the salt is `keccak256(abi.encode(config))`, composed once and shipped — so a fan-out from Base produces the same addresses as one from Ethereum.
 - **Fees.** Paid in native gas by the caller via `msg.value` (surplus refunded); size with `quoteDeployEverywhere`.
 - **Async, not atomic.** Sidechain stacks land after Ethereum finality (~15 min); a failed CCIP message is manually re-executable.
 
