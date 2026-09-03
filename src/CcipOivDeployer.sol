@@ -118,6 +118,12 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
     // ── Events ───────────────────────────────────────────────────────────────────
 
+    /// @notice Emitted when a chain outside the fund's declared topology gains its shares token.
+    /// @param  chainId  The promoted chain.
+    /// @param  instance The fund's addresses there. Asset approvals are NOT yet granted — see
+    ///                  `promoteShares`.
+    event SharesPromoted(uint256 indexed chainId, KpkOivFactory.OivInstance instance);
+
     /// @notice Emitted when `configure` wires the per-chain CCIP parameters.
     event Configured(address indexed router, address indexed linkToken);
 
@@ -180,6 +186,17 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         stack there would permanently occupy the addresses its `deployOiv` needs.
     /// @param  chainId The offending destination.
     error SharesChainNotAStackDestination(uint256 chainId);
+
+    /// @notice Thrown when `promoteShares` is called on a chain the topology already declares. Use
+    ///         `deployLocal` there — promotion would bypass the asset the topology committed to.
+    error SharesChainAlreadyDeclared();
+
+    /// @notice Thrown when `promoteShares` is called by anyone other than the fund's `admin` or its
+    ///         exec timelock. The base asset is the one field the salt deliberately does not bind, so
+    ///         an open promotion would let anyone holding the true config land a hostile-denominated
+    ///         shares token at the fund's canonical address.
+    /// @param  caller The rejected caller.
+    error NotFundAdmin(address caller);
 
     /// @notice Thrown by `ccipReceive` when an inbound stack targets a chain this fund's topology
     ///         reserves for shares — the receiver-side half of the same guard.
@@ -777,6 +794,57 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         eff.sharesParams.asset = address(0);
         eff.salt = uint256(keccak256(abi.encode(eff, sharesChains)));
         eff.sharesParams.asset = config.sharesParams.asset;
+    }
+
+    /// @notice Adds this fund's shares token to a chain its topology does NOT declare, without moving
+    ///         a single address.
+    /// @dev    The escape hatch for the one thing the salt-bound topology cost us: a fund could not
+    ///         gain a shares chain after birth, because the topology is hashed into the salt.
+    ///         "Declare generously" was the mitigation and it has real limits — it cannot cover a
+    ///         chain that does not exist yet, nor one whose dominant stablecoin is unknowable today,
+    ///         and a declared chain is shares-or-nothing until its `deployOiv` runs.
+    ///
+    ///         Promotion reuses the ORIGINAL topology and therefore the original salt, so the promoted
+    ///         shares token lands at the same address as every other shares chain's. See
+    ///         `KpkOivFactory.deployShares` for why the slot is free and why approvals are deferred.
+    ///
+    ///         WHY THIS IS GATED, when everything else here is permissionless. `_effectiveConfig`
+    ///         zeroes `sharesParams.asset` before hashing, because it legitimately differs per chain.
+    ///         For declared chains the topology commits to each one's asset, so nothing is unbound.
+    ///         A promoted chain has no such commitment — the asset is free — so an open promotion
+    ///         would let anyone holding the true config deploy a shares token denominated in a
+    ///         worthless asset at the fund's canonical address. That is the same economic-capture
+    ///         failure that ruled out narrowing the salt, shrunk to one field. `config.admin` is
+    ///         salt-bound, so forging it produces a different salt and a different address: the gate
+    ///         cannot be sidestepped by lying about who the admin is.
+    ///
+    ///         The exec timelock is accepted as an alternate caller because it exists at the fund's
+    ///         canonical address on EVERY stack chain (`deployStack` deploys it), which covers funds
+    ///         whose `admin` is a contract that only exists on one chain.
+    /// @param  config       Fund parameters, with THIS chain's base asset and the original salt.
+    /// @param  sharesChains The fund's ORIGINAL topology — the same array used at birth.
+    /// @return instance     The fund's addresses on this chain.
+    function promoteShares(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
+        external
+        nonReentrant
+        onlyWiredChain
+        returns (KpkOivFactory.OivInstance memory instance)
+    {
+        _validateSharesChains(sharesChains);
+        if (_assetFor(sharesChains, block.chainid) != address(0)) revert SharesChainAlreadyDeclared();
+
+        KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
+
+        if (msg.sender != config.admin) {
+            KpkOivFactory.StackInstance memory stack =
+                factory.predictStackAddresses(factory.oivToStackConfig(eff), address(this));
+            if (stack.execTimelock == address(0) || msg.sender != stack.execTimelock) {
+                revert NotFundAdmin(msg.sender);
+            }
+        }
+
+        instance = factory.deployShares(eff);
+        emit SharesPromoted(block.chainid, instance);
     }
 
     /// @dev Rejects a topology that is unordered, degenerate, or would make one fund's addresses
