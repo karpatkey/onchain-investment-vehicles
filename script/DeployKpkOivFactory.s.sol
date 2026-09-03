@@ -4,10 +4,9 @@ pragma solidity ^0.8.0;
 import {console} from "forge-std/Script.sol";
 import {OivChainDeploy} from "./base/OivChainDeploy.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
-import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 
 /// @title  DeployKpkOivFactory
-/// @notice Deploys `KpkSharesDeployer` and `KpkOivFactory` deterministically across every chain via
+/// @notice Deploys the `KpkShares` mastercopy and `KpkOivFactory` deterministically across every chain via
 ///         the canonical CREATE2 deployer, producing identical addresses on every chain. The
 ///         address-critical constants/salts/init-code live in `OivChainDeploy` (the single source of
 ///         truth shared with the per-chain scripts), so the standalone and per-chain paths can never
@@ -15,7 +14,7 @@ import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 ///         v2.1.1 mastercopy (`0xF2964CE6…83D5`).
 ///
 /// @dev    Flow: pre-compute predicted addresses → CREATE2 factory (idempotent) → CREATE2 deployer
-///         (idempotent) → `setKpkSharesDeployer` → `transferOwnership(finalOwner)`.
+///         (idempotent) → `setKpkSharesMastercopy` → `transferOwnership(finalOwner)`.
 ///
 /// Usage (per chain):
 ///   source .env && forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
@@ -32,12 +31,12 @@ contract DeployKpkOivFactory is OivChainDeploy {
 
         bytes memory factoryInitCode = _factoryInitCode(eoaOwner);
         address predictedFactory = _create2Address(SALT_FACTORY, factoryInitCode);
-        bytes memory deployerInitCode = _deployerInitCode(predictedFactory);
-        address predictedDeployer = _create2Address(SALT_DEPLOYER, deployerInitCode);
+        bytes memory deployerInitCode = _sharesMastercopyInitCode();
+        address predictedDeployer = _create2Address(SALT_SHARES_MASTERCOPY, deployerInitCode);
 
         console.log("==========================================");
         console.log("Predicted KpkOivFactory:    ", predictedFactory);
-        console.log("Predicted KpkSharesDeployer:", predictedDeployer);
+        console.log("Predicted KpkShares mastercopy:", predictedDeployer);
         console.log("EOA owner (during deploy):  ", eoaOwner);
         console.log("Final owner (post-deploy):  ", finalOwner);
         console.log("==========================================");
@@ -60,18 +59,18 @@ contract DeployKpkOivFactory is OivChainDeploy {
         }
 
         if (predictedDeployer.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_DEPLOYER, deployerInitCode));
+            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_SHARES_MASTERCOPY, deployerInitCode));
             require(ok, "deployer CREATE2 deploy failed");
-            console.log("[OK]   KpkSharesDeployer deployed at:", predictedDeployer);
+            console.log("[OK]   KpkShares mastercopy deployed at:", predictedDeployer);
         } else {
-            console.log("[SKIP] KpkSharesDeployer already at: ", predictedDeployer);
+            console.log("[SKIP] KpkShares mastercopy already at: ", predictedDeployer);
         }
 
         KpkOivFactory factory = KpkOivFactory(predictedFactory);
-        if (factory.kpkSharesDeployer() == address(0)) {
-            factory.setKpkSharesDeployer(predictedDeployer);
+        if (factory.kpkSharesMastercopy() == address(0)) {
+            factory.setKpkSharesMastercopy(predictedDeployer);
             console.log("[OK]   factory.kpkSharesDeployer set");
-        } else if (factory.kpkSharesDeployer() == predictedDeployer) {
+        } else if (factory.kpkSharesMastercopy() == predictedDeployer) {
             console.log("[SKIP] factory.kpkSharesDeployer already wired");
         } else {
             revert("factory.kpkSharesDeployer is set to an unexpected address");
@@ -90,12 +89,10 @@ contract DeployKpkOivFactory is OivChainDeploy {
 
         require(KpkOivFactory(predictedFactory).owner() == finalOwner, "post-flight: owner mismatch");
         require(
-            KpkOivFactory(predictedFactory).kpkSharesDeployer() == predictedDeployer,
-            "post-flight: kpkSharesDeployer mismatch"
+            KpkOivFactory(predictedFactory).kpkSharesMastercopy() == predictedDeployer,
+            "post-flight: kpkSharesMastercopy mismatch"
         );
-        require(
-            KpkSharesDeployer(predictedDeployer).factory() == predictedFactory, "post-flight: deployer.factory mismatch"
-        );
+        require(predictedDeployer.code.length != 0, "post-flight: shares mastercopy has no code");
 
         console.log("==========================================");
         console.log("[OK] Deployment verified");

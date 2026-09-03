@@ -1,0 +1,26 @@
+{
+  "fundName": "TEST DUMMY FUND",
+  "managerSafe": {
+    "owners": ["0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"],
+    "threshold": 1
+  },
+  "salt": "1",
+  "execRolesModFinalOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+  "oiv": {
+    "admin": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+    "sharesParams": {
+      "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "name": "TEST DUMMY FUND",
+      "symbol": "TSTDUM",
+      "subscriptionRequestTtl": 86400,
+      "redemptionRequestTtl": 86400,
+      "feeReceiver": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+      "managementFeeRate": 0,
+      "redemptionFeeRate": 0,
+      "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+      "performanceFeeRate": 0
+    },
+    "additionalAssets": []
+  },
+  "sidechains": ["base"]
+}

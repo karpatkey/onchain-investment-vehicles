@@ -3,7 +3,10 @@ pragma solidity ^0.8.0;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
-import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
+import {KpkShares} from "src/kpkShares.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
@@ -54,15 +57,13 @@ contract KpkOivFactoryTest is OivTestConstants {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
         _requireInfraDeployed();
 
-        // KpkSharesDeployer is now factory-locked. Pre-compute the factory address so the
         // deployer can be constructed with it: this contract's next nonce produces the
         // deployer, and the one after that produces the factory.
-        // Nonce map for this contract: n = timelock deployer, n+1 = shares deployer, n+2 = factory.
-        uint256 nextNonce = vm.getNonce(address(this));
-        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 2);
-
-        timelockDeployer = new KpkTimelockDeployer();
-        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
+        // Nothing needs the factory's address at construction any more: the shares mastercopy takes
+        // no constructor arguments, so the predict-then-assert dance the per-fund deployer required is
+        // gone.
+        KpkShares sharesMastercopy = new KpkShares();
+        timelockDeployer = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
 
         factory = new KpkOivFactory(
             factoryOwner,
@@ -72,10 +73,9 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(sharesDeployer),
+            address(sharesMastercopy),
             address(timelockDeployer)
         );
-        require(address(factory) == predictedFactory, "factory address mismatch");
 
         oivConfig = _buildOivConfig();
     }
@@ -581,10 +581,10 @@ contract KpkOivFactoryTest is OivTestConstants {
 
     /// @dev Deterministic-CREATE2 deploy pattern: the factory may be constructed with
     ///      `_kpkSharesDeployer == address(0)` so its CREATE2 init-code is independent of the
-    ///      (chicken-and-egg) deployer address. Until `setKpkSharesDeployer` wires it,
+    ///      (chicken-and-egg) deployer address. Until `setKpkSharesMastercopy` wires it,
     ///      `deployOiv` must revert cleanly. `deployStack` is unaffected — it does not touch
     ///      `kpkSharesDeployer`.
-    function test_deployOiv_revertsWhenKpkSharesDeployerNotSet() public {
+    function test_deployOiv_revertsWhenKpkSharesMastercopyNotSet() public {
         // Deploy a second factory with kpkSharesDeployer == address(0). No predicted-factory
         // dance needed since we never call `deployOiv` against this factory while wired.
         KpkOivFactory unwired = new KpkOivFactory(
@@ -599,22 +599,17 @@ contract KpkOivFactoryTest is OivTestConstants {
             address(0)
         );
 
-        assertEq(unwired.kpkSharesDeployer(), address(0), "expected unwired factory");
+        assertEq(unwired.kpkSharesMastercopy(), address(0), "expected unwired factory");
 
-        vm.expectRevert(KpkOivFactory.KpkSharesDeployerNotSet.selector);
+        vm.expectRevert(KpkOivFactory.KpkSharesMastercopyNotSet.selector);
         unwired.deployOiv(oivConfig);
     }
 
-    /// @dev Companion to the above: once the owner wires the deployer, `deployOiv` works
+    /// @dev Companion to the above: once the owner wires the mastercopy, `deployOiv` works
     ///      without further intervention. Exercises the full deploy-time wiring flow used
     ///      by `script/DeployKpkOivFactory.s.sol`.
-    function test_deployOiv_succeedsAfterSetKpkSharesDeployer() public {
-        // Pre-compute the unwired factory's address so we can lock the deployer to it before
-        // either is deployed (mirrors the on-chain CREATE2 prediction we'll do in the script).
-        uint256 nextNonce = vm.getNonce(address(this));
-        address predictedUnwired = vm.computeCreateAddress(address(this), nextNonce + 1);
-
-        KpkSharesDeployer freshDeployer = new KpkSharesDeployer(predictedUnwired);
+    function test_deployOiv_succeedsAfterSetKpkSharesMastercopy() public {
+        KpkShares freshMastercopy = new KpkShares();
 
         KpkOivFactory unwired = new KpkOivFactory(
             factoryOwner,
@@ -627,16 +622,15 @@ contract KpkOivFactoryTest is OivTestConstants {
             address(0),
             address(0)
         );
-        require(address(unwired) == predictedUnwired, "unwired factory address mismatch");
 
         // Pre-wire reverts.
-        vm.expectRevert(KpkOivFactory.KpkSharesDeployerNotSet.selector);
+        vm.expectRevert(KpkOivFactory.KpkSharesMastercopyNotSet.selector);
         unwired.deployOiv(oivConfig);
 
-        // Owner wires the deployer.
+        // Owner wires the mastercopy.
         vm.prank(factoryOwner);
-        unwired.setKpkSharesDeployer(address(freshDeployer));
-        assertEq(unwired.kpkSharesDeployer(), address(freshDeployer), "deployer not set");
+        unwired.setKpkSharesMastercopy(address(freshMastercopy));
+        assertEq(unwired.kpkSharesMastercopy(), address(freshMastercopy), "mastercopy not set");
 
         // Post-wire succeeds.
         KpkOivFactory.OivInstance memory inst = unwired.deployOiv(oivConfig);
@@ -882,20 +876,6 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertTrue(predA.avatarSafe != predB.avatarSafe, "avatarSafe should differ");
         assertTrue(predA.managerSafe != predB.managerSafe, "managerSafe should differ");
         assertTrue(predA.execRolesModifier != predB.execRolesModifier, "execMod should differ");
-    }
-
-    /// @dev L-01: KpkSharesDeployer.deploy() rejects callers other than the factory.
-    function test_kpkSharesDeployer_deploy_revertsForNonFactoryCaller() public {
-        KpkSharesDeployer deployer = new KpkSharesDeployer(address(this));
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert(KpkSharesDeployer.UnauthorizedCaller.selector);
-        deployer.deploy(bytes32(uint256(1)));
-    }
-
-    /// @dev L-01: KpkSharesDeployer constructor rejects address(0) factory.
-    function test_kpkSharesDeployer_constructor_revertsOnZeroFactory() public {
-        vm.expectRevert(KpkSharesDeployer.ZeroFactory.selector);
-        new KpkSharesDeployer(address(0));
     }
 
     // ── deployStack tests ───────────────────────────────────────────────────────
@@ -1324,7 +1304,7 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(new KpkSharesDeployer(address(this))),
+            address(new KpkShares()),
             address(0)
         );
 
@@ -1334,6 +1314,17 @@ contract KpkOivFactoryTest is OivTestConstants {
         bare.deployOiv(oivConfig);
         // A revert from inside `_deploySharesProxy` would have burned millions by this point.
         assertLt(gasBefore - gasleft(), 500_000, "guard must fire before any deployment work");
+    }
+
+    /// @dev Replaces the deleted `KpkSharesDeployer` factory-lock tests. The mastercopy decides the
+    ///      implementation every future fund on this chain proxies to, so only the owner may set it.
+    function test_setKpkSharesMastercopy_isOwnerOnly() public {
+        address stranger = makeAddr("stranger");
+        // Constructed on its own line: inline in the argument list it would consume the prank.
+        address mastercopy = address(new KpkShares());
+        vm.prank(stranger);
+        vm.expectRevert();
+        factory.setKpkSharesMastercopy(mastercopy);
     }
 
     function test_setTimelockDeployer_emitsEvent() public {
@@ -1355,7 +1346,7 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(new KpkSharesDeployer(address(this))),
+            address(new KpkShares()),
             address(0)
         );
 
@@ -1425,15 +1416,12 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
     KpkOivFactoryHarness harness;
 
     function setUp() public {
-        // KpkSharesDeployer is factory-locked. Pre-compute the harness address so the deployer
         // can be constructed with it: this contract's next nonce produces the deployer,
         // and the one after that produces the harness.
-        // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = harness.
-        uint256 nextNonce = vm.getNonce(address(this));
-        address predictedHarness = vm.computeCreateAddress(address(this), nextNonce + 2);
-        KpkTimelockDeployer harnessTimelockDeployer = new KpkTimelockDeployer();
+        KpkTimelockDeployer harnessTimelockDeployer =
+            new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
 
-        KpkSharesDeployer deployer = new KpkSharesDeployer(predictedHarness);
+        KpkShares harnessMastercopy = new KpkShares();
         harness = new KpkOivFactoryHarness(
             address(this),
             SAFE_PROXY_FACTORY,
@@ -1442,10 +1430,9 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(deployer),
+            address(harnessMastercopy),
             address(harnessTimelockDeployer)
         );
-        require(address(harness) == predictedHarness, "harness address mismatch");
     }
 
     function test_execApprove_revertsIfModuleCallReturnsFalse() public {

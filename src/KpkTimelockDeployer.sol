@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
 import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
 
@@ -25,12 +28,22 @@ interface IAccessControlView {
 ///         the deployment returns. It is also permissionless, so the admin of an already-deployed
 ///         fund can deploy a matching timelock here and transfer ownership to it by hand.
 ///
-///         ## Why a separate contract rather than code inside the factory
+///         ## Clones, not full deployments
 ///
-///         `TimelockController`'s creation bytecode is larger than the factory's entire remaining
-///         EIP-170 margin, so the factory cannot embed it. `KpkSharesDeployer` exists for exactly the
-///         same reason, and `IKpkTimelockDeployer` keeps the factory's import graph free of
-///         `TimelockController` while still letting it name `TimelockParams`.
+///         Each timelock is an EIP-1167 minimal proxy against a single per-chain
+///         `TimelockControllerUpgradeable` mastercopy — the shape the Zodiac Roles Modifiers already
+///         use through `ModuleProxyFactory`. Deploying the controller outright cost about 1.45M gas,
+///         which by itself pushed a timelocked `deployStack` past the 3,000,000-gas ceiling that 10 of
+///         the 20 CCIP lanes enforce, making a timelocked fund undeliverable to those chains. A clone
+///         costs a small fraction of that.
+///
+///         The clone is immutable — an EIP-1167 stub always delegates to the same mastercopy — so this
+///         adds no upgrade surface. The mastercopy takes no constructor arguments and is deployed
+///         through the canonical CREATE2 factory, so it sits at one address on every chain and clone
+///         addresses stay chain-independent.
+///
+///         `IKpkTimelockDeployer` additionally keeps the factory's import graph free of the timelock
+///         code while still letting it name `TimelockParams`.
 ///
 ///         ## Why a contract at all, rather than a deploy script
 ///
@@ -93,6 +106,24 @@ interface IAccessControlView {
 ///         constant here — an internal operations multisig and an investor committee convening under
 ///         notice provisions have reaction times orders of magnitude apart.
 contract KpkTimelockDeployer is IKpkTimelockDeployer {
+    /// @notice The `TimelockControllerUpgradeable` every clone this contract creates delegates to.
+    ///         Immutable: changing it would silently move every predicted clone address.
+    address public immutable timelockMastercopy;
+
+    /// @notice Thrown when the constructor is given a zero or codeless mastercopy. A clone of an
+    ///         address with no code is an inert contract that would hold a fund's authority and be
+    ///         unable to act on it.
+    error InvalidMastercopy();
+
+    /// @param _timelockMastercopy The per-chain `TimelockControllerUpgradeable` mastercopy. It takes no
+    ///                            constructor arguments and is deployed through the canonical CREATE2
+    ///                            factory, so it is at one address on every chain — which is what keeps
+    ///                            clone addresses identical across chains.
+    constructor(address _timelockMastercopy) {
+        if (_timelockMastercopy.code.length == 0) revert InvalidMastercopy();
+        timelockMastercopy = _timelockMastercopy;
+    }
+
     // ── Constants ─────────────────────────────────────────────────────────────
 
     /// @notice Salt domain for timelocks intended to own a fund's exec Roles Modifier.
@@ -274,11 +305,16 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         address[] memory executors = new address[](1);
         executors[0] = address(0);
 
-        // `address(this)` as the constructor admin is what makes canceller provisioning atomic; it is
+        // Clone and initialize atomically. The clone exists uninitialized for the span of these two
+        // statements only, and no other contract can CREATE2 at this address, so there is no window in
+        // which anyone else could initialize it with roles of their own.
+        //
+        // `address(this)` as the initializing admin is what makes canceller provisioning atomic; it is
         // renounced below, in this same call, before control ever returns to the caller.
-        TimelockController tl = new TimelockController{salt: _salt(domain, governed, params)}(
-            params.minDelay, params.proposers, executors, address(this)
+        TimelockControllerUpgradeable tl = TimelockControllerUpgradeable(
+            payable(Clones.cloneDeterministic(timelockMastercopy, _salt(domain, governed, params)))
         );
+        tl.initialize(params.minDelay, params.proposers, executors, address(this));
 
         uint256 cancellerCount = params.cancellers.length;
         for (uint256 i; i < cancellerCount; ++i) {
@@ -303,7 +339,7 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///      veto — every configured canceller is still verified present, so a hostile proposal
     ///      remains cancellable. Removal, which does defeat it, is caught.
     function _requireLiveConfigMatches(address timelock, TimelockParams calldata params) internal view {
-        TimelockController tl = TimelockController(payable(timelock));
+        TimelockControllerUpgradeable tl = TimelockControllerUpgradeable(payable(timelock));
 
         if (tl.getMinDelay() != params.minDelay) revert TimelockStateMismatch(timelock);
         if (!tl.hasRole(tl.EXECUTOR_ROLE(), address(0))) revert TimelockStateMismatch(timelock);
@@ -387,30 +423,14 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
             keccak256(abi.encode(KIT_VERSION, domain, governed, params.minDelay, params.proposers, params.cancellers));
     }
 
-    /// @dev CREATE2 address for the init code this contract would deploy under `_salt`.
+    /// @dev The EIP-1167 clone address this contract would produce under `_salt`. It depends only on
+    ///      `(this deployer, mastercopy, salt)` — all three identical on every chain, which is what
+    ///      keeps a fund's timelock address the same everywhere.
     function _predict(bytes32 domain, address governed, TimelockParams calldata params)
         internal
         view
         returns (address)
     {
-        address[] memory executors = new address[](1);
-        executors[0] = address(0);
-
-        bytes32 initCodeHash = keccak256(
-            abi.encodePacked(
-                type(TimelockController).creationCode,
-                abi.encode(params.minDelay, params.proposers, executors, address(this))
-            )
-        );
-
-        return address(
-            uint160(
-                uint256(
-                    keccak256(
-                        abi.encodePacked(bytes1(0xff), address(this), _salt(domain, governed, params), initCodeHash)
-                    )
-                )
-            )
-        );
+        return Clones.predictDeterministicAddress(timelockMastercopy, _salt(domain, governed, params), address(this));
     }
 }
