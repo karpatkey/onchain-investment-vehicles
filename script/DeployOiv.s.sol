@@ -12,8 +12,10 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  * Outputs: Deployed contract addresses logged to console; broadcast artefacts written by forge.
  * Logic:
  *   - predict(configPath): calls predictOivAddresses without broadcasting, shows expected addresses.
- *   - deployOiv(configPath): calls factory.deployOiv — full fund (shares + infra). Use on mainnet.
- *   - deployStack(configPath): calls factory.deployStack — infra only. Use on sidechains.
+ *   - deploy(configPath): deploys whichever the chain is configured for, per `.sharesChains`. This is
+ *     the entry point for a multichain rollout — the same command on every chain.
+ *   - deployOiv(configPath): full fund (shares + infra). Refuses on a chain excluded by .sharesChains.
+ *   - deployStack(configPath): infra only.
  * Assumptions:
  *   - PRIVATE_KEY env var holds the deployer's hex private key (with or without 0x prefix).
  *   - The KpkOivFactory is deployed at FACTORY on every supported chain. NOTE: `FACTORY` is the
@@ -55,8 +57,39 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
     }
 
+    /// @notice Deploys whichever of the two a chain is configured for, per `.sharesChains`.
+    /// @dev    The intended entry point for a multichain rollout: run the identical command on every
+    ///         chain and the config decides which get the shares token and which get the operational
+    ///         stack alone. `deployOiv` and `deployStack` remain available for a deliberate override.
+    function deploy(string calldata configPath) external {
+        string memory json = vm.readFile(configPath);
+        if (_shouldDeployShares(json)) {
+            _deployOiv(json);
+        } else {
+            console.log("  Chain %s is not in .sharesChains - deploying the stack only.", block.chainid);
+            _deployStack(json);
+        }
+    }
+
     function deployOiv(string calldata configPath) external {
         string memory json = vm.readFile(configPath);
+        // A config that names its shares chains is an instruction, not a hint. Deploying shares on a
+        // chain left off that list would create a fund nobody intended, at an address that then
+        // cannot be reused for the stack-only deployment the config did ask for.
+        require(
+            _shouldDeployShares(json), "config: this chain is not in .sharesChains - use deployStack, or fix the config"
+        );
+        _deployOiv(json);
+    }
+
+    function deployStack(string calldata configPath) external {
+        string memory json = vm.readFile(configPath);
+        _deployStack(json);
+    }
+
+    // ── Internals ──────────────────────────────────────────────────────────────
+
+    function _deployOiv(string memory json) internal {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -71,8 +104,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
     }
 
-    function deployStack(string calldata configPath) external {
-        string memory json = vm.readFile(configPath);
+    function _deployStack(string memory json) internal {
         KpkOivFactory.StackConfig memory config = _buildStackConfig(json);
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -88,6 +120,7 @@ contract DeployOiv is OivConfigReader {
         console.log("  execRolesModifier:    ", instance.execRolesModifier);
         console.log("  subRolesModifier:     ", instance.subRolesModifier);
         console.log("  managerRolesModifier: ", instance.managerRolesModifier);
+        console.log("  exec timelock:        ", instance.execTimelock);
         console.log("============================================================");
     }
 }
