@@ -267,6 +267,66 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.predictOiv(oivConfig, bad);
     }
 
+    /// @notice The 2-arg sugar built its topology without validating it, and `_assetFor` returns
+    ///         `address(0)` both for "carries no shares" and for "the declared asset is zero". A
+    ///         config with a zero base asset therefore took the STACK branch: 18 non-refundable CCIP
+    ///         messages went out, no fund was created, and the salt came from a topology that
+    ///         validation rejects — so neither `deployLocal` nor `promoteShares` could ever re-derive
+    ///         it. The fund was unrecoverable.
+    function test_deployEverywhere_sugarRejectsAZeroBaseAsset() public {
+        oivConfig.sharesParams.asset = address(0);
+        vm.expectRevert(CcipOivDeployer.InvalidSharesChain.selector);
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+    }
+
+    function test_quoteDeployEverywhere_sugarRejectsAZeroBaseAsset() public {
+        oivConfig.sharesParams.asset = address(0);
+        vm.expectRevert(CcipOivDeployer.InvalidSharesChain.selector);
+        orchestrator.quoteDeployEverywhere(oivConfig, GAS_LIMIT);
+    }
+
+    /// @dev `deployLocal` and `promoteShares` make no CCIP call, so gating them on the registry would
+    ///      block them on exactly the chains they exist to serve — the registry is baked at
+    ///      construction, so an orchestrator on a chain onboarded later lacks its own id.
+    function test_localOperationsWorkOnAChainAbsentFromTheRegistry() public {
+        vm.chainId(31337); // not a wired chain
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](1);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 31337, asset: oivConfig.sharesParams.asset});
+
+        // Reaches the factory rather than reverting UnknownChain at the door.
+        KpkOivFactory.OivInstance memory inst = orchestrator.deployLocal(oivConfig, topology);
+        assertGt(inst.avatarSafe.code.length, 0, "a local deploy must not need the chain to be wired");
+    }
+
+    /// @dev A successful stack-only local deploy used to return nine zero addresses, so the operator
+    ///      script printed nothing useful after a deploy that worked.
+    function test_deployLocal_stackBranchReturnsTheStackAddresses() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory inst = orchestrator.deployLocal(oivConfig, topology);
+
+        assertGt(inst.avatarSafe.code.length, 0, "avatar Safe must be reported");
+        assertTrue(inst.managerSafe != address(0), "manager Safe must be reported");
+        assertTrue(inst.execRolesModifier != address(0), "exec modifier must be reported");
+        assertEq(inst.kpkSharesProxy, address(0), "and the zero shares fields are the branch signal");
+    }
+
+    /// @dev A selector shared by two chain ids used to desync `_isKnownSelector`: removing one of
+    ///      them cleared the flag while the other still advertised that selector, so a live
+    ///      destination silently rejected every inbound stack.
+    function test_removeChainSelector_keepsASharedSelectorTrusted() public {
+        orchestrator.setChainSelector(4242, BASE_SELECTOR); // same selector as Base, deliberately
+        orchestrator.removeChainSelector(4242);
+
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "Base is still registered");
+        // Base must still be accepted as a source: a topology naming Optimism keeps this chain a
+        // legitimate stack destination, so delivery should succeed rather than revert InvalidSourceChain.
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+        Client.Any2EVMMessage memory message = _messageFor(remote);
+        message.sourceChainSelector = BASE_SELECTOR;
+        _deliver(message);
+    }
+
     // ── Promotion: adding a shares chain after birth ───────────────────────────
 
     /// @dev A topology that declares ONLY Gnosis, so the local chain (mainnet on this fork) is a
@@ -274,6 +334,15 @@ contract CcipOivDeployerTest is OivTestConstants {
     function _gnosisOnlyTopology() internal view returns (CcipOivDeployer.SharesChain[] memory t) {
         t = new CcipOivDeployer.SharesChain[](1);
         t[0] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+    }
+
+    /// @dev The Avatar Safe approves the (predictable) shares proxy, which `promoteShares` now
+    ///      requires up front — a promoted fund is immediately subscribable, so the approval cannot
+    ///      be a follow-up someone might not make.
+    function _approveFromAvatar(CcipOivDeployer.SharesChain[] memory topology) internal {
+        KpkOivFactory.OivInstance memory p = orchestrator.predictOiv(oivConfig, topology);
+        vm.prank(p.avatarSafe);
+        IERC20(oivConfig.sharesParams.asset).approve(p.kpkSharesProxy, type(uint256).max);
     }
 
     /// @notice The whole point: a chain the topology never declared gains the shares token, at the
@@ -287,12 +356,38 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertEq(predicted.kpkSharesProxy.code.length, 0, "no shares token before promotion");
         assertGt(predicted.avatarSafe.code.length, 0, "but the stack is live");
 
+        _approveFromAvatar(topology);
         vm.prank(oivConfig.admin);
         KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
 
         assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promoted proxy must be the canonical one");
         assertEq(promoted.avatarSafe, predicted.avatarSafe, "and reuse the existing Avatar Safe");
         assertGt(promoted.kpkSharesProxy.code.length, 0, "shares token now exists");
+    }
+
+    /// @notice `_deriveSalts`'s caller-mixing protects only the shares impl and proxy. The Avatar
+    ///         Safe, Manager Safe and three Roles Modifiers come from the PERMISSIONLESS
+    ///         `safeProxyFactory` / `moduleProxyFactory`, whose salts are public functions of the
+    ///         config — so anyone can land those addresses. An earlier version of the guard tested
+    ///         code at the Avatar Safe, which is exactly the address an attacker can create, and
+    ///         promotion then succeeded against a stack that was four-fifths absent: a shares token at
+    ///         the fund's canonical address whose portfolio Safe has no execution path.
+    ///
+    ///         The exec Roles Modifier's avatar is the check that cannot be forged — a squatted
+    ///         modifier is initialized pointing at the factory, and only a completed stack deployment
+    ///         repoints it at the Avatar Safe.
+    function test_deployShares_revertsOnASquattedButUnwiredStack() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        // Stand in for a third-party squat: code at the Avatar Safe, nothing wired.
+        vm.etch(predicted.avatarSafe, hex"60006000fd");
+        assertGt(predicted.avatarSafe.code.length, 0, "Avatar Safe address is occupied");
+
+        _approveFromAvatar(topology);
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(KpkOivFactory.StackNotDeployed.selector);
+        orchestrator.promoteShares(oivConfig, topology);
     }
 
     /// @notice The gate. The base asset is the one field the salt does not bind, so an open promotion
@@ -327,6 +422,7 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.deployLocal(oivConfig, topology); // permissionless, lands the stack
         assertGt(predicted.avatarSafe.code.length, 0, "attacker paid for the fund's stack");
 
+        _approveFromAvatar(topology);
         vm.prank(oivConfig.admin);
         KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
         assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promotion still lands canonically");
@@ -348,19 +444,26 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.promoteShares(oivConfig, _gnosisOnlyTopology());
     }
 
-    /// @dev Approvals are deliberately deferred to the fund's admin via the exec Roles Modifier. Pin
-    ///      the intermediate state so nobody mistakes it for a completed deployment.
-    function test_promoteShares_leavesTheAvatarAllowanceAtZero() public {
+    /// @notice Was `test_promoteShares_leavesTheAvatarAllowanceAtZero`, which PINNED the gap rather
+    ///         than closing it. A promoted fund is immediately subscribable — `requestSubscription`
+    ///         has no admin, operator or pause gate — while redemption settlement pulls from the
+    ///         Avatar Safe, so an investor could be settled in and then be unable to redeem until an
+    ///         off-chain admin transaction landed. The approval is now a precondition, and since the
+    ///         proxy address is predictable beforehand there is no window at all.
+    function test_promoteShares_requiresTheApprovalBeforeItWillPromote() public {
         CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
         orchestrator.deployLocal(oivConfig, topology);
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, oivConfig.sharesParams.asset)
+        );
+        orchestrator.promoteShares(oivConfig, topology);
+
+        _approveFromAvatar(topology);
         vm.prank(oivConfig.admin);
         KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
-
-        assertEq(
-            IERC20(oivConfig.sharesParams.asset).allowance(promoted.avatarSafe, promoted.kpkSharesProxy),
-            0,
-            "approvals must NOT be granted here - the admin grants them through the exec modifier"
-        );
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "promotion succeeds once the approval exists");
     }
 
     function _fee(uint256 n) internal pure returns (uint256) {

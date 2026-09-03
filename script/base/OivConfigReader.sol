@@ -122,15 +122,19 @@ abstract contract OivConfigReader is Script {
     ///      `.oiv.assetOverrides` exactly as `_assetForThisChain` would resolve it there.
     ///
     ///      Required by every orchestrator entry point, because the topology is salt-bound: it decides
-    ///      which chains run `deployOiv`, which receive stacks, and which refuse them. An absent
-    ///      `.sharesChains` yields the single-chain topology for the chain the script is running on,
-    ///      matching the direct-script default.
+    ///      which chains run `deployOiv`, which receive stacks, and which refuse them — and it is part
+    ///      of the fund's identity.
     function _buildSharesChains(string memory json) internal view returns (CcipOivDeployer.SharesChain[] memory out) {
-        if (!vm.keyExists(json, ".sharesChains")) {
-            out = new CcipOivDeployer.SharesChain[](1);
-            out[0] = CcipOivDeployer.SharesChain({chainId: block.chainid, asset: _assetForThisChain(json)});
-            return out;
-        }
+        // REQUIRED for the orchestrator path, deliberately, with no chain-dependent fallback. A
+        // default of "the chain this script happens to run on" makes the topology — and therefore the
+        // salt — depend on the origin, so the same config file would describe a different fund at
+        // different addresses per chain. That is exactly the defect the salt-bound topology exists to
+        // fix, and it would have crept back in through the script. The direct factory path has no such
+        // problem and keeps its own default in `_shouldDeployShares`.
+        require(
+            vm.keyExists(json, ".sharesChains"),
+            "config: .sharesChains is required for the CCIP path - a per-chain default would make the salt origin-dependent"
+        );
 
         uint256[] memory ids = json.readUintArray(".sharesChains");
         out = new CcipOivDeployer.SharesChain[](ids.length);

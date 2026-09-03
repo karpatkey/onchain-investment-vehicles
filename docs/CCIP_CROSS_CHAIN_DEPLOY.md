@@ -78,7 +78,7 @@ drain.
 **Anti-front-running (config-bound salt).** The factory mixes its caller into every CREATE2 salt to
 stop salt-squatting, but the orchestrator is the factory's *uniform* caller on every chain, which would
 neutralise that protection now that deploy is permissionless. To restore it the orchestrator derives
-the salt from the **whole config** — `salt = keccak256(abi.encode(config))`. Any config difference
+the salt from the **whole config and the fund's shares topology**, with the base asset excluded because it legitimately differs per chain — `salt = keccak256(abi.encode(config-with-zeroed-asset, sharesChains))`. Any other config difference
 (notably `admin`) changes *every* deployed address, so an attacker cannot land a fund at another
 config's addresses; an identical config still yields identical addresses on every chain. **Off-chain
 code must predict via the orchestrator's `predictOiv(config)`** (which applies this derivation), not
