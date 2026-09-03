@@ -29,7 +29,7 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
 | `CcipOivDeployer` (orchestrator) | `0xa9e8070eA48f7BFE4981905b1550FdD5bdE113B7` |
-| `KpkTimelockDeployer` | `0x5fAce1a23BAFa1f0112c9dbE50BeCa90DEC26e8f` |
+| `KpkTimelockDeployer` | `0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkSharesDeployer` is gone from this table because the contract is deleted: every fund's shares
