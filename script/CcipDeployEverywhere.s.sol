@@ -34,12 +34,13 @@ contract CcipDeployEverywhere is OivConfigReader {
     // ── Entry points ───────────────────────────────────────────────────────────
 
     function predict(address orchestrator, string calldata configPath) external view {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         KpkOivFactory factory = orch.factory();
         // Use the orchestrator's predictOiv (applies the config-bound salt the deploy path uses), NOT
         // the factory's raw predictOivAddresses, which would key on the un-derived config.salt.
-        KpkOivFactory.OivInstance memory predicted = orch.predictOiv(config);
+        KpkOivFactory.OivInstance memory predicted = orch.predictOiv(config, _buildSharesChains(json));
 
         console.log("============================================================");
         console.log("  Predicted OIV addresses (caller = orchestrator)");
@@ -52,14 +53,45 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
     }
 
+    /// @notice Deploys THIS chain's part of a fund with no CCIP — the shares token if the topology
+    ///         says this chain carries it, the operational stack otherwise.
+    /// @dev    Run this on every shares chain after the first. The fan-out deliberately skips shares
+    ///         chains, because a stack landing on one would permanently take the addresses its own
+    ///         `deployOiv` needs — so each is filled here instead. Shares never travel over CCIP:
+    ///         `deployOiv` measures ~2.88M gas against a 3,000,000 destination cap on half the lanes.
+    ///
+    ///         Ordering against the fan-out does not matter, and because the whole config is
+    ///         salt-bound the result is byte-identical whoever pays the gas.
+    function deployLocal(address orchestrator, string calldata configPath) external {
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        CcipOivDeployer.SharesChain[] memory topology = _buildSharesChains(json);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
+
+        vm.startBroadcast();
+        KpkOivFactory.OivInstance memory instance = orch.deployLocal(config, topology);
+        vm.stopBroadcast();
+
+        console.log("============================================================");
+        if (instance.kpkSharesProxy == address(0)) {
+            console.log("  Stack deployed locally (this chain carries no shares)");
+        } else {
+            console.log("  Fund deployed locally (this chain carries shares)");
+        }
+        console.log("============================================================");
+        _logInstance(instance);
+        console.log("============================================================");
+    }
+
     function quote(address orchestrator, string calldata configPath, uint256[] calldata destChainIds, uint256 gasLimit)
         external
         view
     {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         (uint256 totalFee, uint256[] memory feePerDestination) =
-            orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
+            orch.quoteDeployEverywhere(config, _buildSharesChains(json), destChainIds, gasLimit);
 
         console.log("============================================================");
         console.log("  CCIP fan-out NATIVE fee quote");
@@ -80,14 +112,16 @@ contract CcipDeployEverywhere is OivConfigReader {
         uint256[] calldata destChainIds,
         uint256 gasLimit
     ) external {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        CcipOivDeployer.SharesChain[] memory topology = _buildSharesChains(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
 
         // Size the native fee now and send it as msg.value, with a buffer so a fee increase between
         // this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus to the
         // broadcasting EOA. Buffer is operator-tunable via FEE_BUFFER_PCT (default 10%); raise it on
         // volatile L1 fan-outs.
-        (uint256 totalFee,) = orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
+        (uint256 totalFee,) = orch.quoteDeployEverywhere(config, topology, destChainIds, gasLimit);
         uint256 bufferPct = vm.envOr("FEE_BUFFER_PCT", uint256(10));
         uint256 valueToSend = totalFee + (totalFee * bufferPct) / 100;
 
@@ -95,7 +129,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         // `--private-key`); no raw key is read from the environment here.
         vm.startBroadcast();
         (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) =
-            orch.deployEverywhere{value: valueToSend}(config, destChainIds, gasLimit);
+            orch.deployEverywhere{value: valueToSend}(config, topology, destChainIds, gasLimit);
         vm.stopBroadcast();
 
         console.log("============================================================");

@@ -199,19 +199,19 @@ contract CcipNetworksSyncTest is Test {
     ///         Asserts both directions — every wired chain is baked with the right selector, and
     ///         nothing is baked that the registry does not list as wired.
     function test_bakedTopologyMatchesRegistry() public {
-        string memory json = vm.readFile("script/ccip-networks.json");
+        string memory registry = vm.readFile("script/ccip-networks.json");
         CcipOivDeployer orch = new CcipOivDeployer(address(this), address(this));
 
         uint256 wired;
         for (uint256 i = 0;; i++) {
             string memory base = string.concat(".networks[", vm.toString(i), "]");
-            if (!vm.keyExists(json, string.concat(base, ".chainId"))) break;
+            if (!vm.keyExists(registry, string.concat(base, ".chainId"))) break;
 
             string memory name = json.readString(string.concat(base, ".name"));
             uint256 chainId = json.readUint(string.concat(base, ".chainId"));
             string memory verdict = json.readString(string.concat(base, ".verdict"));
-            bool excluded =
-                vm.keyExists(json, string.concat(base, ".excluded")) && json.readBool(string.concat(base, ".excluded"));
+            bool excluded = vm.keyExists(registry, string.concat(base, ".excluded"))
+                && json.readBool(string.concat(base, ".excluded"));
             bool isWired = !excluded
                 && (keccak256(bytes(verdict)) == keccak256(bytes("READY"))
                     || keccak256(bytes(verdict)) == keccak256(bytes("READY-AFTER-EMPTY")));

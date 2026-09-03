@@ -81,6 +81,20 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice LINK token used to pay CCIP fees on the current chain. Differs per chain.
     address public linkToken;
 
+    /// @notice One chain that carries this fund's shares token, and the base asset it uses there.
+    /// @dev    The fund's cross-chain topology, made a first-class parameter. Its absence was the
+    ///         single root cause of three defects: the per-chain asset leaked into the salt (so the
+    ///         same config file produced different addresses per chain), the fan-out bombed every
+    ///         chain with a stack including the ones meant to carry shares, and `ccipReceive` could
+    ///         not refuse a stack aimed at a chain reserved for `deployOiv`.
+    struct SharesChain {
+        /// @notice Chain id that runs `deployOiv` for this fund.
+        uint256 chainId;
+        /// @notice The base asset on that chain. Chain-specific by nature — a fund uses a different
+        ///         stablecoin on each chain — which is exactly why it must not be hashed verbatim.
+        address asset;
+    }
+
     /// @dev True for every selector currently in the registry. `ccipReceive` needs to answer "is this
     ///      a chain I know?" in O(1); iterating `_chainIds` would cost ~19 cold SLOADs on a path that
     ///      has to fit inside CCIP's destination gas budget. Maintained in lockstep with
@@ -145,6 +159,31 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     error RefundFailed();
     /// @notice Thrown when a destination chain id has no configured CCIP selector.
     error UnknownChain(uint256 chainId);
+
+    /// @notice Thrown when `sharesChains` is not strictly ascending by `chainId`. Ordering is part of
+    ///         the contract: the topology is hashed into the salt, so two orderings of one topology
+    ///         would otherwise describe two different funds.
+    /// @param  chainId The out-of-order entry.
+    error SharesChainsNotAscending(uint256 chainId);
+
+    /// @notice Thrown when a `sharesChains` entry has a zero chain id or a zero asset.
+    error InvalidSharesChain();
+
+    /// @notice Thrown when the local chain carries shares but `config.sharesParams.asset` disagrees
+    ///         with what the topology names for it. The topology commits to each chain's asset;
+    ///         without this check that commitment would be decorative.
+    /// @param  expected The asset the topology names for this chain.
+    /// @param  actual   The asset the config supplied.
+    error AssetMismatch(address expected, address actual);
+
+    /// @notice Thrown when an explicit destination list names a chain that carries shares. Landing a
+    ///         stack there would permanently occupy the addresses its `deployOiv` needs.
+    /// @param  chainId The offending destination.
+    error SharesChainNotAStackDestination(uint256 chainId);
+
+    /// @notice Thrown by `ccipReceive` when an inbound stack targets a chain this fund's topology
+    ///         reserves for shares — the receiver-side half of the same guard.
+    error SharesChainRefusesStack();
     /// @notice Thrown when a chain id of zero is supplied to a selector setter.
     error ZeroChainId();
     /// @notice Thrown when `setChainSelectors` is given arrays of differing lengths.
@@ -349,15 +388,68 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
-        return _deployEverywhere(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
+        // Sugar for the single-shares-chain case: this chain carries the shares, every other wired
+        // chain gets a stack. Matches the semantics this overload always had.
+        //
+        // WARNING: the topology is inside the salt, so calling this from a different chain describes a
+        // DIFFERENT fund at different addresses — not the same fund homed elsewhere.
+        SharesChain[] memory local = new SharesChain[](1);
+        local[0] = SharesChain({chainId: block.chainid, asset: config.sharesParams.asset});
+        return _deployEverywhere(
+            _effectiveConfig(config, local),
+            _stackSelectors(local),
+            _sharesChainIds(local),
+            config.sharesParams.asset,
+            config.sharesParams.asset,
+            gasLimit
+        );
+    }
+
+    /// @notice Deploys the fund on this chain and fans stacks out to every wired chain that does NOT
+    ///         carry shares.
+    /// @dev    Shares chains are skipped rather than messaged: a stack landing on one would take the
+    ///         addresses its own `deployOiv` needs, permanently. Each additional shares chain is
+    ///         filled by its own `deployLocal` call — shares never travel over CCIP, because
+    ///         `deployOiv` measures at ~2.88M gas against a 3,000,000 destination cap on half the
+    ///         lanes, which one extra timelock member would erase.
+    /// @param  config       Fund parameters. `sharesParams.asset` must match what `sharesChains` names
+    ///                      for this chain, if this chain carries shares.
+    /// @param  sharesChains The fund's topology, strictly ascending by chain id. Declare generously:
+    ///                      a declared-but-undeployed shares chain costs nothing, receives no stack,
+    ///                      and can be filled later by anyone.
+    /// @param  gasLimit     Destination `ccipReceive` gas limit.
+    function deployEverywhere(
+        KpkOivFactory.OivConfig calldata config,
+        SharesChain[] calldata sharesChains,
+        uint256 gasLimit
+    )
+        external
+        payable
+        nonReentrant
+        onlyWiredChain
+        returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
+    {
+        _validateSharesChains(sharesChains);
+        return _deployEverywhere(
+            _effectiveConfig(config, sharesChains),
+            _stackSelectors(sharesChains),
+            _sharesChainIds(sharesChains),
+            _assetFor(sharesChains, block.chainid),
+            config.sharesParams.asset,
+            gasLimit
+        );
     }
 
     /// @notice Same as `deployEverywhere(config, gasLimit)` but fans out only to the given `destChainIds`
     ///         (each resolved via `chainSelectorOf`; an unconfigured id reverts `UnknownChain`; the
     ///         local chain, if present, is skipped). Structural preconditions are enforced once inside
     ///         `_deployEverywhere`, matching the no-array overload.
+    /// @notice As above, but to an explicit destination subset — for a partial or retried rollout.
+    /// @dev    Naming a shares chain here reverts `SharesChainNotAStackDestination` rather than being
+    ///         silently skipped: in an explicit list it is a caller error worth surfacing.
     function deployEverywhere(
         KpkOivFactory.OivConfig calldata config,
+        SharesChain[] calldata sharesChains,
         uint256[] calldata destChainIds,
         uint256 gasLimit
     )
@@ -367,24 +459,73 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
     {
-        return _deployEverywhere(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
+        _validateSharesChains(sharesChains);
+        return _deployEverywhere(
+            _effectiveConfig(config, sharesChains),
+            _resolveStackSelectors(destChainIds, sharesChains),
+            _sharesChainIds(sharesChains),
+            _assetFor(sharesChains, block.chainid),
+            config.sharesParams.asset,
+            gasLimit
+        );
+    }
+
+    /// @notice Deploys this chain's part of the fund with no CCIP at all — the shares token if this
+    ///         chain carries it, the operational stack otherwise.
+    /// @dev    This is what makes a SECOND shares chain reachable: the fan-out deliberately skips
+    ///         shares chains, so each one is filled by its own call here. Permissionless and
+    ///         idempotent in effect — anyone may run it, ordering against the fan-out is irrelevant,
+    ///         and because the whole config is salt-bound the result is byte-identical whoever pays.
+    /// @param  config       Fund parameters, with this chain's base asset.
+    /// @param  sharesChains The same topology used everywhere else for this fund.
+    function deployLocal(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
+        external
+        nonReentrant
+        onlyWiredChain
+        returns (KpkOivFactory.OivInstance memory instance)
+    {
+        _validateSharesChains(sharesChains);
+        KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
+        address expected = _assetFor(sharesChains, block.chainid);
+
+        if (expected == address(0)) {
+            KpkOivFactory.StackInstance memory stack = factory.deployStack(factory.oivToStackConfig(eff));
+            emit StackReceived(0, bytes32(0), stack);
+            return instance;
+        }
+
+        if (expected != config.sharesParams.asset) revert AssetMismatch(expected, config.sharesParams.asset);
+        instance = factory.deployOiv(eff);
+        emit LocalOivDeployed(instance);
     }
 
     /// @dev Local full OIV (`msg.sender` to the factory is this orchestrator — the uniform caller on
     ///      every chain, so all addresses align) then CCIP fan-out. `config` is already the
     ///      config-bound-salt `_effectiveConfig`. The fee is priced and checked against `msg.value`
     ///      BEFORE the (~7M-gas) deployOiv, so an underfunded call fails fast without burning it.
-    function _deployEverywhere(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
-        internal
-        returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds)
-    {
+    /// @dev The local half is `deployOiv` when this chain carries shares and `deployStack` when it
+    ///      does not, so a fan-out started from a stack-only chain is still coherent.
+    function _deployEverywhere(
+        KpkOivFactory.OivConfig memory config,
+        uint64[] memory destSelectors,
+        uint256[] memory sharesChainIds,
+        address expectedAsset,
+        address suppliedAsset,
+        uint256 gasLimit
+    ) internal returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
         if (destSelectors.length == 0) revert NoDestinations();
         (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
-            _price(config, destSelectors, gasLimit);
+            _price(config, destSelectors, sharesChainIds, gasLimit);
         if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
 
-        instance = factory.deployOiv(config);
-        emit LocalOivDeployed(instance);
+        if (expectedAsset == address(0)) {
+            KpkOivFactory.StackInstance memory stack = factory.deployStack(factory.oivToStackConfig(config));
+            emit StackReceived(0, bytes32(0), stack);
+        } else {
+            if (expectedAsset != suppliedAsset) revert AssetMismatch(expectedAsset, suppliedAsset);
+            instance = factory.deployOiv(config);
+            emit LocalOivDeployed(instance);
+        }
 
         messageIds = _send(message, destSelectors, fees, totalFee);
     }
@@ -400,17 +541,17 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         at the fund's existing operational addresses. A destination that already has the
     ///         stack will revert on the CREATE2 collision when its message executes — do not
     ///         re-dispatch to an already-deployed chain.
-    function dispatchTo(KpkOivFactory.OivConfig calldata config, uint256[] calldata destChainIds, uint256 gasLimit)
-        external
-        payable
-        nonReentrant
-        onlyWiredChain
-        returns (bytes32[] memory messageIds)
-    {
-        uint64[] memory destSelectors = _resolveSelectors(destChainIds);
+    function dispatchTo(
+        KpkOivFactory.OivConfig calldata config,
+        SharesChain[] calldata sharesChains,
+        uint256[] calldata destChainIds,
+        uint256 gasLimit
+    ) external payable nonReentrant onlyWiredChain returns (bytes32[] memory messageIds) {
+        _validateSharesChains(sharesChains);
+        uint64[] memory destSelectors = _resolveStackSelectors(destChainIds, sharesChains);
         if (destSelectors.length == 0) revert NoDestinations();
         (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
-            _price(_effectiveConfig(config), destSelectors, gasLimit);
+            _price(_effectiveConfig(config, sharesChains), destSelectors, _sharesChainIds(sharesChains), gasLimit);
         if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
         messageIds = _send(message, destSelectors, fees, totalFee);
     }
@@ -427,28 +568,54 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         view
         returns (uint256 totalFee, uint256[] memory feePerDestination)
     {
-        (, totalFee, feePerDestination) = _price(_effectiveConfig(config), _allConfiguredSelectors(), gasLimit);
+        SharesChain[] memory local = new SharesChain[](1);
+        local[0] = SharesChain({chainId: block.chainid, asset: config.sharesParams.asset});
+        (, totalFee, feePerDestination) =
+            _price(_effectiveConfig(config, local), _stackSelectors(local), _sharesChainIds(local), gasLimit);
     }
 
     /// @notice Same, for an explicit subset of `destChainIds` — matches the 3-arg `deployEverywhere`.
     function quoteDeployEverywhere(
         KpkOivFactory.OivConfig calldata config,
+        SharesChain[] calldata sharesChains,
+        uint256 gasLimit
+    ) external view returns (uint256 totalFee, uint256[] memory feePerDestination) {
+        _validateSharesChains(sharesChains);
+        (, totalFee, feePerDestination) = _price(
+            _effectiveConfig(config, sharesChains),
+            _stackSelectors(sharesChains),
+            _sharesChainIds(sharesChains),
+            gasLimit
+        );
+    }
+
+    /// @notice Fee quote for an explicit destination subset.
+    function quoteDeployEverywhere(
+        KpkOivFactory.OivConfig calldata config,
+        SharesChain[] calldata sharesChains,
         uint256[] calldata destChainIds,
         uint256 gasLimit
     ) external view returns (uint256 totalFee, uint256[] memory feePerDestination) {
-        (, totalFee, feePerDestination) = _price(_effectiveConfig(config), _resolveSelectors(destChainIds), gasLimit);
+        _validateSharesChains(sharesChains);
+        (, totalFee, feePerDestination) = _price(
+            _effectiveConfig(config, sharesChains),
+            _resolveStackSelectors(destChainIds, sharesChains),
+            _sharesChainIds(sharesChains),
+            gasLimit
+        );
     }
 
     /// @notice Predicts the seven fund addresses a `deployEverywhere`/`dispatchTo` for `config` would
     ///         produce, using the SAME config-bound salt the deploy path uses (`_effectiveConfig`).
     ///         Off-chain callers MUST use this rather than the factory's raw `predictOivAddresses`,
     ///         which would key on the un-derived `config.salt`.
-    function predictOiv(KpkOivFactory.OivConfig calldata config)
+    function predictOiv(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
         external
         view
         returns (KpkOivFactory.OivInstance memory)
     {
-        return factory.predictOivAddresses(_effectiveConfig(config), address(this));
+        _validateSharesChains(sharesChains);
+        return factory.predictOivAddresses(_effectiveConfig(config, sharesChains), address(this));
     }
 
     /// @dev Single source of truth for fee computation: builds the (loop-invariant) CCIP message once
@@ -456,13 +623,16 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      `dispatchTo` so the quoted and charged fees can never drift. The `StackConfig` payload comes
     ///      from `factory.oivToStackConfig` so it also cannot drift from `deployOiv`'s mapping. Reverts
     ///      `NotConfigured` if the router is unset.
-    function _price(KpkOivFactory.OivConfig memory config, uint64[] memory destSelectors, uint256 gasLimit)
-        internal
-        view
-        returns (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees)
-    {
+    function _price(
+        KpkOivFactory.OivConfig memory config,
+        uint64[] memory destSelectors,
+        uint256[] memory sharesChainIds,
+        uint256 gasLimit
+    ) internal view returns (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) {
         if (router == address(0)) revert NotConfigured();
-        message = _buildMessage(abi.encode(factory.oivToStackConfig(config)), gasLimit);
+        // The topology rides along so every destination can refuse a stack aimed at a shares chain,
+        // independently of the source having excluded it.
+        message = _buildMessage(abi.encode(factory.oivToStackConfig(config), sharesChainIds), gasLimit);
         IRouterClient ccipRouter = IRouterClient(router);
         uint256 n = destSelectors.length;
         fees = new uint256[](n);
@@ -513,8 +683,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // address can be the source sender, and that address is a deterministic function of the
         // orchestrator's creation code. This check narrows it further, to the chains we actually
         // wired — without it, anyone could CREATE2 the same bytecode on any CCIP-supported chain and
-        // send from there. Worth noting the blast radius either way is bounded: `deployStack` is
-        // permissionless, so a forged message can only do what any caller can already do directly.
+        // send from there.
+        //
+        // An earlier version of this comment claimed the blast radius was bounded because "deployStack
+        // is permissionless, so a forged message can only do what any caller can already do directly."
+        // That was wrong: `KpkOivFactory._deriveSalts` mixes `msg.sender` into every salt, so a direct
+        // caller can NEVER reach orchestrator-derived addresses — only a sibling orchestrator can. The
+        // sender check below is what makes that safe, and the shares-chain refusal further down is
+        // what stops a genuine sibling being used to occupy a fund's addresses.
         if (!_isKnownSelector[message.sourceChainSelector]) {
             revert InvalidSourceChain(message.sourceChainSelector);
         }
@@ -523,7 +699,19 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         address sourceSender = abi.decode(message.sender, (address));
         if (sourceSender != address(this)) revert InvalidSourceSender(sourceSender);
 
-        KpkOivFactory.StackConfig memory stackConfig = abi.decode(message.data, (KpkOivFactory.StackConfig));
+        (KpkOivFactory.StackConfig memory stackConfig, uint256[] memory sharesChainIds) =
+            abi.decode(message.data, (KpkOivFactory.StackConfig, uint256[]));
+
+        // The receiver-side half of the shares-chain guard, and the reason this is not merely
+        // belt-and-braces: the fan-out that excludes shares chains runs on the SOURCE, and any wired
+        // chain may now be a source. Without this, anyone who knew a fund's config could dispatch a
+        // stack at the chain meant to run `deployOiv`, permanently occupying the addresses that fund
+        // needs — a fund config denied forever, recoverable only by changing the config and moving
+        // every address on every chain.
+        for (uint256 i = 0; i < sharesChainIds.length; i++) {
+            if (sharesChainIds[i] == block.chainid) revert SharesChainRefusesStack();
+        }
+
         KpkOivFactory.StackInstance memory inst = factory.deployStack(stackConfig);
         emit StackReceived(message.sourceChainSelector, message.messageId, inst);
     }
@@ -568,51 +756,120 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      cannot land a fund at another config's addresses, while an identical config still yields
     ///      identical addresses on every chain. The local deploy and the dispatched `StackConfig` both
     ///      use this derived salt, so cross-chain stack addresses still match.
-    function _effectiveConfig(KpkOivFactory.OivConfig calldata config)
+    function _effectiveConfig(KpkOivFactory.OivConfig calldata config, SharesChain[] memory sharesChains)
         internal
         pure
         returns (KpkOivFactory.OivConfig memory eff)
     {
         eff = config;
-        eff.salt = uint256(keccak256(abi.encode(config)));
+
+        // The base asset is the ONE field that legitimately differs per chain, so hashing it verbatim
+        // made the same config file produce different addresses on different chains — silently
+        // breaking the invariant this whole design exists to provide. It is zeroed for the hash and
+        // committed to through `sharesChains` instead, which is identical everywhere.
+        //
+        // Everything else stays bound verbatim, and that is deliberate. The shares proxy's address does
+        // not depend on its initialization parameters (see `KpkOivFactory._predictSharesProxy`), so a
+        // salt that omitted `sharesParams` would let anyone deploy this fund at its CANONICAL
+        // addresses with a hostile `feeReceiver`, hostile fee rates, or no `sharesTimelock`. Binding
+        // the whole config is what keeps a hostile replay an availability problem rather than a
+        // capture of the fund's economics.
+        eff.sharesParams.asset = address(0);
+        eff.salt = uint256(keccak256(abi.encode(eff, sharesChains)));
+        eff.sharesParams.asset = config.sharesParams.asset;
     }
 
-    /// @dev Resolves caller-supplied destination chain ids to their CCIP selectors via the
-    ///      owner-managed `chainSelectorOf` registry, reverting `UnknownChain` for any unconfigured id.
-    ///      The local chain is skipped (you never CCIP-message your own chain) — same rule as
-    ///      `_allConfiguredSelectors`, so the explicit-subset and all-chains paths behave consistently.
-    function _resolveSelectors(uint256[] calldata chainIds) internal view returns (uint64[] memory selectors) {
-        uint256 count;
-        for (uint256 i = 0; i < chainIds.length; i++) {
-            if (chainIds[i] != block.chainid) count++;
+    /// @dev Rejects a topology that is unordered, degenerate, or would make one fund's addresses
+    ///      ambiguous. Strictly ascending by `chainId` gives one canonical encoding per topology and
+    ///      kills duplicates in the same pass.
+    function _validateSharesChains(SharesChain[] memory sharesChains) internal pure {
+        uint256 previous;
+        for (uint256 i = 0; i < sharesChains.length; i++) {
+            uint256 chainId = sharesChains[i].chainId;
+            if (chainId == 0 || sharesChains[i].asset == address(0)) revert InvalidSharesChain();
+            if (chainId <= previous) revert SharesChainsNotAscending(chainId);
+            previous = chainId;
         }
-        selectors = new uint64[](count);
-        uint256 j;
-        for (uint256 i = 0; i < chainIds.length; i++) {
-            if (chainIds[i] == block.chainid) continue;
-            uint64 selector = chainSelectorOf[chainIds[i]];
-            if (selector == 0) revert UnknownChain(chainIds[i]);
-            selectors[j++] = selector;
+    }
+
+    /// @dev The asset the topology names for `chainId`, or `address(0)` if it carries no shares.
+    function _assetFor(SharesChain[] memory sharesChains, uint256 chainId) internal pure returns (address) {
+        for (uint256 i = 0; i < sharesChains.length; i++) {
+            if (sharesChains[i].chainId == chainId) return sharesChains[i].asset;
+        }
+        return address(0);
+    }
+
+    /// @dev The chain ids alone, for the CCIP payload. Destinations need to know which chains are
+    ///      reserved for shares; they have no use for the assets.
+    function _sharesChainIds(SharesChain[] memory sharesChains) internal pure returns (uint256[] memory ids) {
+        ids = new uint256[](sharesChains.length);
+        for (uint256 i = 0; i < sharesChains.length; i++) {
+            ids[i] = sharesChains[i].chainId;
         }
     }
 
     /// @dev Selectors for every configured chain id EXCEPT the local chain — so an all-chains fan-out
     ///      never tries to CCIP-message its own chain (which the router would reject). Reverts
     ///      `NoDestinations` if no remote chain is configured.
-    function _allConfiguredSelectors() internal view returns (uint64[] memory selectors) {
+    /// @dev Every wired chain except the local one AND every shares chain. Shares chains are skipped
+    ///      silently here — in the all-chains path their exclusion is the intended behaviour, not a
+    ///      caller mistake. A stack landing on one would take the addresses its `deployOiv` needs.
+    function _stackSelectors(SharesChain[] memory sharesChains) internal view returns (uint64[] memory selectors) {
         uint256 n = _chainIds.length;
         uint256 count;
         for (uint256 i = 0; i < n; i++) {
-            if (_chainIds[i] != block.chainid) count++;
+            uint256 cid = _chainIds[i];
+            if (cid != block.chainid && _assetFor(sharesChains, cid) == address(0)) count++;
         }
         if (count == 0) revert NoDestinations();
         selectors = new uint64[](count);
         uint256 j;
         for (uint256 i = 0; i < n; i++) {
             uint256 cid = _chainIds[i];
-            if (cid == block.chainid) continue;
+            if (cid == block.chainid || _assetFor(sharesChains, cid) != address(0)) continue;
             selectors[j++] = chainSelectorOf[cid];
         }
+    }
+
+    /// @dev Resolves an EXPLICIT destination list, rejecting any shares chain. Unlike the all-chains
+    ///      path this reverts rather than skipping: naming a shares chain by hand is a caller error,
+    ///      and swallowing it would send a fund's rollout somewhere it can never complete.
+    function _resolveStackSelectors(uint256[] calldata chainIds, SharesChain[] memory sharesChains)
+        internal
+        view
+        returns (uint64[] memory selectors)
+    {
+        uint256 count;
+        for (uint256 i = 0; i < chainIds.length; i++) {
+            // The local chain is skipped BEFORE the shares check, preserving the long-standing "you
+            // never CCIP-message your own chain" rule. It is normally also a shares chain, and
+            // rejecting a caller for naming it would turn a harmless no-op into a revert.
+            if (chainIds[i] == block.chainid) continue;
+            if (_assetFor(sharesChains, chainIds[i]) != address(0)) {
+                revert SharesChainNotAStackDestination(chainIds[i]);
+            }
+            count++;
+        }
+        selectors = new uint64[](count);
+        uint256 j;
+        for (uint256 i = 0; i < chainIds.length; i++) {
+            if (chainIds[i] == block.chainid) continue;
+            uint64 sel = chainSelectorOf[chainIds[i]];
+            if (sel == 0) revert UnknownChain(chainIds[i]);
+            selectors[j++] = sel;
+        }
+    }
+
+    /// @dev The effective salt for a `(config, topology)` pair, exposed so off-chain tooling and tests
+    ///      can check the derivation without reimplementing it. `view` only because `_effectiveConfig`
+    ///      is; it reads no state.
+    function effectiveSalt(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
+        external
+        pure
+        returns (uint256)
+    {
+        return _effectiveConfig(config, sharesChains).salt;
     }
 
     /// @dev Builds the CCIP message: receiver is this contract's sibling on the destination chain

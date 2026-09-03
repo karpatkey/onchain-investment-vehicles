@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
 import {TimelockParams} from "../../src/interfaces/IKpkTimelockDeployer.sol";
+import {CcipOivDeployer} from "../../src/CcipOivDeployer.sol";
 
 /// @title  OivConfigReader
 /// @notice Single source of truth for parsing an OIV fund config JSON (the format produced by the
@@ -99,8 +100,15 @@ abstract contract OivConfigReader is Script {
 
     /// @dev The base asset for the chain this script is running on. Funds use a different stablecoin
     ///      per chain, so `.oiv.assetOverrides.<chainId>` wins over `.oiv.sharesParams.asset` when
-    ///      present. Since the shares proxy address no longer depends on the asset, a per-chain asset
-    ///      does not move the fund's address.
+    ///      present.
+    ///
+    ///      This does not move a fund's address on EITHER path, but for two different reasons, and an
+    ///      earlier version of this comment got the second one wrong. On the direct factory path the
+    ///      shares proxy's address simply does not depend on its initialization parameters. On the
+    ///      CCIP path the orchestrator hashes the whole config into its salt, so a per-chain asset
+    ///      DID move all seven addresses — the same config file produced a different fund on every
+    ///      chain. `CcipOivDeployer._effectiveConfig` now zeroes the asset before hashing and commits
+    ///      to it through the `sharesChains` topology instead, which is identical everywhere.
     function _assetForThisChain(string memory json) internal view returns (address) {
         string memory key = string.concat(".oiv.assetOverrides.", vm.toString(block.chainid));
         return vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
@@ -109,6 +117,35 @@ abstract contract OivConfigReader is Script {
     /// @dev Whether this chain should receive the shares token as well as the operational stack.
     ///      An absent `.sharesChains` means "no opinion" and leaves the choice with whichever entry
     ///      point the operator invoked, which is how this worked before the list existed.
+    /// @dev The fund's cross-chain topology, as the orchestrator wants it: `(chainId, asset)` for
+    ///      every chain in `.sharesChains`, ascending, with each chain's own asset resolved from
+    ///      `.oiv.assetOverrides` exactly as `_assetForThisChain` would resolve it there.
+    ///
+    ///      Required by every orchestrator entry point, because the topology is salt-bound: it decides
+    ///      which chains run `deployOiv`, which receive stacks, and which refuse them. An absent
+    ///      `.sharesChains` yields the single-chain topology for the chain the script is running on,
+    ///      matching the direct-script default.
+    function _buildSharesChains(string memory json) internal view returns (CcipOivDeployer.SharesChain[] memory out) {
+        if (!vm.keyExists(json, ".sharesChains")) {
+            out = new CcipOivDeployer.SharesChain[](1);
+            out[0] = CcipOivDeployer.SharesChain({chainId: block.chainid, asset: _assetForThisChain(json)});
+            return out;
+        }
+
+        uint256[] memory ids = json.readUintArray(".sharesChains");
+        out = new CcipOivDeployer.SharesChain[](ids.length);
+        for (uint256 i = 0; i < ids.length; i++) {
+            // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
+            // two orderings would be two funds. Fail here with the offending id rather than letting
+            // the revert surface from inside the orchestrator.
+            require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
+            string memory key = string.concat(".oiv.assetOverrides.", vm.toString(ids[i]));
+            address asset =
+                vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
+            out[i] = CcipOivDeployer.SharesChain({chainId: ids[i], asset: asset});
+        }
+    }
+
     function _shouldDeployShares(string memory json) internal view returns (bool) {
         if (!vm.keyExists(json, ".sharesChains")) return true;
         uint256[] memory ids = json.readUintArray(".sharesChains");
