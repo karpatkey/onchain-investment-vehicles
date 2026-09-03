@@ -901,7 +901,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, caller);
         address predictedImpl = IKpkSharesDeployer(kpkSharesDeployer).predictImpl(implSalt);
-        address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl, config.sharesParams, stack.avatarSafe);
+        address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl);
 
         inst = OivInstance({
             avatarSafe: stack.avatarSafe,
@@ -938,19 +938,16 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
-    ///      Mirrors the deployment exactly: same `params.safe` override (predicted Avatar Safe),
-    ///      same `params.admin` placeholder (`address(this)`), same initializer calldata.
-    function _predictSharesProxy(
-        bytes32 proxySalt,
-        address impl,
-        KpkShares.ConstructorParams memory params,
-        address avatarSafe
-    ) internal view returns (address predicted) {
-        params.safe = avatarSafe;
-        params.admin = address(this);
-        bytes memory initCode = abi.encodePacked(
-            type(ERC1967Proxy).creationCode, abi.encode(impl, abi.encodeCall(KpkShares.initialize, (params)))
-        );
+    ///      Mirrors the deployment exactly: empty constructor data, initialization performed
+    ///      afterwards.
+    ///
+    ///      It takes neither the shares parameters nor the Avatar Safe, and that absence is the point
+    ///      rather than an omission: the proxy address is a function of `(factory, proxySalt, impl)`
+    ///      alone. Since `impl` is identical on every chain, so is the proxy — including across chains
+    ///      whose funds use DIFFERENT base assets, which is what lets one fund present the same shares
+    ///      address everywhere.
+    function _predictSharesProxy(bytes32 proxySalt, address impl) internal view returns (address predicted) {
+        bytes memory initCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, ""));
         predicted = _create2Address(address(this), proxySalt, keccak256(initCode));
     }
 
@@ -1327,9 +1324,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         params.safe = avatarSafe;
         params.admin = address(this);
 
-        proxy = address(new ERC1967Proxy{salt: proxySalt}(impl, abi.encodeCall(KpkShares.initialize, (params))));
+        // The proxy is deployed with EMPTY constructor data and initialized on the very next line,
+        // rather than initialized from the constructor. That is what makes a fund's shares proxy land
+        // at the SAME address on every chain: the initializer calldata carries `params.asset`, which is
+        // necessarily chain-specific, and anything in the constructor data is inside the CREATE2 init
+        // code and therefore inside the address. With it removed, the init code is
+        // `creationCode ++ abi.encode(impl, "")` — and `impl` is itself chain-independent, since
+        // `KpkShares` takes no constructor arguments and `KpkSharesDeployer` sits at one address on
+        // every chain. Nothing chain-specific is left.
+        //
+        // The two statements are atomic within this call, so there is no block in which the proxy
+        // exists uninitialized and no window for anyone to front-run `initialize`. (The implementation
+        // is separately protected: `KpkShares`'s constructor calls `_disableInitializers`.)
+        proxy = address(new ERC1967Proxy{salt: proxySalt}(impl, ""));
 
         KpkShares shares = KpkShares(proxy);
+        shares.initialize(params);
 
         if (additionalAssets.length > 0) {
             shares.grantRole(OPERATOR, address(this));
