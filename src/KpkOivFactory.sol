@@ -500,8 +500,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev    `owner()` is the signal because `transferOwnership` is the last act of
     ///         `_wireExecModifier`, in the same transaction as every other wiring call: it reads as
     ///         this factory if and only if no wiring has ever completed. Moving it back requires
-    ///         being the owner, so it cannot be forged in either direction — unlike `avatar()`,
-    ///         which a live fund's admin could repoint with one cheap call.
+    ///         being the owner, where repointing `avatar()` does not — which is why ownership is
+    ///         the signal and the avatar is not.
+    ///         pinned: test_adopt_refusesToTouchACompletedFund
     error StackAlreadyDeployedHere();
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
@@ -1301,8 +1302,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      exactly the state this function would have produced — owner, avatar and target all
     ///      this factory. Nor can that state have drifted since: `setUp` is one-shot and every
     ///      mutator is owner- or module-gated, with the factory as owner and no modules enabled.
-    ///      Pinned against the real factory and the patched mastercopy by the `test_premise_*`
-    ///      tests, since neither property can be inferred from the stock Zodiac sources.
+    ///      Both properties belong to the patched mastercopy rather than to stock Zodiac, so both
+    ///      are pinned against the real factory rather than inferred:
+    ///      pinned: test_premise_squattedModifierIsBornFactoryOwned
+    ///      pinned: test_premise_squattedModifierCannotBeReInitialized
+    ///      pinned: test_premise_squattedModifierRejectsEveryNonOwnerMutator
     ///
     ///      A pre-existing WIRED stack is rejected by `_deployAndWireStack`, not here.
     /// @param salt  CREATE2 salt for this modifier (derived from the base salt).
@@ -1337,9 +1341,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // fund that chain forever. Safe to adopt for the reason given on `_deployRolesModifier`:
         // CREATE2 binds the address to the initializer, and `SafeProxyFactory` only ever deploys its
         // own proxy creation code for `safeSingleton` and always runs `setup`. An adopted Avatar
-        // Safe also proves itself behaviourally — the factory must be an enabled module at the head
-        // of its list for the terminal `_disableFactoryAsAvatarModule` to succeed, and that call
-        // asserts the removal afterwards.
+        // Safe also proves itself behaviourally: `_disableFactoryAsAvatarModule` only succeeds if
+        // the factory is an enabled module at the head of the list, and it asserts the removal.
+        // pinned: test_premise_squattedAvatarSafeIsBornFactoryHeaded
+        // pinned: test_adopt_deployOivAdoptsASquattedAvatarSafe
         safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
         if (safe.code.length != 0) return safe;
 
