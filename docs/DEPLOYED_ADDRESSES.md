@@ -25,9 +25,9 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x5912BED37F97ABC12Dc4040b5cCAC28f23877C3C` |
-| `KpkSharesDeployer` | `0x1b9884AE02F2b9f14116B0Cc3247000Efe7046b9` |
-| `CcipOivDeployer` (orchestrator) | `0x6BeEB61CA5925A9C2091F3Ae606f0C8EE5479aAF` |
+| `KpkOivFactory` | `0x2eDb6917A30B0B3C732D4E48209Fae8731130bBc` |
+| `KpkSharesDeployer` | `0x1f5a33DdAC720874664d13a7804Cd1c43A33Ba41` |
+| `CcipOivDeployer` (orchestrator) | `0x918E20DC102424364A72be3d9341C34f74Dbc556` |
 | `KpkTimelockDeployer` | `0x0F21F72dA90F61D29fBF98dA31C51C871815d129` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 

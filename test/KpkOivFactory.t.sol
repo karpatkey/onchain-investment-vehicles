@@ -1098,6 +1098,57 @@ contract KpkOivFactoryTest is OivTestConstants {
         });
     }
 
+    // ── Chain-independent shares address ───────────────────────────────────────
+
+    /// @dev Mainnet DAI. Used only as "an ERC-20 that is not the base asset", standing in for the
+    ///      different base asset a fund would use on another chain.
+    address constant OTHER_ASSET = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+
+    /// @notice The whole point of deploying the proxy with empty constructor data: the base asset is
+    ///         necessarily chain-specific, so it must not reach the CREATE2 init code. Two funds that
+    ///         differ ONLY in their base asset must predict the same shares proxy address.
+    function test_sharesProxyAddress_isIndependentOfTheBaseAsset() public view {
+        KpkOivFactory.OivConfig memory withUsdc = oivConfig;
+        KpkOivFactory.OivConfig memory withDai = oivConfig;
+        withDai.sharesParams.asset = OTHER_ASSET;
+
+        KpkOivFactory.OivInstance memory a = factory.predictOivAddresses(withUsdc, address(this));
+        KpkOivFactory.OivInstance memory b = factory.predictOivAddresses(withDai, address(this));
+
+        assertEq(b.kpkSharesProxy, a.kpkSharesProxy, "a different base asset must not move the proxy");
+        assertEq(b.kpkSharesImpl, a.kpkSharesImpl, "nor the implementation");
+    }
+
+    /// @dev The prediction is worth nothing unless a real deploy with the OTHER asset lands there.
+    function test_sharesProxy_deployedWithADifferentAssetMatchesTheUsdcPrediction() public {
+        KpkOivFactory.OivInstance memory predictedWithUsdc = factory.predictOivAddresses(oivConfig, address(this));
+
+        oivConfig.sharesParams.asset = OTHER_ASSET;
+        KpkOivFactory.OivInstance memory deployed = factory.deployOiv(oivConfig);
+
+        assertEq(
+            deployed.kpkSharesProxy,
+            predictedWithUsdc.kpkSharesProxy,
+            "a fund deployed on a chain with a different base asset must land at the same address"
+        );
+        assertEq(address(KpkShares(deployed.kpkSharesProxy).getApprovedAsset(OTHER_ASSET).asset), OTHER_ASSET);
+    }
+
+    /// @dev Initialization moved out of the constructor, so pin that it still happened — an
+    ///      uninitialized proxy at the right address would be a far worse outcome than a wrong address.
+    function test_sharesProxy_isInitializedDespiteEmptyConstructorData() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        KpkShares shares = KpkShares(inst.kpkSharesProxy);
+
+        assertEq(shares.name(), "Test Fund Shares", "ERC-20 metadata proves initialize() ran");
+        assertEq(shares.portfolioSafe(), inst.avatarSafe, "portfolio Safe wired");
+        assertTrue(shares.hasRole(0x00, admin), "admin holds DEFAULT_ADMIN_ROLE");
+        assertFalse(shares.hasRole(0x00, address(factory)), "factory renounced");
+
+        vm.expectRevert();
+        shares.initialize(oivConfig.sharesParams);
+    }
+
     // ── Timelock governance (deployOiv / deployStack) ───────────────────────────
 
     address govSafe = makeAddr("govSafe");
