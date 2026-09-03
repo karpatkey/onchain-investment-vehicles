@@ -120,7 +120,11 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
 
     // ── Events ────────────────────────────────────────────────────────────────
 
-    /// @notice Emitted once per timelock actually deployed by this contract.
+    /// @notice Emitted once per timelock actually DEPLOYED by this contract. A call that finds the
+    ///         deterministic address already occupied returns it without emitting, so this event is a
+    ///         record of creation, not of adoption. The canonical record of which timelock governs a
+    ///         given fund is `KpkOivFactory`'s `StackDeployed` / `OivDeployed`, whose instance structs
+    ///         carry the addresses on every path.
     /// @param domain    `DOMAIN_EXEC` or `DOMAIN_SHARES`.
     /// @param governed  The exec Roles Modifier or KpkShares proxy this timelock is intended to govern.
     /// @param timelock  The deployed `TimelockController`.
@@ -187,22 +191,28 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     // ── Prediction ────────────────────────────────────────────────────────────
 
     /// @notice Returns the address `deployExecTimelock` would produce for `(execRolesModifier, params)`.
-    /// @dev    Pure CREATE2 arithmetic; does not indicate whether that address is already deployed.
+    /// @dev    Validates `params` exactly as the deploy would, so a prediction can never succeed for a
+    ///         configuration `deployExecTimelock` would reject. Otherwise pure CREATE2 arithmetic — it
+    ///         does not indicate whether that address is already deployed.
     function predictExecTimelock(address execRolesModifier, TimelockParams calldata params)
         external
         view
         returns (address)
     {
+        _validate(execRolesModifier, params);
         return _predict(DOMAIN_EXEC, execRolesModifier, params);
     }
 
     /// @notice Returns the address `deploySharesTimelock` would produce for `(sharesProxy, params)`.
-    /// @dev    Pure CREATE2 arithmetic; does not indicate whether that address is already deployed.
+    /// @dev    Validates `params` exactly as the deploy would, so a prediction can never succeed for a
+    ///         configuration `deploySharesTimelock` would reject. Otherwise pure CREATE2 arithmetic — it
+    ///         does not indicate whether that address is already deployed.
     function predictSharesTimelock(address sharesProxy, TimelockParams calldata params)
         external
         view
         returns (address)
     {
+        _validate(sharesProxy, params);
         return _predict(DOMAIN_SHARES, sharesProxy, params);
     }
 
@@ -290,6 +300,19 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         // unusable — see `_validateMembers`.
         _validateMembers(params.proposers);
         _validateMembers(params.cancellers);
+
+        // A canceller that is already a proposer is a no-op grant (OpenZeppelin grants every proposer
+        // `CANCELLER_ROLE` at construction) that nonetheless changes the salt. Allowing it would mean
+        // two different addresses could carry byte-identical effective roles, breaking the
+        // address-attests-configuration property the salt exists to provide.
+        uint256 proposerCount = params.proposers.length;
+        uint256 cancellerCount = params.cancellers.length;
+        for (uint256 i; i < cancellerCount; ++i) {
+            address canceller = params.cancellers[i];
+            for (uint256 j; j < proposerCount; ++j) {
+                if (params.proposers[j] == canceller) revert DuplicateRoleMember(canceller);
+            }
+        }
     }
 
     /// @dev Enforces the bound, non-zero and distinctness rules on one role array.

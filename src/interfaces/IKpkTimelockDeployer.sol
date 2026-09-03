@@ -24,8 +24,9 @@ struct TimelockParams {
     ///         `CANCELLER_ROLE`. Entries must be non-zero and distinct.
     address[] proposers;
     /// @notice Addresses receiving `CANCELLER_ROLE` (the veto) without receiving proposal rights.
-    ///         Entries must be non-zero and distinct. Entries that are also proposers are permitted
-    ///         but redundant.
+    ///         Entries must be non-zero, distinct, and absent from `proposers` — OpenZeppelin already
+    ///         grants every proposer `CANCELLER_ROLE`, so listing one here would be a no-op grant that
+    ///         still changed the salt, yielding two different addresses for one effective role set.
     address[] cancellers;
 }
 

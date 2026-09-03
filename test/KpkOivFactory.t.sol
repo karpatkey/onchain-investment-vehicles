@@ -1260,6 +1260,38 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), govSafe), "proposers still receive CANCELLER from OZ");
     }
 
+    /// @dev The shares-timelock guard must fire BEFORE the stack is built, not deep inside
+    ///      `_deploySharesProxy` after ~7M gas of deployment has already happened.
+    function test_deployOiv_sharesTimelockGuardFailsFast() public {
+        KpkOivFactory bare = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(new KpkSharesDeployer(address(this))),
+            address(0)
+        );
+
+        oivConfig.sharesTimelock = _timelockParams(7 days);
+        uint256 gasBefore = gasleft();
+        vm.expectRevert(KpkOivFactory.TimelockDeployerNotSet.selector);
+        bare.deployOiv(oivConfig);
+        // A revert from inside `_deploySharesProxy` would have burned millions by this point.
+        assertLt(gasBefore - gasleft(), 500_000, "guard must fire before any deployment work");
+    }
+
+    function test_setTimelockDeployer_emitsEvent() public {
+        address newDeployer = makeAddr("newTimelockDeployer");
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit KpkOivFactory.TimelockDeployerUpdated(newDeployer);
+        vm.prank(factoryOwner);
+        factory.setTimelockDeployer(newDeployer);
+        assertEq(factory.timelockDeployer(), newDeployer, "setter must take effect");
+    }
+
     function test_deployOiv_revertsWhenTimelockConfiguredButDeployerUnset() public {
         vm.prank(factoryOwner);
         KpkOivFactory bare = new KpkOivFactory(

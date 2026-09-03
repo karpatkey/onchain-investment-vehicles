@@ -261,6 +261,26 @@ contract KpkTimelockDeployerTest is Test {
         assertFalse(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "no dedicated canceller expected");
     }
 
+    /// @dev A proposer repeated in `cancellers` is a no-op grant that would still change the salt,
+    ///      so two addresses could carry identical effective roles. Rejected.
+    function test_revert_cancellerThatIsAlreadyAProposer() public {
+        TimelockParams memory p = _params();
+        p.cancellers[0] = governanceSafe;
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.DuplicateRoleMember.selector, governanceSafe));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    /// @dev A prediction that succeeds where the deploy reverts is worse than no prediction.
+    function test_predict_revertsOnAConfigTheDeployWouldReject() public {
+        TimelockParams memory p = _params();
+        p.minDelay = 1 hours;
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.DelayOutOfBounds.selector, 1 hours));
+        kit.predictExecTimelock(execMod, p);
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.DelayOutOfBounds.selector, 1 hours));
+        kit.predictSharesTimelock(sharesProxy, p);
+    }
+
     function test_revert_zeroGovernedAddress() public {
         vm.expectRevert(KpkTimelockDeployer.ZeroAddress.selector);
         kit.deployExecTimelock(address(0), _params());

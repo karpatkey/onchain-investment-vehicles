@@ -314,7 +314,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         TimelockParams sharesTimelock;
     }
 
-    /// @notice Addresses of the five contracts deployed by `deployStack`.
+    /// @notice Addresses of the contracts deployed by `deployStack` — the five-contract stack, plus
+    ///         the exec timelock when one was configured (`address(0)` when not).
     struct StackInstance {
         /// @notice Avatar Safe — holds fund assets; execution via Roles Modifiers only.
         address avatarSafe;
@@ -427,6 +428,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Emitted when the owner updates the KpkShares deployer address.
     event KpkSharesDeployerUpdated(address indexed newAddress);
+
+    /// @notice Emitted when the owner updates the timelock deployer address.
+    event TimelockDeployerUpdated(address indexed newAddress);
 
     // ── Errors ─────────────────────────────────────────────────────────────────
 
@@ -569,6 +573,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function setTimelockDeployer(address _timelockDeployer) external onlyOwner {
         if (_timelockDeployer == address(0)) revert ZeroAddress();
         timelockDeployer = _timelockDeployer;
+        emit TimelockDeployerUpdated(_timelockDeployer);
     }
 
     /// @notice Updates the Gnosis Safe proxy factory address.
@@ -683,13 +688,20 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         The returned `OivInstance` is also stored in `instances[instanceCount - 1]`.
     /// @param  config   Fund deployment parameters. `config.admin` is used as both the exec
     ///                  Roles Modifier owner and the `DEFAULT_ADMIN_ROLE` holder on KpkShares.
-    /// @return instance Addresses of the seven deployed contracts.
+    /// @return instance Addresses of the deployed contracts — seven, plus either timelock that
+    ///                  was configured (`address(0)` for one that was not).
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         // Guard the brief deploy-time window where the factory is constructed with
         // `kpkSharesDeployer == address(0)` so its CREATE2 address is independent of the deployer
         // (see constructor NatSpec). Once `setKpkSharesDeployer` has wired the deployer the
         // setter's non-zero check prevents this from ever reverting again.
         if (kpkSharesDeployer == address(0)) revert KpkSharesDeployerNotSet();
+        // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside
+        // `_deploySharesProxy` on an unwired deployer. `_deployAndWireStack` performs the same check
+        // for the exec timelock at the point it needs it, which is early enough.
+        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) {
+            revert TimelockDeployerNotSet();
+        }
 
         _validateOivConfig(config);
 
