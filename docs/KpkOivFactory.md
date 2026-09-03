@@ -41,8 +41,13 @@ Deploys the five-contract operational stack. All five addresses are deterministi
 | `managerSafe.threshold` | Required signatures (must be > 0 and ≤ owners.length) |
 | `execRolesMod.finalOwner` | Receives ownership of the exec Roles Modifier — typically the Security Council multisig. Must not be zero |
 | `salt` | Controls all five deployment addresses |
+| `execTimelock.minDelay` | Seconds of delay on the exec Roles Modifier's timelock. **`0` means no timelock** and `execRolesMod.finalOwner` receives ownership as before. Any non-zero value must be within the deployer's `[12 hours, 30 days]` band |
+| `execTimelock.proposers` | Addresses receiving `PROPOSER_ROLE` (and, from OpenZeppelin, `CANCELLER_ROLE`). Non-zero and distinct |
+| `execTimelock.cancellers` | Addresses receiving `CANCELLER_ROLE` — the veto — without proposal rights. Non-zero and distinct |
 
 `subRolesMod.finalOwner` and `managerRolesMod.finalOwner` are ignored — ownership of those modifiers always transfers to the deployed Manager Safe.
+
+When `execTimelock.minDelay` is non-zero the factory deploys a `TimelockController` through `timelockDeployer` and hands it the exec Roles Modifier, leaving `execRolesMod.finalOwner` unused (it is still validated non-zero). The timelock's address derives from the exec modifier's, which is itself identical on every chain — so configuring the same values in `deployOiv` on mainnet and `deployStack` on each sidechain lands one timelock address everywhere. **No floor is enforced on either role list.** Zero proposers produces a timelock that can never schedule anything, permanently freezing the modifier it owns; one proposer is the same failure one lost key away. Both are accepted deliberately — the choice belongs to the fund's deployer.
 
 **Deployed architecture:**
 
@@ -71,7 +76,9 @@ Runs `deployStack` first, then deploys and wires a `KpkShares` UUPS proxy. Typic
 
 | Field | Description |
 |---|---|
-| `admin` | Receives ownership of the exec Roles Modifier **and** `DEFAULT_ADMIN_ROLE` on the shares proxy. Must not be zero |
+| `admin` | Receives ownership of the exec Roles Modifier **and** `DEFAULT_ADMIN_ROLE` on the shares proxy — unless the corresponding timelock is configured, in which case the timelock receives it instead. Must not be zero |
+| `execTimelock` | Timelock for the exec Roles Modifier. Mapped straight through to `StackConfig.execTimelock` by `oivToStackConfig`, so mainnet and every sidechain agree |
+| `sharesTimelock` | Timelock receiving `DEFAULT_ADMIN_ROLE` on the shares proxy **instead of** `admin`. A separate instance from `execTimelock`, and not sent to sidechains — the shares proxy only exists where `deployOiv` runs. The role is granted to the timelock alone: leaving `admin` with it would keep a delay-free path to `upgradeToAndCall` |
 | `sharesParams.asset` | Base ERC-20 for subscriptions and redemptions. Must not be zero |
 | `sharesParams.name` / `symbol` | ERC-20 name and symbol for the shares token |
 | `sharesParams.subscriptionRequestTtl` | Min seconds before an investor can cancel a pending subscription (max 7 days) |
@@ -87,6 +94,7 @@ Runs `deployStack` first, then deploys and wires a `KpkShares` UUPS proxy. Typic
 
 The following are **wired automatically** and require no input:
 - Manager Safe receives `OPERATOR` on the shares proxy
+- Each configured timelock is deployed with open execution (`EXECUTOR_ROLE` to `address(0)`) and self-administration (`DEFAULT_ADMIN_ROLE` held only by the timelock); the factory holds no role on it afterwards
 - Avatar Safe is granted unlimited allowance on the shares proxy for every redeemable asset (base asset + any `additionalAssets` with `canRedeem = true`)
 
 **Full deployed architecture:**

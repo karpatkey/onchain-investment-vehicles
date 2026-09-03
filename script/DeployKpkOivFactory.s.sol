@@ -89,6 +89,16 @@ contract DeployKpkOivFactory is OivChainDeploy {
         vm.stopBroadcast();
 
         require(KpkOivFactory(predictedFactory).owner() == finalOwner, "post-flight: owner mismatch");
+        // This script wires the shares deployer but NOT `timelockDeployer`, which only the per-chain
+        // `script/chains/Deploy_<Chain>.s.sol` scripts (via OivChainDeploy) deploy and set. A chain
+        // onboarded through this script alone would look healthy and then revert
+        // `TimelockDeployerNotSet` on every timelocked fund — and in a CCIP fan-out the SOURCE chain
+        // validates only its own deployer, so the message dispatches and the destination reverts with
+        // the fee already spent. Fail here instead, pointing at the script that does the whole job.
+        require(
+            KpkOivFactory(predictedFactory).timelockDeployer() != address(0),
+            "post-flight: timelockDeployer not wired - use script/chains/Deploy_<Chain>.s.sol, not this script"
+        );
         require(
             KpkOivFactory(predictedFactory).kpkSharesDeployer() == predictedDeployer,
             "post-flight: kpkSharesDeployer mismatch"

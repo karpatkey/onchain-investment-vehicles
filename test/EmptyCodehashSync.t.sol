@@ -17,7 +17,8 @@ contract FactoryCodehashExposer is KpkOivFactory {
             address(0x5),
             address(0x6),
             address(0x7),
-            address(0x8)
+            address(0x8),
+            address(0x9)
         )
     {}
 
