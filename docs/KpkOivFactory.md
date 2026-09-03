@@ -5,7 +5,7 @@
 Two entry points:
 
 - **`deployStack`** — deploys the five-contract operational stack (two Safes + three Roles Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
-- **`deployOiv`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Typically called on mainnet only.
+- **`deployOiv`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Callable on any chain: there is no chain-id restriction, and a fund's shares proxy lands at the **same address on every chain** even when each chain uses a different base asset (see below). Use `deployOiv` on the chains that should carry shares and `deployStack` on the ones that should carry the operational stack only.
 
 **Cross-flow address invariant.** For the same `(caller, salt)`, `deployStack` and `deployOiv` produce **identical** Avatar Safe / Manager Safe / Roles Modifier addresses. This is the load-bearing property that lets you call `deployOiv` on mainnet and `deployStack` on every sidechain and end up with a fund whose Avatar Safe has the same address everywhere — so bridges and cross-chain configs can hard-code a single address.
 
@@ -22,6 +22,8 @@ Two read-only helpers return the addresses a deployment would produce, without s
 
 - **`predictStackAddresses(StackConfig, address caller)`** → predicted `StackInstance` (5 addresses).
 - **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` and `kpkSharesProxy` are also predicted via CREATE2: the implementation from `KpkSharesDeployer.predictImpl` (salt derived from `(caller, salt, 5)`) and the ERC-1967 proxy from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`).
+
+  The proxy's address is a function of `(factory, proxySalt, implementation)` **only**. It is deployed with empty constructor data and initialized in the next statement of the same call, so the initializer calldata — which necessarily carries the chain's base asset — never enters the CREATE2 init code. Combined with an implementation that is itself chain-independent (`KpkShares` has no constructor arguments and `KpkSharesDeployer` sits at one address everywhere), this is what lets one fund present a single shares address across chains that hold different assets. `additionalAssets` are applied after initialization via `updateAsset` and have never affected the address.
 
 Use them to look up the address of a fund's Avatar Safe ahead of deployment, e.g. when seeding a governance proposal or pre-configuring a frontend.
 
