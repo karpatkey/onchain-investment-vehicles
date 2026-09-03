@@ -156,6 +156,28 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertEq(onGnosis.kpkSharesProxy, onMainnet.kpkSharesProxy, "shares proxy must match across chains");
     }
 
+    /// @notice Pins the headline claim of the mesh change, which was asserted in NatSpec but by no
+    ///         test: the ORIGIN chain never enters the address derivation, so a fan-out started from a
+    ///         sidechain describes the same fund at the same addresses as one started from Ethereum.
+    ///         `worksFromASidechain` only proved it does not revert.
+    function test_topology_originChainDoesNotEnterTheDerivation() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](1);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: oivConfig.sharesParams.asset});
+
+        vm.chainId(1);
+        uint256 saltFromMainnet = orchestrator.effectiveSalt(oivConfig, topology);
+        KpkOivFactory.OivInstance memory fromMainnet = orchestrator.predictOiv(oivConfig, topology);
+
+        vm.chainId(8453); // Base initiates the same fund
+        assertEq(orchestrator.effectiveSalt(oivConfig, topology), saltFromMainnet, "origin must not move the salt");
+
+        KpkOivFactory.OivInstance memory fromBase = orchestrator.predictOiv(oivConfig, topology);
+        assertEq(fromBase.avatarSafe, fromMainnet.avatarSafe, "avatar Safe must not depend on the origin");
+        assertEq(fromBase.managerSafe, fromMainnet.managerSafe, "manager Safe must not depend on the origin");
+        assertEq(fromBase.execRolesModifier, fromMainnet.execRolesModifier, "exec modifier must not depend on it");
+        assertEq(fromBase.kpkSharesProxy, fromMainnet.kpkSharesProxy, "shares proxy must not depend on it");
+    }
+
     /// @dev The flip side: the topology IS bound, so changing it is a different fund. Without this,
     ///      zeroing the asset for the hash could have been mistaken for dropping it entirely.
     function test_topology_mutatingItMovesEveryAddress() public view {
