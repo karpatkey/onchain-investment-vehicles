@@ -17,23 +17,20 @@ interface IAccessControlView {
 /// @title  KpkTimelockDeployer
 /// @author kpk
 /// @notice Deploys pre-validated OpenZeppelin `TimelockController` instances that a deployed fund's
-///         admin can adopt as (a) the owner of its exec Roles Modifier and (b) the
+///         admin holds as (a) the owner of its exec Roles Modifier and (b) the
 ///         `DEFAULT_ADMIN_ROLE` holder on its KpkShares proxy.
 ///
-/// @dev    ## Why this is a standalone contract and not part of `KpkOivFactory`
+/// @dev    `KpkOivFactory` calls this during `deployOiv` / `deployStack` whenever a fund configures a
+///         non-zero `minDelay`, and hands the resulting timelock the corresponding authority before
+///         the deployment returns. It is also permissionless, so the admin of an already-deployed
+///         fund can deploy a matching timelock here and transfer ownership to it by hand.
 ///
-///         Adopting a timelock is an action only the *fund admin* can take: `IRoles.transferOwnership`
-///         is `onlyOwner` and `grantRole`/`renounceRole` on KpkShares requires `DEFAULT_ADMIN_ROLE`.
-///         `KpkOivFactory` renounces both at the end of `deployOiv` (`_deploySharesProxy`,
-///         `_disableFactoryAsAvatarModule`), so it holds no authority over any deployed fund and
-///         could not perform the adoption even if it wanted to.
+///         ## Why a separate contract rather than code inside the factory
 ///
-///         Keeping this out of the factory also keeps every existing address stable. The factory is
-///         enabled as a setup-time module on each Avatar Safe, so the factory's own address is inside
-///         the Safe's `setup()` initializer and therefore inside the Safe's CREATE2 derivation — any
-///         change to the factory's bytecode moves every future fund's addresses and forces a full
-///         multi-chain redeploy. This contract imports nothing the factory imports back, so it cannot
-///         perturb that. See `docs/DEPLOYED_ADDRESSES.md`.
+///         `TimelockController`'s creation bytecode is larger than the factory's entire remaining
+///         EIP-170 margin, so the factory cannot embed it. `KpkSharesDeployer` exists for exactly the
+///         same reason, and `IKpkTimelockDeployer` keeps the factory's import graph free of
+///         `TimelockController` while still letting it name `TimelockParams`.
 ///
 ///         ## Why a contract at all, rather than a deploy script
 ///
@@ -46,7 +43,8 @@ interface IAccessControlView {
 ///         transaction, with a closing assertion. It mirrors the transient-admin pattern
 ///         `KpkOivFactory._deploySharesProxy` already uses on the shares proxy.
 ///
-///         It additionally makes misconfiguration unrepresentable (see `_validate`) and gives every
+///         It additionally rejects the misconfigurations that would make an address ambiguous (see
+///         `_validate`) and gives every
 ///         timelock a CREATE2 address that is a function of its full effective configuration, so a
 ///         predicted address is a cryptographic attestation of the roles and delay it was created
 ///         with. That matters because adopting a timelock is one-way in practice: transferring exec
@@ -158,8 +156,10 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         already-deployed address rather than reverting. Deploying does **not** adopt — the
     ///         current owner must subsequently call `IRoles(execRolesModifier).transferOwnership(timelock)`.
     ///         Verify with `isExecTimelocked` afterwards.
-    /// @param  execRolesModifier The fund's exec Roles Modifier. Identical on every chain for a given
-    ///                           fund, so the resulting timelock address is identical on every chain too.
+    /// @param  execRolesModifier The fund's exec Roles Modifier, whose address is identical on every
+    ///                           chain. Given the SAME `params` on each chain, the resulting timelock
+    ///                           address is therefore identical everywhere too; differing params on one
+    ///                           chain silently produce a different address there.
     /// @param  params            Effective timelock configuration.
     /// @return timelock          The deployed (or pre-existing) `TimelockController`.
     function deployExecTimelock(address execRolesModifier, TimelockParams calldata params)
@@ -264,8 +264,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         emit TimelockDeployed(domain, governed, timelock, params.minDelay);
     }
 
-    /// @dev Rejects every configuration that would produce a timelock which cannot be governed, cannot
-    ///      be vetoed, or cannot be recovered. See the individual error NatSpec for the reasoning.
+    /// @dev Rejects only what would make a timelock's address ambiguous or one of its members
+    ///      unusable. It deliberately does NOT reject configurations that are merely dangerous —
+    ///      see the block inside this function for which ones, and why that is the caller's call.
     function _validate(address governed, TimelockParams calldata params) internal pure {
         if (governed == address(0)) revert ZeroAddress();
 

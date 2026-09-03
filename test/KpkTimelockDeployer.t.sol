@@ -219,6 +219,48 @@ contract KpkTimelockDeployerTest is Test {
         kit.deployExecTimelock(execMod, p);
     }
 
+    function test_revert_duplicateCanceller() public {
+        TimelockParams memory p = _params();
+        p.cancellers[1] = managerVetoSafe;
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.DuplicateRoleMember.selector, managerVetoSafe));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    function test_revert_tooManyProposers() public {
+        TimelockParams memory p = _params();
+        address[] memory many = new address[](21);
+        for (uint256 i; i < 21; ++i) {
+            many[i] = address(uint160(i + 1));
+        }
+        p.proposers = many;
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TooManyRoleMembers.selector, 21));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    function test_revert_tooManyCancellers() public {
+        TimelockParams memory p = _params();
+        address[] memory many = new address[](21);
+        for (uint256 i; i < 21; ++i) {
+            many[i] = address(uint160(i + 1));
+        }
+        p.cancellers = many;
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TooManyRoleMembers.selector, 21));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    /// @dev The two relaxations are reachable, not merely undocumented: pin that they deploy.
+    function test_acceptsSingleProposerAndNoCancellers() public {
+        TimelockParams memory p = _params();
+        address[] memory one = new address[](1);
+        one[0] = governanceSafe;
+        p.proposers = one;
+        p.cancellers = new address[](0);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), governanceSafe), "single proposer must be wired");
+        assertFalse(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "no dedicated canceller expected");
+    }
+
     function test_revert_zeroGovernedAddress() public {
         vm.expectRevert(KpkTimelockDeployer.ZeroAddress.selector);
         kit.deployExecTimelock(address(0), _params());
