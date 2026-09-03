@@ -62,12 +62,12 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
     // 19-chain rollout. When they fail, re-derive from a CLEAN CLONE (a drifted working tree
     // produces different values) and update both the constants here and the doc table.
 
-    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0x8B3f1103d5AE1C500D3E0e220cbD597C3E41EebB;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0xfFb21de510d4b0ac87823e2936AB42855aF69b03;
+    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0x1b9884AE02F2b9f14116B0Cc3247000Efe7046b9;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0x6BeEB61CA5925A9C2091F3Ae606f0C8EE5479aAF;
 
     /// @dev `KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its
     ///      address is independent of the deployer EOA — the same on every chain for anyone.
-    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0xB1CAE151Dbbb971F7053ab008FA03bB8fB4d6565;
+    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0x0F21F72dA90F61D29fBF98dA31C51C871815d129;
 
     function test_documentedSharesDeployerAddressMatchesDeployPath() public pure {
         address factory = _predictFactory(CANONICAL_EOA_OWNER);

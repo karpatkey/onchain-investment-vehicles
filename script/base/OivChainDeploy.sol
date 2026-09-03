@@ -143,7 +143,6 @@ abstract contract OivChainDeploy is Script {
         return _create2Address(SALT_FACTORY, _factoryInitCode(eoaOwner));
     }
 
-
     /// @dev `KpkTimelockDeployer` has no constructor arguments, so its address depends only on the
     ///      salt and its own creation code — the same on every chain, for any deployer EOA.
     function _predictTimelockDeployer() internal pure returns (address) {
@@ -333,9 +332,7 @@ abstract contract OivChainDeploy is Script {
 
         // ── Post-flight: assert the END STATE, regardless of which branches ran ──
         require(KpkOivFactory(factory).kpkSharesDeployer() == deployer, "post: deployer not wired");
-        require(
-            KpkOivFactory(factory).timelockDeployer() == timelockDeployer, "post: timelock deployer not wired"
-        );
+        require(KpkOivFactory(factory).timelockDeployer() == timelockDeployer, "post: timelock deployer not wired");
         require(KpkOivFactory(factory).owner() == finalOwner, "post: factory owner != finalOwner");
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");

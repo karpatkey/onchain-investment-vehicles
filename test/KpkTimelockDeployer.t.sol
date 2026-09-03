@@ -456,10 +456,7 @@ contract KpkTimelockDeployerTest is Test {
 
     /// @dev Deploys a timelock, schedules a `Counter.bump()` operation from a proposer, and returns
     ///      the pieces needed to cancel or execute it.
-    function _scheduled()
-        internal
-        returns (TimelockController tl, Counter counter, bytes memory payload, bytes32 id)
-    {
+    function _scheduled() internal returns (TimelockController tl, Counter counter, bytes memory payload, bytes32 id) {
         tl = TimelockController(payable(kit.deployExecTimelock(execMod, _params())));
         counter = new Counter();
         payload = abi.encodeCall(Counter.bump, ());

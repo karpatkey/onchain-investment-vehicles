@@ -33,15 +33,11 @@ struct TimelockParams {
 /// @notice Minimal view of `KpkTimelockDeployer` used by `KpkOivFactory`.
 interface IKpkTimelockDeployer {
     /// @notice Deploys (or returns the existing) timelock intended to own `execRolesModifier`.
-    function deployExecTimelock(address execRolesModifier, TimelockParams calldata params)
-        external
-        returns (address);
+    function deployExecTimelock(address execRolesModifier, TimelockParams calldata params) external returns (address);
 
     /// @notice Deploys (or returns the existing) timelock intended to hold `DEFAULT_ADMIN_ROLE`
     ///         on `sharesProxy`.
-    function deploySharesTimelock(address sharesProxy, TimelockParams calldata params)
-        external
-        returns (address);
+    function deploySharesTimelock(address sharesProxy, TimelockParams calldata params) external returns (address);
 
     /// @notice Returns the address `deployExecTimelock` would produce.
     function predictExecTimelock(address execRolesModifier, TimelockParams calldata params)
@@ -50,8 +46,5 @@ interface IKpkTimelockDeployer {
         returns (address);
 
     /// @notice Returns the address `deploySharesTimelock` would produce.
-    function predictSharesTimelock(address sharesProxy, TimelockParams calldata params)
-        external
-        view
-        returns (address);
+    function predictSharesTimelock(address sharesProxy, TimelockParams calldata params) external view returns (address);
 }

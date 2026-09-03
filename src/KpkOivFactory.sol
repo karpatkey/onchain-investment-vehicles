@@ -871,9 +871,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         inst = _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
         if (config.execTimelock.minDelay != 0) {
-            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(
-                inst.execRolesModifier, config.execTimelock
-            );
+            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
+                .predictExecTimelock(inst.execRolesModifier, config.execTimelock);
         }
     }
 
@@ -920,14 +919,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // from the same `(caller, salt)` as everything else. Prediction mirrors deployment exactly,
         // including reverting when a timelock is configured but no deployer is wired.
         if (config.execTimelock.minDelay != 0) {
-            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(
-                stack.execRolesModifier, config.execTimelock
-            );
+            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
+                .predictExecTimelock(stack.execRolesModifier, config.execTimelock);
         }
         if (config.sharesTimelock.minDelay != 0) {
-            inst.sharesTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictSharesTimelock(
-                predictedProxy, config.sharesTimelock
-            );
+            inst.sharesTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
+                .predictSharesTimelock(predictedProxy, config.sharesTimelock);
         }
     }
 

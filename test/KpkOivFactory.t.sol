@@ -1219,7 +1219,9 @@ contract KpkOivFactoryTest is OivTestConstants {
         stackConfig.execTimelock = _timelockParams(2 days);
 
         KpkOivFactory.StackInstance memory inst = factory.deployStack(stackConfig);
-        assertEq(IRoles(inst.execRolesModifier).owner(), inst.execTimelock, "sidechain exec modifier must be timelocked");
+        assertEq(
+            IRoles(inst.execRolesModifier).owner(), inst.execTimelock, "sidechain exec modifier must be timelocked"
+        );
     }
 
     function test_oivToStackConfig_carriesExecTimelockThrough() public view {

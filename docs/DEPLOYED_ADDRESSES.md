@@ -25,10 +25,10 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0xD74d1DD6E679adD095B7044c74280de058081FE9` |
-| `KpkSharesDeployer` | `0x8B3f1103d5AE1C500D3E0e220cbD597C3E41EebB` |
-| `CcipOivDeployer` (orchestrator) | `0xfFb21de510d4b0ac87823e2936AB42855aF69b03` |
-| `KpkTimelockDeployer` | `0xB1CAE151Dbbb971F7053ab008FA03bB8fB4d6565` |
+| `KpkOivFactory` | `0x5912BED37F97ABC12Dc4040b5cCAC28f23877C3C` |
+| `KpkSharesDeployer` | `0x1b9884AE02F2b9f14116B0Cc3247000Efe7046b9` |
+| `CcipOivDeployer` (orchestrator) | `0x6BeEB61CA5925A9C2091F3Ae606f0C8EE5479aAF` |
+| `KpkTimelockDeployer` | `0x0F21F72dA90F61D29fBF98dA31C51C871815d129` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its address does not

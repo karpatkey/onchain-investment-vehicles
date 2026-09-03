@@ -131,7 +131,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @param governed  The exec Roles Modifier or KpkShares proxy this timelock is intended to govern.
     /// @param timelock  The deployed `TimelockController`.
     /// @param minDelay  The timelock's minimum delay, in seconds.
-    event TimelockDeployed(bytes32 indexed domain, address indexed governed, address indexed timelock, uint256 minDelay);
+    event TimelockDeployed(
+        bytes32 indexed domain, address indexed governed, address indexed timelock, uint256 minDelay
+    );
 
     // ── Errors ────────────────────────────────────────────────────────────────
 
@@ -274,8 +276,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
 
         // `address(this)` as the constructor admin is what makes canceller provisioning atomic; it is
         // renounced below, in this same call, before control ever returns to the caller.
-        TimelockController tl =
-            new TimelockController{salt: _salt(domain, governed, params)}(params.minDelay, params.proposers, executors, address(this));
+        TimelockController tl = new TimelockController{salt: _salt(domain, governed, params)}(
+            params.minDelay, params.proposers, executors, address(this)
+        );
 
         uint256 cancellerCount = params.cancellers.length;
         for (uint256 i; i < cancellerCount; ++i) {
@@ -380,9 +383,8 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///      the init code and would otherwise not influence the address. Binding them into the salt is
     ///      what makes a predicted address a complete attestation of the timelock's role set.
     function _salt(bytes32 domain, address governed, TimelockParams calldata params) internal pure returns (bytes32) {
-        return keccak256(
-            abi.encode(KIT_VERSION, domain, governed, params.minDelay, params.proposers, params.cancellers)
-        );
+        return
+            keccak256(abi.encode(KIT_VERSION, domain, governed, params.minDelay, params.proposers, params.cancellers));
     }
 
     /// @dev CREATE2 address for the init code this contract would deploy under `_salt`.
@@ -404,7 +406,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         return address(
             uint160(
                 uint256(
-                    keccak256(abi.encodePacked(bytes1(0xff), address(this), _salt(domain, governed, params), initCodeHash))
+                    keccak256(
+                        abi.encodePacked(bytes1(0xff), address(this), _salt(domain, governed, params), initCodeHash)
+                    )
                 )
             )
         );
