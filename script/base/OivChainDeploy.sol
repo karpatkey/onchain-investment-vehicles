@@ -3,7 +3,10 @@ pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
-import {KpkSharesDeployer} from "../../src/KpkSharesDeployer.sol";
+import {KpkShares} from "../../src/kpkShares.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {KpkTimelockDeployer} from "../../src/KpkTimelockDeployer.sol";
 import {CcipOivDeployer} from "../../src/CcipOivDeployer.sol";
 import {OivInfraConstants} from "../../src/OivInfraConstants.sol";
@@ -55,7 +58,7 @@ abstract contract OivChainDeploy is Script {
     // Version 3: the MultiSend unwrap-adapter fix changed the factory's runtime, so its CREATE2
     // address moves regardless of the salt; the bump keeps the version counter honest per the
     // convention in docs/DEPLOYED_ADDRESSES.md ("bump the version uint to redeploy at a fresh
-    // address after a bytecode change"). ALL THREE move together: KpkSharesDeployer takes the
+    // address after a bytecode change"). The factory and orchestrator move together: the orchestrator takes the
     // factory address as a constructor arg and CcipOivDeployer takes it as an immutable, so both
     // init codes change with the factory. `Empty` is untouched and keeps its address.
     //
@@ -70,7 +73,9 @@ abstract contract OivChainDeploy is Script {
     // (factory 0xfb76…25f0) handed ownership to the Safe at deploy time, which left owner-only
     // setup (setChainSelectors) stranded behind the multisig.
     bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(4)));
-    bytes32 internal constant SALT_DEPLOYER = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(4)));
+    bytes32 internal constant SALT_SHARES_MASTERCOPY = keccak256(abi.encodePacked("KpkSharesMastercopy", uint256(4)));
+    bytes32 internal constant SALT_TIMELOCK_MASTERCOPY =
+        keccak256(abi.encodePacked("TimelockControllerMastercopy", uint256(4)));
     bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(4)));
     bytes32 internal constant SALT_TIMELOCK = keccak256(abi.encodePacked("KpkTimelockDeployer", uint256(4)));
 
@@ -119,7 +124,7 @@ abstract contract OivChainDeploy is Script {
                 SAFE_FALLBACK_HANDLER,
                 MODULE_PROXY_FACTORY,
                 ROLES_MODIFIER_MASTERCOPY,
-                address(0), // placeholder — wired post-deploy via setKpkSharesDeployer
+                address(0), // placeholder — wired post-deploy via setKpkSharesMastercopy
                 address(0) // placeholder — wired post-deploy via setTimelockDeployer
             )
         );
@@ -128,11 +133,20 @@ abstract contract OivChainDeploy is Script {
     /// @dev `KpkTimelockDeployer` takes no constructor arguments, so it lands at the same address on
     ///      every chain without the factory's chicken-and-egg dance.
     function _timelockDeployerInitCode() internal pure returns (bytes memory) {
-        return type(KpkTimelockDeployer).creationCode;
+        return abi.encodePacked(
+            type(KpkTimelockDeployer).creationCode,
+            abi.encode(_create2Address(SALT_TIMELOCK_MASTERCOPY, _timelockMastercopyInitCode()))
+        );
     }
 
-    function _deployerInitCode(address factory) internal pure returns (bytes memory) {
-        return abi.encodePacked(type(KpkSharesDeployer).creationCode, abi.encode(factory));
+    /// @dev Both mastercopies take no constructor arguments, so each lands at one address on every
+    ///      chain and the contracts that reference them stay chain-independent.
+    function _sharesMastercopyInitCode() internal pure returns (bytes memory) {
+        return type(KpkShares).creationCode;
+    }
+
+    function _timelockMastercopyInitCode() internal pure returns (bytes memory) {
+        return type(TimelockControllerUpgradeable).creationCode;
     }
 
     function _orchestratorInitCode(address eoaOwner, address factory) internal pure returns (bytes memory) {
@@ -143,8 +157,9 @@ abstract contract OivChainDeploy is Script {
         return _create2Address(SALT_FACTORY, _factoryInitCode(eoaOwner));
     }
 
-    /// @dev `KpkTimelockDeployer` has no constructor arguments, so its address depends only on the
-    ///      salt and its own creation code — the same on every chain, for any deployer EOA.
+    /// @dev `KpkTimelockDeployer`'s only constructor argument is the timelock mastercopy, which is
+    ///      itself at one address on every chain, so its address is likewise chain-independent and
+    ///      independent of the deployer EOA.
     function _predictTimelockDeployer() internal pure returns (address) {
         return _create2Address(SALT_TIMELOCK, _timelockDeployerInitCode());
     }
@@ -245,9 +260,11 @@ abstract contract OivChainDeploy is Script {
         require(msg.sender == eoaOwner, "broadcasting sender must equal eoaOwner");
 
         bytes memory factoryInitCode = _factoryInitCode(eoaOwner);
-        bytes memory deployerInitCode = _deployerInitCode(_create2Address(SALT_FACTORY, factoryInitCode));
+        bytes memory sharesMastercopyInitCode = _sharesMastercopyInitCode();
+        bytes memory timelockMastercopyInitCode = _timelockMastercopyInitCode();
         address factory = _create2Address(SALT_FACTORY, factoryInitCode);
-        address deployer = _create2Address(SALT_DEPLOYER, deployerInitCode);
+        address sharesMastercopy = _create2Address(SALT_SHARES_MASTERCOPY, sharesMastercopyInitCode);
+        address timelockMastercopy = _create2Address(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode);
         bytes memory ccipInitCode = _orchestratorInitCode(eoaOwner, factory);
         address orchestrator = _create2Address(SALT_CCIP, ccipInitCode);
         address timelockDeployer = _create2Address(SALT_TIMELOCK, _timelockDeployerInitCode());
@@ -255,7 +272,8 @@ abstract contract OivChainDeploy is Script {
         console.log("==========================================");
         console.log("Chain id:                ", block.chainid);
         console.log("Predicted KpkOivFactory: ", factory);
-        console.log("Predicted KpkSharesDeployer:", deployer);
+        console.log("Predicted KpkShares mastercopy:", sharesMastercopy);
+        console.log("Predicted Timelock mastercopy:", timelockMastercopy);
         console.log("Predicted CcipOivDeployer:", orchestrator);
         console.log("Predicted KpkTimelockDeployer:", timelockDeployer);
         console.log("CCIP router:             ", ccipRouter);
@@ -276,12 +294,22 @@ abstract contract OivChainDeploy is Script {
         } else {
             console.log("[SKIP] KpkOivFactory already at:     ", factory);
         }
-        if (deployer.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_DEPLOYER, deployerInitCode));
-            require(ok, "deployer CREATE2 deploy failed");
-            console.log("[OK]   KpkSharesDeployer deployed at:", deployer);
+        if (sharesMastercopy.code.length == 0) {
+            (bool ok,) =
+                CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_SHARES_MASTERCOPY, sharesMastercopyInitCode));
+            require(ok, "shares mastercopy CREATE2 deploy failed");
+            console.log("[OK]   KpkShares mastercopy deployed at:", sharesMastercopy);
         } else {
-            console.log("[SKIP] KpkSharesDeployer already at: ", deployer);
+            console.log("[SKIP] KpkShares mastercopy already at: ", sharesMastercopy);
+        }
+        // Must exist BEFORE the timelock deployer: its constructor rejects a codeless mastercopy.
+        if (timelockMastercopy.code.length == 0) {
+            (bool ok,) =
+                CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode));
+            require(ok, "timelock mastercopy CREATE2 deploy failed");
+            console.log("[OK]   Timelock mastercopy deployed at:", timelockMastercopy);
+        } else {
+            console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
         }
         if (timelockDeployer.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
@@ -292,11 +320,11 @@ abstract contract OivChainDeploy is Script {
         }
 
         KpkOivFactory f = KpkOivFactory(factory);
-        if (f.kpkSharesDeployer() == address(0)) {
-            f.setKpkSharesDeployer(deployer);
-            console.log("[OK]   factory.kpkSharesDeployer set");
+        if (f.kpkSharesMastercopy() == address(0)) {
+            f.setKpkSharesMastercopy(sharesMastercopy);
+            console.log("[OK]   factory.kpkSharesMastercopy set");
         } else {
-            require(f.kpkSharesDeployer() == deployer, "factory deployer mismatch");
+            require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
         }
         if (f.timelockDeployer() == address(0)) {
             f.setTimelockDeployer(timelockDeployer);
@@ -331,7 +359,7 @@ abstract contract OivChainDeploy is Script {
         vm.stopBroadcast();
 
         // ── Post-flight: assert the END STATE, regardless of which branches ran ──
-        require(KpkOivFactory(factory).kpkSharesDeployer() == deployer, "post: deployer not wired");
+        require(KpkOivFactory(factory).kpkSharesMastercopy() == sharesMastercopy, "post: shares mastercopy not wired");
         require(KpkOivFactory(factory).timelockDeployer() == timelockDeployer, "post: timelock deployer not wired");
         require(KpkOivFactory(factory).owner() == finalOwner, "post: factory owner != finalOwner");
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
