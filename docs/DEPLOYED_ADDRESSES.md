@@ -28,8 +28,8 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 | `KpkOivFactory` | `0x72d50AccC2514809da4a00Bed629DA1F75513B71` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xEbd6c0EA7cDCcbA9eEE3FC1e8536ccA958524Ac3` |
-| `KpkTimelockDeployer` | `0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc` |
+| `CcipOivDeployer` (orchestrator) | `0xa9e8070eA48f7BFE4981905b1550FdD5bdE113B7` |
+| `KpkTimelockDeployer` | `0x5fAce1a23BAFa1f0112c9dbE50BeCa90DEC26e8f` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkSharesDeployer` is gone from this table because the contract is deleted: every fund's shares
@@ -75,7 +75,7 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 
 > **HyperEVM note.** As with salt v2, the deploy needed Hyperliquid "big blocks" enabled for the deployer (`usingBigBlocks` L1 action) — the ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again afterwards.
 
-> **Selector-registry note.** A freshly CREATE2'd orchestrator starts with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
+> **Selector-registry note — HISTORICAL from salt v4 onward.** The orchestrator now seeds its registry in the **constructor**, so none of the below applies to a salt-v4 deployment: there is no seeding step, nothing to do before handover, and `bob`/`katana` are excluded by construction (pinned by `test/CcipNetworksSync.t.sol::test_bakedTopologyMatchesRegistry`). Kept because it explains the salt-v3 rollout and why the change was made. Previously: a freshly CREATE2'd orchestrator started with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
 
 > ### ⚠️ Build these from a clean clone, not a working tree
 >

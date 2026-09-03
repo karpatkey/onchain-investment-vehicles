@@ -35,6 +35,16 @@ contract CcipOivDeployerTest is OivTestConstants {
 
     // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
+
+    /// @dev Every wired chain is now seeded into the registry by the orchestrator's CONSTRUCTOR, so a
+    ///      fresh instance already knows all of them. Tests that used to seed 3 chains and assert
+    ///      absolute set sizes assert against this instead. `CcipNetworksSync` pins the number to the
+    ///      wired subset of `script/ccip-networks.json`, so this cannot drift silently.
+    uint256 constant BAKED_CHAINS = 19;
+
+    /// @dev Destinations reached by the no-array `deployEverywhere` — every baked chain except the
+    ///      local one, which is always skipped rather than self-sent.
+    uint256 constant BAKED_DESTINATIONS = BAKED_CHAINS - 1;
     uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
     uint64 constant BASE_SELECTOR = 15971525489660198786;
     uint64 constant OPTIMISM_SELECTOR = 3734403246176062136;
@@ -89,12 +99,14 @@ contract CcipOivDeployerTest is OivTestConstants {
 
         // owner = address(this) so the happy path needs no prank.
         orchestrator = new CcipOivDeployer(address(this), address(factory));
-        orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(link));
 
-        // Seed the chainId -> CCIP selector mapping for the destinations used in tests.
-        orchestrator.setChainSelector(ARBITRUM_CHAIN_ID, ARBITRUM_SELECTOR);
-        orchestrator.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
-        orchestrator.setChainSelector(OPTIMISM_CHAIN_ID, OPTIMISM_SELECTOR);
+        // No seeding needed: Arbitrum, Base and Optimism — and every other wired chain — are already
+        // in the registry from the constructor. Left as an assertion rather than a comment.
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "constructor must seed every wired chain");
+        assertEq(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), ARBITRUM_SELECTOR, "arbitrum seeded");
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "base seeded");
+        assertEq(orchestrator.chainSelectorOf(OPTIMISM_CHAIN_ID), OPTIMISM_SELECTOR, "optimism seeded");
 
         // LINK is still configured (retained for the withdrawLink sweep), but CCIP fees are now paid
         // in NATIVE gas from the caller's msg.value — so the caller, not the orchestrator, is funded.
@@ -196,24 +208,34 @@ contract CcipOivDeployerTest is OivTestConstants {
         fresh.deployEverywhere(oivConfig, dests, GAS_LIMIT);
     }
 
-    function test_deployEverywhere_revertsOffSourceChain() public {
-        vm.chainId(10); // pretend we're on Optimism, not the source
+    /// @notice The headline of the mesh change: a fan-out no longer has to start on Ethereum. These
+    ///         three cases previously reverted `NotSourceChain`; the restriction was never load-bearing
+    ///         for the address invariant, since the orchestrator is the uniform `msg.sender` into the
+    ///         factory on every chain and the salt is composed from the config alone.
+    function test_deployEverywhere_worksFromASidechain() public {
+        vm.chainId(8453); // Base
         uint256[] memory dests = _dests();
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(10)));
         orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
     }
 
-    function test_deployEverywhere_allConfigured_revertsOffSourceChain() public {
-        vm.chainId(8453);
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(8453)));
-        orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
+    function test_deployEverywhere_allConfigured_worksFromASidechain() public {
+        vm.chainId(42161); // Arbitrum
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
     }
 
-    function test_dispatchTo_revertsOffSourceChain() public {
-        vm.chainId(42161);
+    function test_dispatchTo_worksFromASidechain() public {
+        vm.chainId(10); // Optimism
         uint256[] memory dests = _dests();
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(42161)));
         orchestrator.dispatchTo{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+    }
+
+    /// @dev The one restriction that remains: a chain absent from the registry cannot initiate, since
+    ///      every sibling would reject its messages after the fees had already been paid.
+    function test_deployEverywhere_revertsFromAnUnwiredChain() public {
+        vm.chainId(1337);
+        uint256[] memory dests = _dests();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, uint256(1337)));
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
     }
 
     /// @dev Explicit-list path skips the local chain, same as the all-configured path — never self-sends.
@@ -289,23 +311,18 @@ contract CcipOivDeployerTest is OivTestConstants {
     function test_configure_onlyOwner() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(link));
     }
 
     function test_configure_revertsOnZeroRouter() public {
         vm.expectRevert(CcipOivDeployer.ZeroAddress.selector);
-        orchestrator.configure(address(0), address(link), MAINNET_SELECTOR);
-    }
-
-    function test_configure_revertsOnZeroSelector() public {
-        vm.expectRevert(CcipOivDeployer.ZeroChainSelector.selector);
-        orchestrator.configure(address(router), address(link), 0);
+        orchestrator.configure(address(0), address(link));
     }
 
     /// @dev Native fees mean LINK is optional: configuring with a zero linkToken must succeed (it just
     ///      disables the withdrawLink sweep). Lets the orchestrator work on lanes without a LINK token.
     function test_configure_allowsZeroLinkToken() public {
-        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(0));
         assertEq(orchestrator.linkToken(), address(0), "zero linkToken accepted");
         // Deploy still works (fees are native, not LINK).
         uint256[] memory dests = _dests();
@@ -396,7 +413,7 @@ contract CcipOivDeployerTest is OivTestConstants {
     }
 
     function test_withdrawLink_revertsWithNoLinkTokenWhenUnset() public {
-        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR); // native fees, no LINK
+        orchestrator.configure(address(router), address(0)); // native fees, no LINK
         vm.expectRevert(CcipOivDeployer.NoLinkToken.selector);
         orchestrator.withdrawLink(address(this), 1);
     }
@@ -487,21 +504,20 @@ contract CcipOivDeployerTest is OivTestConstants {
     // ── Enumerable registry + all-configured fan-out ──────────────────────────────
 
     function test_getChainIds_returnsConfiguredSet() public view {
-        // setUp configured Arbitrum, Base, Optimism.
         uint256[] memory ids = orchestrator.getChainIds();
-        assertEq(ids.length, 3, "three configured");
-        assertEq(orchestrator.getChainIdCount(), 3, "count getter");
+        assertEq(ids.length, BAKED_CHAINS, "every wired chain is in the set");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "count getter agrees");
     }
 
     function test_setChainSelector_updateDoesNotDuplicate() public {
         orchestrator.setChainSelector(BASE_CHAIN_ID, 12345); // already configured in setUp
-        assertEq(orchestrator.getChainIdCount(), 3, "update must not grow the set");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "update must not grow the set");
         assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), 12345, "selector updated");
     }
 
     function test_removeChainSelector_shrinksEnumerableSet() public {
         orchestrator.removeChainSelector(BASE_CHAIN_ID);
-        assertEq(orchestrator.getChainIdCount(), 2, "set shrank");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS - 1, "set shrank");
         uint256[] memory ids = orchestrator.getChainIds();
         for (uint256 i = 0; i < ids.length; i++) {
             assertTrue(ids[i] != BASE_CHAIN_ID, "removed id still present");
@@ -512,32 +528,41 @@ contract CcipOivDeployerTest is OivTestConstants {
     }
 
     function test_deployEverywhere_allConfigured_fansOutToEveryChain() public {
-        // No array: fans out to all configured chains (3 in setUp).
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
-        assertEq(ids.length, 3, "one message per configured chain");
-        assertEq(router.sentCount(), 3, "dispatched to all configured");
+        // No array: fans out to every wired chain except the local one.
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, BAKED_DESTINATIONS, "one message per configured chain");
+        assertEq(router.sentCount(), BAKED_DESTINATIONS, "dispatched to all configured");
     }
 
     function test_quoteDeployEverywhere_allConfigured_sumsAllChains() public view {
         (uint256 total, uint256[] memory per) = orchestrator.quoteDeployEverywhere(oivConfig, GAS_LIMIT);
-        assertEq(per.length, 3, "per-destination length");
-        assertEq(total, 3 * FEE, "total fee across all configured chains");
+        assertEq(per.length, BAKED_DESTINATIONS, "per-destination length");
+        assertEq(total, BAKED_DESTINATIONS * FEE, "total fee across all configured chains");
     }
 
     function test_deployEverywhere_allConfigured_skipsLocalChain() public {
-        // Configuring the local chain (fork is mainnet, id 1) must not cause a self-send.
-        orchestrator.setChainSelector(block.chainid, MAINNET_SELECTOR);
-        assertEq(orchestrator.getChainIdCount(), 4, "local chain added to set");
+        // The local chain (fork is mainnet, id 1) is itself baked into the registry, so this is no
+        // longer a configuration the test has to create — it is the default, and must not self-send.
+        assertEq(orchestrator.chainSelectorOf(block.chainid), MAINNET_SELECTOR, "local chain is baked in");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "local chain counted in the set");
 
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
-        assertEq(ids.length, 3, "local chain skipped - still only 3 remote dispatches");
-        assertEq(router.sentCount(), 3, "no self-send");
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, BAKED_DESTINATIONS, "local chain skipped");
+        assertEq(router.sentCount(), BAKED_DESTINATIONS, "no self-send");
     }
 
     function test_deployEverywhere_allConfigured_revertsWhenNoneConfigured() public {
+        // "None configured" is no longer a fresh instance's state — it has to be emptied on purpose.
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
-        fresh.configure(address(router), address(link), MAINNET_SELECTOR); // router set, but no chains
-        vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
+        fresh.configure(address(router), address(link));
+
+        uint256[] memory all = fresh.getChainIds();
+        for (uint256 i = 0; i < all.length; i++) {
+            fresh.removeChainSelector(all[i]);
+        }
+        assertEq(fresh.getChainIdCount(), 0, "registry emptied");
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, block.chainid));
         fresh.deployEverywhere{value: 0}(oivConfig, GAS_LIMIT);
     }
 
