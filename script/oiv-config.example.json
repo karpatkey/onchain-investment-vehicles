@@ -1,0 +1,46 @@
+{
+  "_comment": "Example OIV fund config. Timelock blocks, assetOverrides and sharesChains are all OPTIONAL: omit them and the fund deploys exactly as it did before those features existed. Parsed by script/base/OivConfigReader.sol and pinned by test/OivConfigReader.t.sol, so this file cannot drift from the parser.",
+  "fundName": "EXAMPLE FUND",
+  "managerSafe": {
+    "owners": ["0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"],
+    "threshold": 1
+  },
+  "salt": "7",
+  "execRolesModFinalOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+  "sharesChains": [1, 100],
+  "oiv": {
+    "admin": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+    "sharesParams": {
+      "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "name": "Example Fund Shares",
+      "symbol": "kEXMPL",
+      "subscriptionRequestTtl": 86400,
+      "redemptionRequestTtl": 86400,
+      "feeReceiver": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+      "managementFeeRate": 100,
+      "redemptionFeeRate": 50,
+      "performanceFeeModule": "0x0000000000000000000000000000000000000000",
+      "performanceFeeRate": 0
+    },
+    "assetOverrides": {
+      "100": "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0"
+    },
+    "execTimelock": {
+      "minDelay": 172800,
+      "proposers": [
+        "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+        "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+      ],
+      "cancellers": ["0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"]
+    },
+    "sharesTimelock": {
+      "minDelay": 604800,
+      "proposers": [
+        "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+        "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+      ],
+      "cancellers": ["0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"]
+    },
+    "additionalAssets": []
+  }
+}
