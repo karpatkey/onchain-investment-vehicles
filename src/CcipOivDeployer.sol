@@ -118,6 +118,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
     // ── Events ───────────────────────────────────────────────────────────────────
 
+    /// @notice Emitted when this chain's operational stack is deployed locally, with no CCIP involved.
+    /// @dev    Distinct from `StackReceived`, which means "a stack arrived over CCIP". Reusing that
+    ///         one with a zero selector and zero message id put phantom deliveries in front of any
+    ///         indexer counting them.
+    /// @param  instance The five stack addresses plus the exec timelock.
+    event LocalStackDeployed(KpkOivFactory.StackInstance instance);
+
     /// @notice Emitted when a chain outside the fund's declared topology gains its shares token.
     /// @param  chainId  The promoted chain.
     /// @param  instance The fund's addresses there. Asset approvals are NOT yet granted — see
@@ -190,6 +197,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice Thrown when `promoteShares` is called on a chain the topology already declares. Use
     ///         `deployLocal` there — promotion would bypass the asset the topology committed to.
     error SharesChainAlreadyDeclared();
+
+    /// @notice Thrown when `promoteShares` is called before the Avatar Safe has approved the shares
+    ///         proxy for the base asset. Promotion cannot grant that approval itself, and a promoted
+    ///         fund is immediately subscribable while redemption settlement would revert — so the
+    ///         approval is required FIRST rather than left as a follow-up someone might not make.
+    /// @param  asset The base asset whose allowance is missing.
+    error ApprovalNotGranted(address asset);
 
     /// @notice Thrown when `promoteShares` is called by anyone other than the fund's `admin` or its
     ///         exec timelock. The base asset is the one field the salt deliberately does not bind, so
@@ -269,8 +283,10 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             _chainIds.push(chainId);
             _chainIdIndex[chainId] = _chainIds.length; // 1-based
         } else {
-            // Correcting an existing entry: the old selector stops being a trusted source.
-            _isKnownSelector[chainSelectorOf[chainId]] = false;
+            // Correcting an existing entry: the old selector stops being a trusted source — but only
+            // if no OTHER live chain id still maps to it. Clearing unconditionally silently stopped a
+            // lane the registry still advertises from accepting inbound stacks.
+            _forgetSelectorIfUnused(chainSelectorOf[chainId], chainId);
         }
         chainSelectorOf[chainId] = ccipChainSelector;
         _isKnownSelector[ccipChainSelector] = true;
@@ -288,6 +304,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///
     ///      The check that remains is worth keeping: fanning out from a chain absent from the
     ///      registry would produce messages every sibling rejects, after the fees were already paid.
+    ///
+    ///      It is applied ONLY to the CCIP-emitting entry points. `deployLocal` and `promoteShares`
+    ///      make no CCIP call at all, and gating them here would have blocked them on exactly the
+    ///      chains they exist to serve: the registry is baked at construction, so an orchestrator on a
+    ///      chain onboarded later does not contain its own id, and `promoteShares` — whose whole
+    ///      purpose is a chain nobody could have declared in advance — would have needed an owner
+    ///      `setChainSelector` transaction first. That is the pre-handover seeding step this design
+    ///      retired, resurfacing.
     modifier onlyWiredChain() {
         if (chainSelectorOf[block.chainid] == 0) revert UnknownChain(block.chainid);
         _;
@@ -348,8 +372,9 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         _chainIdIndex[lastChainId] = idx;
         _chainIds.pop();
         delete _chainIdIndex[chainId];
-        // Retiring a lane must also stop it being an accepted CCIP source, not merely a destination.
-        _isKnownSelector[chainSelectorOf[chainId]] = false;
+        // Retiring a lane must also stop it being an accepted CCIP source, not merely a destination —
+        // unless another live chain id still maps to the same selector.
+        _forgetSelectorIfUnused(chainSelectorOf[chainId], chainId);
         delete chainSelectorOf[chainId];
 
         emit ChainSelectorRemoved(chainId);
@@ -410,8 +435,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         //
         // WARNING: the topology is inside the salt, so calling this from a different chain describes a
         // DIFFERENT fund at different addresses — not the same fund homed elsewhere.
-        SharesChain[] memory local = new SharesChain[](1);
-        local[0] = SharesChain({chainId: block.chainid, asset: config.sharesParams.asset});
+        SharesChain[] memory local = _localTopology(config);
         return _deployEverywhere(
             _effectiveConfig(config, local),
             _stackSelectors(local),
@@ -500,7 +524,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     function deployLocal(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
         external
         nonReentrant
-        onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance)
     {
         _validateSharesChains(sharesChains);
@@ -509,8 +532,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
         if (expected == address(0)) {
             KpkOivFactory.StackInstance memory stack = factory.deployStack(factory.oivToStackConfig(eff));
-            emit StackReceived(0, bytes32(0), stack);
-            return instance;
+            emit LocalStackDeployed(stack);
+            // Populated rather than returned zeroed: a successful deploy that reports nine zero
+            // addresses tells the operator nothing. The two shares fields stay zero, which is the
+            // signal that this chain carries no shares.
+            return _instanceFromStack(stack);
         }
 
         if (expected != config.sharesParams.asset) revert AssetMismatch(expected, config.sharesParams.asset);
@@ -539,7 +565,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
         if (expectedAsset == address(0)) {
             KpkOivFactory.StackInstance memory stack = factory.deployStack(factory.oivToStackConfig(config));
-            emit StackReceived(0, bytes32(0), stack);
+            emit LocalStackDeployed(stack);
+            instance = _instanceFromStack(stack);
         } else {
             if (expectedAsset != suppliedAsset) revert AssetMismatch(expectedAsset, suppliedAsset);
             instance = factory.deployOiv(config);
@@ -587,8 +614,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         view
         returns (uint256 totalFee, uint256[] memory feePerDestination)
     {
-        SharesChain[] memory local = new SharesChain[](1);
-        local[0] = SharesChain({chainId: block.chainid, asset: config.sharesParams.asset});
+        SharesChain[] memory local = _localTopology(config);
         (, totalFee, feePerDestination) =
             _price(_effectiveConfig(config, local), _stackSelectors(local), _sharesChainIds(local), gasLimit);
     }
@@ -704,12 +730,20 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // wired — without it, anyone could CREATE2 the same bytecode on any CCIP-supported chain and
         // send from there.
         //
-        // An earlier version of this comment claimed the blast radius was bounded because "deployStack
-        // is permissionless, so a forged message can only do what any caller can already do directly."
-        // That was wrong: `KpkOivFactory._deriveSalts` mixes `msg.sender` into every salt, so a direct
-        // caller can NEVER reach orchestrator-derived addresses — only a sibling orchestrator can. The
-        // sender check below is what makes that safe, and the shares-chain refusal further down is
-        // what stops a genuine sibling being used to occupy a fund's addresses.
+        // Two earlier versions of this comment were wrong, in opposite directions. The first claimed
+        // the blast radius was bounded because "a forged message can only do what any caller can
+        // already do directly". The correction over-reached: it said a direct caller can NEVER reach
+        // orchestrator-derived addresses because `_deriveSalts` mixes `msg.sender`. That holds only
+        // for the shares impl and proxy, which the factory CREATE2s itself. The Avatar Safe, Manager
+        // Safe and three Roles Modifiers are deployed by the permissionless third-party
+        // `safeProxyFactory` / `moduleProxyFactory`, whose salts are `keccak256(keccak256(initializer),
+        // nonce)` — public functions of the config — so anyone can land those five addresses.
+        //
+        // What the guards below actually buy: the sender check stops a forged message entirely, and
+        // the shares-chain refusal stops a GENUINE sibling being used to occupy a fund's addresses.
+        // Third-party squatting of the stack addresses is a separate, pre-existing exposure that
+        // neither closes; `KpkOivFactory.deployShares` defends against building on top of a squatted
+        // stack by checking the exec modifier's avatar rather than merely that code exists.
         if (!_isKnownSelector[message.sourceChainSelector]) {
             revert InvalidSourceChain(message.sourceChainSelector);
         }
@@ -829,7 +863,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     function promoteShares(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
         external
         nonReentrant
-        onlyWiredChain
         returns (KpkOivFactory.OivInstance memory instance)
     {
         _validateSharesChains(sharesChains);
@@ -845,8 +878,59 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             }
         }
 
+        // The approval must already exist, because promotion cannot grant it and the intermediate
+        // state is NOT harmless: `requestSubscription` has no admin, operator or pause gate and pulls
+        // from the investor, so a promoted fund takes deposits at once — while redemption settlement
+        // pulls from the Avatar Safe and reverts on a zero allowance. An investor could therefore be
+        // settled into the Safe and left unable to redeem until an off-chain admin transaction
+        // landed. The proxy address is predictable before promotion, so the admin can approve first
+        // and there is no window at all. Documented as "deferred" previously; requiring it here is
+        // what actually closes the gap.
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(eff, address(this));
+        // Checked here as well as in the factory so the more fundamental failure reports first: on a
+        // chain with no stack at all, "no approval" would be a confusing thing to be told.
+        if (predicted.avatarSafe.code.length == 0) revert KpkOivFactory.StackNotDeployed();
+        if (IERC20(config.sharesParams.asset).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) == 0) {
+            revert ApprovalNotGranted(config.sharesParams.asset);
+        }
+
         instance = factory.deployShares(eff);
         emit SharesPromoted(block.chainid, instance);
+    }
+
+    /// @dev Widens a `StackInstance` into the `OivInstance` shape the entry points return, leaving the
+    ///      two shares fields zero as the "this chain carries no shares" signal.
+    function _instanceFromStack(KpkOivFactory.StackInstance memory stack)
+        internal
+        pure
+        returns (KpkOivFactory.OivInstance memory instance)
+    {
+        instance = KpkOivFactory.OivInstance({
+            avatarSafe: stack.avatarSafe,
+            managerSafe: stack.managerSafe,
+            execRolesModifier: stack.execRolesModifier,
+            subRolesModifier: stack.subRolesModifier,
+            managerRolesModifier: stack.managerRolesModifier,
+            kpkSharesImpl: address(0),
+            kpkSharesProxy: address(0),
+            execTimelock: stack.execTimelock,
+            sharesTimelock: address(0)
+        });
+    }
+
+    /// @dev The single-shares-chain topology the 2-arg overloads imply, VALIDATED like any other.
+    ///
+    ///      Skipping validation here was not cosmetic. `_assetFor` returns `address(0)` both for "this
+    ///      chain carries no shares" and for "the declared asset is zero", and only
+    ///      `_validateSharesChains` separates them. Unvalidated, a config with a zero
+    ///      `sharesParams.asset` took the stack branch: 18 non-refundable CCIP messages went out, no
+    ///      fund was created, and the salt was derived from a topology that validation rejects — so
+    ///      neither `deployLocal` nor `promoteShares` could ever re-derive it. The fund was
+    ///      unrecoverable. Pinned by `test_deployEverywhere_sugarRejectsAZeroBaseAsset`.
+    function _localTopology(KpkOivFactory.OivConfig calldata config) internal view returns (SharesChain[] memory t) {
+        t = new SharesChain[](1);
+        t[0] = SharesChain({chainId: block.chainid, asset: config.sharesParams.asset});
+        _validateSharesChains(t);
     }
 
     /// @dev Rejects a topology that is unordered, degenerate, or would make one fund's addresses
@@ -860,6 +944,20 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             if (chainId <= previous) revert SharesChainsNotAscending(chainId);
             previous = chainId;
         }
+    }
+
+    /// @dev Drops `selector` from the trusted-source set unless some chain id other than `except`
+    ///      still maps to it. Two chain ids sharing a selector is a misconfiguration rather than a
+    ///      normal state, but clearing unconditionally made it fail OPEN in the confusing direction:
+    ///      a destination the registry still lists would quietly reject every inbound stack.
+    function _forgetSelectorIfUnused(uint64 selector, uint256 except) private {
+        if (selector == 0) return;
+        uint256 n = _chainIds.length;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 cid = _chainIds[i];
+            if (cid != except && chainSelectorOf[cid] == selector) return;
+        }
+        _isKnownSelector[selector] = false;
     }
 
     /// @dev The asset the topology names for `chainId`, or `address(0)` if it carries no shares.

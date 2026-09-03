@@ -370,7 +370,7 @@ abstract contract OivChainDeploy is Script {
             // Surface the exact remaining action instead of a bare revert, and do NOT print "Chain
             // ready" — so this is an [ACTION REQUIRED], not a false-positive success.
             console.log("[ACTION REQUIRED] orchestrator deployed but NOT configured; finalOwner must call");
-            console.log("  configure(router, link, mainnetSelector):");
+            console.log("  configure(router, link):");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
             return;

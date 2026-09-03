@@ -24,14 +24,9 @@ import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 ///     --sig "run(address,address,address,address,address,uint64)" \
 ///     <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken> 5009297550715157269
 contract DeployCcipOivDeployer is OivChainDeploy {
-    function run(
-        address eoaOwner,
-        address finalOwner,
-        address factory,
-        address ccipRouter,
-        address linkToken,
-        uint64 mainnetSelector
-    ) external {
+    function run(address eoaOwner, address finalOwner, address factory, address ccipRouter, address linkToken)
+        external
+    {
         require(eoaOwner != address(0), "eoaOwner is zero");
         require(finalOwner != address(0), "finalOwner is zero");
         require(factory != address(0), "factory is zero");
@@ -47,7 +42,6 @@ contract DeployCcipOivDeployer is OivChainDeploy {
         );
         require(ccipRouter != address(0), "ccipRouter is zero");
         require(linkToken != address(0), "linkToken is zero");
-        require(mainnetSelector != 0, "mainnetSelector is zero");
         require(factory.code.length > 0, "KpkOivFactory not deployed on this chain");
         require(msg.sender == eoaOwner, "broadcasting sender must equal eoaOwner");
 
@@ -61,7 +55,6 @@ contract DeployCcipOivDeployer is OivChainDeploy {
         console.log("Final owner (post-deploy):", finalOwner);
         console.log("CCIP router:              ", ccipRouter);
         console.log("LINK token:               ", linkToken);
-        console.log("Mainnet selector:         ", mainnetSelector);
         console.log("==========================================");
 
         vm.startBroadcast();

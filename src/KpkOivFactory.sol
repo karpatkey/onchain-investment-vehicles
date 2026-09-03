@@ -792,7 +792,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, msg.sender);
-        if (stack.avatarSafe.code.length == 0) revert StackNotDeployed();
+
+        // Code at the Avatar Safe is NOT sufficient evidence that this factory built the stack.
+        // `_deriveSalts`'s caller-mixing protects only the shares impl and proxy, which this contract
+        // CREATE2s itself; the Avatar Safe, Manager Safe and three Roles Modifiers are deployed by the
+        // PERMISSIONLESS third-party `safeProxyFactory` / `moduleProxyFactory`, whose salts are
+        // `keccak256(keccak256(initializer), nonce)` — both public functions of the config. Anyone can
+        // therefore land those five addresses directly, and an earlier version of this guard tested
+        // exactly the one address they can create.
+        //
+        // The exec Roles Modifier's avatar is the coherence check that cannot be forged: a squatted
+        // modifier is initialized with avatar = target = owner = this factory, and only
+        // `OivStackWiring.wireExec` — reachable solely from a completed `deployStack`/`deployOiv` —
+        // repoints it at the Avatar Safe. So this holds if and only if a genuine stack deployment
+        // finished here. Pinned by `test_deployShares_revertsOnASquattedButUnwiredStack`.
+        if (stack.avatarSafe.code.length == 0 || stack.managerSafe.code.length == 0) revert StackNotDeployed();
+        if (stack.execRolesModifier.code.length == 0) revert StackNotDeployed();
+        if (IRoles(stack.execRolesModifier).avatar() != stack.avatarSafe) revert StackNotDeployed();
 
         uint256 id = instanceCount++;
         (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(

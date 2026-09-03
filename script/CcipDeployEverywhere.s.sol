@@ -48,8 +48,9 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Factory:              ", address(factory));
         _logInstance(predicted);
-        console.log("  NOTE: addresses are bound to this exact config (salt = keccak256(config)) and are");
-        console.log("        identical on every chain for this orchestrator. Changing any field moves them.");
+        console.log("  NOTE: bound to this config AND its .sharesChains topology; the base asset is");
+        console.log("        excluded from the salt, so these are identical on every chain. Any other");
+        console.log("        field, or the topology, moves them.");
         console.log("============================================================");
     }
 

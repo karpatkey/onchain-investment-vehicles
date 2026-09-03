@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {OivConfigReader} from "script/base/OivConfigReader.sol";
+import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 
 /// @dev Exposes the reader's internals. The reader is `abstract` and its helpers are `internal`, so
 ///      without this the only way to observe a parse would be a full fork deployment.
@@ -14,6 +15,10 @@ contract ReaderHarness is OivConfigReader {
 
     function stackConfig(string memory json) external view returns (KpkOivFactory.StackConfig memory) {
         return _buildStackConfig(json);
+    }
+
+    function sharesChains(string memory json) external view returns (CcipOivDeployer.SharesChain[] memory) {
+        return _buildSharesChains(json);
     }
 
     function shouldDeployShares(string memory json) external view returns (bool) {
@@ -86,6 +91,19 @@ contract OivConfigReaderTest is Test {
         assertTrue(reader.shouldDeployShares(json), "gnosis is listed");
         vm.chainId(42161);
         assertFalse(reader.shouldDeployShares(json), "arbitrum is not listed - stack only");
+    }
+
+    /// @notice The CCIP path must NOT default the topology to "the chain this happens to run on":
+    ///         that makes the salt origin-dependent, which is the very defect the salt-bound topology
+    ///         exists to remove. The direct factory path has no such problem and keeps its default.
+    function test_buildSharesChains_requiresAnExplicitTopology() public {
+        string memory legacy = vm.readFile("script/ccip-test-fund-config.json");
+        vm.expectRevert(
+            bytes(
+                "config: .sharesChains is required for the CCIP path - a per-chain default would make the salt origin-dependent"
+            )
+        );
+        reader.sharesChains(legacy);
     }
 
     /// @dev A config predating these fields must keep deploying exactly as it did.
