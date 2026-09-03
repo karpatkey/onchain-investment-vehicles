@@ -485,6 +485,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         regardless of wiring status.
     error KpkSharesMastercopyNotSet();
 
+    /// @notice Thrown when `deployShares` is called for a fund whose operational stack does not exist
+    ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
+    ///         the stack first is also what turns a pre-landed stack from a denial into a
+    ///         prerequisite: an attacker who occupies those addresses has paid the fund's gas bill.
+    error StackNotDeployed();
+
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
     error TimelockDeployerNotSet();
@@ -740,6 +746,78 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             kpkSharesImpl: sharesImpl,
             kpkSharesProxy: sharesProxy,
             execTimelock: stack.execTimelock,
+            sharesTimelock: sharesTimelock
+        });
+
+        instances[id] = instance;
+        emit OivDeployed(id, instance);
+    }
+
+    /// @notice Adds the shares token to a chain that already carries this fund's operational stack.
+    /// @dev    Lifts what was otherwise an immutable choice. The fund's cross-chain topology is hashed
+    ///         into the orchestrator's salt, so declaring a new shares chain later would move every
+    ///         address. The documented mitigation was "declare generously", which cannot cover a chain
+    ///         that does not exist yet, or one whose dominant stablecoin is unknowable today — and a
+    ///         declared chain is shares-or-nothing in the meantime, since the fan-out skips it and
+    ///         `ccipReceive` refuses stacks on it.
+    ///
+    ///         It works because the shares proxy's address is a function of `(factory, proxySalt,
+    ///         impl)` ALONE — see `_predictSharesProxy`. It depends on neither the Avatar Safe nor
+    ///         anything else in the stack. So on a stack-only chain that slot is still free, the Avatar
+    ///         Safe already sits at the fund's canonical address (same salt), and reusing the ORIGINAL
+    ///         salt lands the promoted shares token at the same address as every other shares chain.
+    ///         Nothing moves.
+    ///
+    ///         APPROVALS ARE NOT GRANTED HERE, deliberately. `_grantApprovals` needs the factory to be
+    ///         an enabled Avatar Safe module, and the factory disables itself at the end of every flow;
+    ///         re-enabling it would hand a module unrestricted execution over a live, funded Safe. The
+    ///         fund's admin grants them afterwards through the exec Roles Modifier, which is exactly
+    ///         what a scoped role there already permits. The intermediate state fails safe:
+    ///         subscriptions pull from the investor (`kpkShares.requestSubscription`) and work at once,
+    ///         while redemption SETTLEMENT pulls from the Avatar Safe and so reverts inside the
+    ///         operator's own transaction until the allowance exists — a loud failure, not a silent
+    ///         half-configuration. A timelocked fund can pre-schedule the approval and land it in the
+    ///         same block, because the proxy address is predictable beforehand.
+    ///
+    ///         Permissionless HERE, because caller-mixing already isolates address spaces. The gate
+    ///         that matters lives in `CcipOivDeployer.promoteShares`: the base asset is the one field
+    ///         the orchestrator's salt deliberately does not bind, so promotion has to be restricted to
+    ///         the fund's own salt-bound admin or its exec timelock.
+    /// @param  config   Fund parameters, with THIS chain's base asset and the fund's original salt.
+    /// @return instance The fund's addresses on this chain.
+    function deployShares(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
+        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
+        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
+        _validateOivConfig(config);
+
+        StackInstance memory stack =
+            _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, msg.sender);
+        if (stack.avatarSafe.code.length == 0) revert StackNotDeployed();
+
+        uint256 id = instanceCount++;
+        (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
+            config.sharesParams,
+            stack.managerSafe,
+            stack.avatarSafe,
+            config.admin,
+            config.additionalAssets,
+            _deriveSharesSalt(config.salt, msg.sender),
+            config.sharesTimelock
+        );
+
+        instance = OivInstance({
+            avatarSafe: stack.avatarSafe,
+            managerSafe: stack.managerSafe,
+            execRolesModifier: stack.execRolesModifier,
+            subRolesModifier: stack.subRolesModifier,
+            managerRolesModifier: stack.managerRolesModifier,
+            kpkSharesImpl: sharesImpl,
+            kpkSharesProxy: sharesProxy,
+            // Already deployed on this chain by `deployStack`, so recorded rather than deployed.
+            execTimelock: config.execTimelock.minDelay == 0
+                ? address(0)
+                : IKpkTimelockDeployer(_requireTimelockDeployer())
+                    .predictExecTimelock(stack.execRolesModifier, config.execTimelock),
             sharesTimelock: sharesTimelock
         });
 

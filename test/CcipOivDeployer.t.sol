@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
@@ -242,6 +243,102 @@ contract CcipOivDeployerTest is OivTestConstants {
 
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.SharesChainsNotAscending.selector, uint256(1)));
         orchestrator.predictOiv(oivConfig, bad);
+    }
+
+    // ── Promotion: adding a shares chain after birth ───────────────────────────
+
+    /// @dev A topology that declares ONLY Gnosis, so the local chain (mainnet on this fork) is a
+    ///      stack-only chain and therefore promotable.
+    function _gnosisOnlyTopology() internal view returns (CcipOivDeployer.SharesChain[] memory t) {
+        t = new CcipOivDeployer.SharesChain[](1);
+        t[0] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+    }
+
+    /// @notice The whole point: a chain the topology never declared gains the shares token, at the
+    ///         SAME address every declared shares chain would use. Nothing moves.
+    function test_promoteShares_landsAtTheCanonicalAddressWithoutMovingAnything() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        // This chain is undeclared, so deployLocal gives it the stack only.
+        orchestrator.deployLocal(oivConfig, topology);
+        assertEq(predicted.kpkSharesProxy.code.length, 0, "no shares token before promotion");
+        assertGt(predicted.avatarSafe.code.length, 0, "but the stack is live");
+
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promoted proxy must be the canonical one");
+        assertEq(promoted.avatarSafe, predicted.avatarSafe, "and reuse the existing Avatar Safe");
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "shares token now exists");
+    }
+
+    /// @notice The gate. The base asset is the one field the salt does not bind, so an open promotion
+    ///         would let anyone holding the true config land a hostile-denominated shares token at the
+    ///         fund's canonical address.
+    function test_promoteShares_rejectsANonAdminCallerWithAGarbageAsset() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+
+        // A REAL mainnet ERC-20, deliberately: with a codeless address the deploy would revert inside
+        // `initialize` for an unrelated reason, and the test would pass without the gate doing
+        // anything. Using DAI means the ONLY thing standing between an attacker and a
+        // hostile-denominated shares token at the fund's canonical address is the gate.
+        KpkOivFactory.OivConfig memory hostile = oivConfig;
+        hostile.sharesParams.asset = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+
+        address attacker = makeAddr("promotionAttacker");
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, attacker));
+        orchestrator.promoteShares(hostile, topology);
+    }
+
+    /// @notice The pre-occupation attack, re-run against promotion. It used to deny a fund a chain
+    ///         forever; now the attacker has merely paid for the fund's stack, and the admin promotes
+    ///         on top of it.
+    function test_promoteShares_survivesAnAttackerPreLandingTheStack() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        address attacker = makeAddr("preOccupier");
+        vm.prank(attacker);
+        orchestrator.deployLocal(oivConfig, topology); // permissionless, lands the stack
+        assertGt(predicted.avatarSafe.code.length, 0, "attacker paid for the fund's stack");
+
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promotion still lands canonically");
+    }
+
+    /// @dev A declared chain must go through `deployLocal`, which honours the asset the topology
+    ///      committed to. Promotion there would bypass that commitment.
+    function test_promoteShares_revertsOnAnAlreadyDeclaredChain() public {
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(CcipOivDeployer.SharesChainAlreadyDeclared.selector);
+        orchestrator.promoteShares(oivConfig, _topology()); // _topology() declares the local chain
+    }
+
+    /// @dev The stack is a prerequisite, and that is what makes a pre-landed stack harmless rather
+    ///      than a denial. Shares with no Avatar Safe would be a broken fund.
+    function test_promoteShares_revertsWhenTheStackIsNotThereYet() public {
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(KpkOivFactory.StackNotDeployed.selector);
+        orchestrator.promoteShares(oivConfig, _gnosisOnlyTopology());
+    }
+
+    /// @dev Approvals are deliberately deferred to the fund's admin via the exec Roles Modifier. Pin
+    ///      the intermediate state so nobody mistakes it for a completed deployment.
+    function test_promoteShares_leavesTheAvatarAllowanceAtZero() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(
+            IERC20(oivConfig.sharesParams.asset).allowance(promoted.avatarSafe, promoted.kpkSharesProxy),
+            0,
+            "approvals must NOT be granted here - the admin grants them through the exec modifier"
+        );
     }
 
     function _fee(uint256 n) internal pure returns (uint256) {

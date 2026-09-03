@@ -254,10 +254,27 @@ Ordering does not matter, and because the whole config is salt-bound the result 
 whoever pays the gas. Shares never travel over CCIP: `deployOiv` measures ~2.88M gas against a
 3,000,000 destination cap on half the lanes, which one extra timelock member would erase.
 
-> **Topology is immutable per fund.** Adding a shares chain later changes the salt and therefore every
-> address. This is inherent to any stack-first design — once a stack occupies a chain, `deployOiv`
-> there collides forever — so **declare generously**: a declared-but-undeployed shares chain costs
-> nothing, receives no stack, and can be filled by anyone at any later time.
+> **Declare what you know; promote for the rest.** The topology is hashed into the salt, so the
+> declared set is fixed at birth — but where shares can *live* is not. A chain the topology never
+> declared can gain the shares token later via `promoteShares`, at the **same address** every declared
+> shares chain uses, because the shares proxy's address depends only on `(factory, proxySalt, impl)`
+> and never on the stack. Nothing moves.
+>
+> Declaring a chain up front is still preferable where you can: a declared chain is filled
+> permissionlessly by `deployLocal` with the asset the topology committed to. Promotion is gated to the
+> fund's `admin` or its exec timelock, because a promoted chain's asset has no such commitment and an
+> open promotion would let anyone land a hostile-denominated shares token at the canonical address.
+>
+> Note a declared-but-undeployed chain is **not** free of consequence: it is skipped by the stack
+> fan-out and refuses inbound stacks, so it is shares-or-nothing until its `deployOiv` runs. Declare
+> the chains you intend to use; promote the ones you could not have known about.
+>
+> **Promotion does not grant the Avatar Safe's asset approvals.** That needs the factory to be an
+> enabled Safe module, and re-enabling it would give a module unrestricted execution over a live,
+> funded Safe. Grant them afterwards through the exec Roles Modifier — a scoped `approve(sharesProxy,
+> max)` on the asset. Until then subscriptions work normally and redemption *settlement* reverts in the
+> operator's own transaction, so the gap is loud rather than silent. A timelocked fund can pre-schedule
+> the approval and land it in the same block, since the proxy address is predictable in advance.
 
 #### Optional: timelocks, per-chain assets, and which chains get shares
 
