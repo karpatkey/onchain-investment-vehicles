@@ -431,9 +431,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         lanes, which one extra timelock member would erase.
     /// @param  config       Fund parameters. `sharesParams.asset` must match what `sharesChains` names
     ///                      for this chain, if this chain carries shares.
-    /// @param  sharesChains The fund's topology, strictly ascending by chain id. Declare generously:
-    ///                      a declared-but-undeployed shares chain costs nothing, receives no stack,
-    ///                      and can be filled later by anyone.
+    /// @param  sharesChains The fund's topology, strictly ascending by chain id. Declaring a chain is
+    ///                      not free: a declared chain is skipped by this fan-out and refuses inbound
+    ///                      stacks, so it is shares-or-nothing until its own `deployOiv` runs. Declare
+    ///                      the chains you intend to use — `promoteShares` covers the ones you could
+    ///                      not have known about.
     /// @param  gasLimit     Destination `ccipReceive` gas limit.
     function deployEverywhere(
         KpkOivFactory.OivConfig calldata config,
