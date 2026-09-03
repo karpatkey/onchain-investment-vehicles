@@ -28,7 +28,7 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 | `KpkOivFactory` | `0x8dE6C23864A19216848cc40e3b4194752af057D7` |
 | `KpkSharesDeployer` | `0x9fa5f3921b679b352908127C11859688e3A5e9dd` |
 | `CcipOivDeployer` (orchestrator) | `0x7D5B26C2b14De1F4A43733980955B4408B82F7b2` |
-| `KpkTimelockDeployer` | `0x961dB77DCe77eC08C37ce068209a8bFE9732e649` |
+| `KpkTimelockDeployer` | `0x9C5060a0274358E2D7D26Fd83b8649cCd86a8d7a` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its address does not
