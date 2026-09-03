@@ -6,6 +6,7 @@ import {OivChainDeploy} from "./base/OivChainDeploy.sol";
 import {KpkOivFactoryV4} from "../src/KpkOivFactoryV4.sol";
 import {KpkSharesDeployer} from "../src/KpkSharesDeployer.sol";
 import {KpkSharesNav} from "../src/KpkSharesNav.sol";
+import {KpkSharesNavLens} from "../src/periphery/KpkSharesNavLens.sol";
 
 /// @title  DeployKpkOivFactoryV4
 /// @notice Deploys the UNIFIED factory — the one that deploys both `KpkShares` funds and NAV-priced
@@ -53,6 +54,13 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
     ///         live one is locked to the v3 factory and rejects every call from v4.
     bytes32 internal constant SALT_DEPLOYER_V4 = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(4)));
 
+    /// @notice The read-only lens's salt.
+    /// @dev CREATE2 rather than plain CREATE for two reasons. It makes the deployment idempotent, so
+    ///      a rerun during a 19-chain rollout skips it instead of leaving a duplicate behind. And it
+    ///      puts the lens at the SAME address on every chain, which matters more for this contract
+    ///      than for most: monitoring configuration is written once and pointed at every deployment.
+    bytes32 internal constant SALT_LENS_V4 = keccak256(abi.encodePacked("KpkSharesNavLens", uint256(4)));
+
     function _factoryV4InitCode(address eoaOwner) internal pure returns (bytes memory) {
         return abi.encodePacked(
             type(KpkOivFactoryV4).creationCode,
@@ -77,9 +85,15 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
         return _create2Address(SALT_DEPLOYER_V4, _deployerInitCode(predictFactoryV4(eoaOwner)));
     }
 
+    /// @notice Predicts the lens address. Takes no arguments because the lens takes no constructor
+    ///         arguments and holds no state — it is the same contract on every chain.
+    function predictLensV4() public pure returns (address) {
+        return _create2Address(SALT_LENS_V4, type(KpkSharesNavLens).creationCode);
+    }
+
     function run(address eoaOwner, address finalOwner)
         external
-        returns (address factory, address sharesDeployer, address navImplementation)
+        returns (address factory, address sharesDeployer, address navImplementation, address lens)
     {
         require(eoaOwner != address(0), "eoaOwner is zero");
         require(finalOwner != address(0), "finalOwner is zero");
@@ -172,6 +186,19 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
             console.log("[SKIP] KpkSharesNav implementation already set:", navImplementation);
         }
 
+        // The read-only lens. Deployed here rather than left to a follow-up because a fund without
+        // it is observable only by an operator willing to call the NAV calculator by hand — and the
+        // state you most need to read is the one where the fund itself refuses to answer.
+        lens = _create2Address(SALT_LENS_V4, type(KpkSharesNavLens).creationCode);
+        if (lens.code.length == 0) {
+            (bool okLens,) =
+                CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_LENS_V4, type(KpkSharesNavLens).creationCode));
+            require(okLens, "lens CREATE2 deploy failed");
+            console.log("[OK]   KpkSharesNavLens deployed at: ", lens);
+        } else {
+            console.log("[SKIP] KpkSharesNavLens already at:  ", lens);
+        }
+
         if (f.owner() == eoaOwner) {
             f.transferOwnership(finalOwner);
             console.log("[OK]   ownership transferred");
@@ -201,12 +228,15 @@ contract DeployKpkOivFactoryV4 is OivChainDeploy {
         require(navImplementation.code.length > 0, "navImplementation is not a contract");
         require(f.owner() == finalOwner, "ownership not transferred");
         require(KpkSharesDeployer(sharesDeployer).factory() == factory, "shares deployer locked to a different factory");
+        require(lens.code.length > 0, "lens was not deployed");
 
         console.log("==========================================");
         console.log("Ownership transferred to:   ", finalOwner);
         console.log("deployOiv     -> KpkShares fund (operator-priced, multi-chain capable)");
         console.log("deployNavFund -> KpkSharesNav fund (NAV-priced, SINGLE-CHAIN ONLY)");
         console.log("deployStack   -> the five-contract stack alone");
+        console.log("KpkSharesNavLens (read-only):", lens);
+        console.log("  sharePrice / navStatus / assetStatus - answer while the fund itself reverts");
         console.log("==========================================");
         console.log("NOTE: the live salt-v3 factory is NOT touched by this deploy. Funds already");
         console.log("  deployed through it keep working; src/KpkOivFactory.sol must stay in the repo");

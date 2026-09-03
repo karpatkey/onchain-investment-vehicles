@@ -12,6 +12,7 @@ import {OivTestConstants} from "test/OivTestConstants.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {DeployKpkOivFactoryV4} from "script/DeployKpkOivFactoryV4.s.sol";
 import {DeployOiv} from "script/DeployOiv.s.sol";
+import {KpkSharesNavLens} from "src/periphery/KpkSharesNavLens.sol";
 
 /// @notice Fork tests for `KpkOivFactoryV4` — the unified factory that deploys BOTH fund types.
 /// @dev    `KpkOivFactory` deploys operator-priced `KpkShares` funds; `KpkSharesNavFactory` deployed
@@ -277,7 +278,7 @@ contract KpkOivFactoryV4Test is OivTestConstants {
         // The script broadcasts as `eoaOwner`, which is also the address baked into the factory's
         // CREATE2 init-code and the one that calls the owner-only setters. Passing this contract
         // keeps all three the same here, exactly as `--account` does under `forge script`.
-        (address deployed, address sharesDeployer, address impl) = script.run(address(this), finalOwner);
+        (address deployed, address sharesDeployer, address impl,) = script.run(address(this), finalOwner);
 
         KpkOivFactoryV4 f = KpkOivFactoryV4(deployed);
         assertEq(f.owner(), finalOwner, "ownership not transferred");
@@ -458,8 +459,8 @@ contract KpkOivFactoryV4Test is OivTestConstants {
         DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
         address finalOwner = makeAddr("v4RerunOwner");
 
-        (address f1, address d1, address impl1) = script.run(address(this), finalOwner);
-        (address f2, address d2, address impl2) = script.run(address(this), finalOwner);
+        (address f1, address d1, address impl1,) = script.run(address(this), finalOwner);
+        (address f2, address d2, address impl2,) = script.run(address(this), finalOwner);
 
         assertEq(f2, f1, "factory address changed on rerun");
         assertEq(d2, d1, "shares deployer address changed on rerun");
@@ -573,7 +574,7 @@ contract KpkOivFactoryV4Test is OivTestConstants {
     function test_deployScript_refusesRerunWhenImplementationIsUnsetAfterHandover() public {
         DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
         address finalOwner = makeAddr("v4StuckOwner");
-        (address deployed,,) = script.run(address(this), finalOwner);
+        (address deployed,,,) = script.run(address(this), finalOwner);
 
         // Slot 16 is `navImplementation` (forge inspect storage-layout). Simulates the cancelled
         // transaction rather than a hand-called setter, which is the realistic route in.
@@ -582,6 +583,45 @@ contract KpkOivFactoryV4Test is OivTestConstants {
 
         vm.expectRevert(bytes("navImplementation unset but ownership already handed over"));
         script.run(address(this), finalOwner);
+    }
+
+    /// @notice The script's lens is deployed, deterministic, idempotent, and actually WORKS.
+    /// @dev The "works" half is the load-bearing part. The lens calls `NavPricingLib`, an external
+    ///      library reached by DELEGATECALL, so its creation code carries a link placeholder. If
+    ///      that placeholder survived into the CREATE2 init code, the lens would deploy to the
+    ///      predicted address, report a healthy `code.length`, satisfy every structural assertion —
+    ///      and then revert on the first library call. Deploying it is not evidence; calling it is.
+    function test_deployScript_deploysAWorkingLens() public {
+        DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
+        address finalOwner = makeAddr("v4LensOwner");
+
+        (address deployed,,, address lens) = script.run(address(this), finalOwner);
+
+        assertEq(lens, script.predictLensV4(), "lens did not land on its predicted address");
+        assertTrue(lens.code.length > 0, "lens has no code");
+
+        // Point it at a real fund from the same factory and make it answer.
+        factory = KpkOivFactoryV4(deployed);
+        KpkOivFactoryV4.NavFundInstance memory inst = factory.deployNavFund(_navConfig(60));
+
+        (uint256 price, bool healthy) = KpkSharesNavLens(lens).sharePrice(inst.navProxy);
+        assertTrue(healthy, "a freshly deployed fund should be healthy");
+        assertEq(price, ONE_USD, "should report the bootstrap price");
+
+        KpkSharesNavLens.FundStatus memory status = KpkSharesNavLens(lens).navStatus(inst.navProxy);
+        assertEq(status.portfolioSafe, inst.avatarSafe, "lens read the wrong Safe");
+        assertTrue(status.bootstrapping, "a fund with no shares is bootstrapping");
+    }
+
+    /// @notice Re-running the script does not deploy a second lens.
+    function test_deployScript_lensDeploymentIsIdempotent() public {
+        DeployKpkOivFactoryV4 script = new DeployKpkOivFactoryV4();
+        address finalOwner = makeAddr("v4LensRerunOwner");
+
+        (,,, address lens1) = script.run(address(this), finalOwner);
+        (,,, address lens2) = script.run(address(this), finalOwner);
+
+        assertEq(lens2, lens1, "rerun produced a different lens");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
