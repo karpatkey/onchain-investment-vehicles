@@ -77,15 +77,18 @@ contract KpkTimelockDeployerTest is Test {
     /// @dev The configuration the rollout actually uses: two proposers (governance + superadmin) and
     ///      two cancellers (a manager-side operational veto and an investor-side veto).
     function _params() internal view returns (TimelockParams memory p) {
-        address[] memory proposers = new address[](2);
-        proposers[0] = governanceSafe;
-        proposers[1] = superadminSafe;
+        p = TimelockParams({
+            minDelay: 2 days,
+            proposers: _sorted(governanceSafe, superadminSafe),
+            cancellers: _sorted(managerVetoSafe, lpVetoSafe)
+        });
+    }
 
-        address[] memory cancellers = new address[](2);
-        cancellers[0] = managerVetoSafe;
-        cancellers[1] = lpVetoSafe;
-
-        p = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: cancellers});
+    /// @dev The deployer requires strictly ascending role arrays, so a timelock's address is a
+    ///      function of the role SET rather than of how a config happened to order it.
+    function _sorted(address a, address b) internal pure returns (address[] memory out) {
+        out = new address[](2);
+        (out[0], out[1]) = a < b ? (a, b) : (b, a);
     }
 
     // ── Determinism ────────────────────────────────────────────────────────────
@@ -117,7 +120,7 @@ contract KpkTimelockDeployerTest is Test {
         TimelockParams memory a = _params();
 
         TimelockParams memory b = _params();
-        b.cancellers[1] = makeAddr("differentVetoSafe");
+        b.cancellers = _sorted(managerVetoSafe, makeAddr("differentVetoSafe"));
 
         assertTrue(
             kit.predictExecTimelock(execMod, a) != kit.predictExecTimelock(execMod, b),
@@ -209,6 +212,13 @@ contract KpkTimelockDeployerTest is Test {
         TimelockParams memory p = _params();
         p.cancellers[0] = address(0);
         vm.expectRevert(KpkTimelockDeployer.ZeroAddress.selector);
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    function test_revert_proposersNotAscending() public {
+        TimelockParams memory p = _params();
+        (p.proposers[0], p.proposers[1]) = (p.proposers[1], p.proposers[0]);
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.MembersNotAscending.selector, p.proposers[1]));
         kit.deployExecTimelock(execMod, p);
     }
 
@@ -347,6 +357,30 @@ contract KpkTimelockDeployerTest is Test {
         assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), governanceSafe), "no proposer role granted");
         assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "cancellers are still provisioned");
         assertTrue(tl.hasRole(0x00, address(tl)), "still self-administered");
+    }
+
+    /// @notice The attack `_salt`'s `msg.sender` term exists to prevent, pinned as a regression.
+    ///
+    ///         `_requireLiveConfigMatches` cannot observe an ADDED role holder, and an added
+    ///         `DEFAULT_ADMIN_ROLE` holder is total immediate control: as a direct admin it revokes
+    ///         every canceller and grants itself `PROPOSER_ROLE` with no schedule and no delay. A PoC
+    ///         confirmed the whole takeover — a configured proposer pre-deployed the timelock, granted
+    ///         itself admin through the timelock's own governance, and the factory adopted it.
+    ///
+    ///         The address is now reachable only by the caller that produced it, so the instance a
+    ///         fund adopts cannot be pre-empted at all.
+    function test_adoption_rejectsATimelockPreDeployedByAnotherCaller() public {
+        TimelockParams memory p = _params();
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        address theirs = kit.deployExecTimelock(execMod, p);
+
+        // This contract stands in for the factory: same params, same governed contract, different
+        // caller — and therefore a different, unoccupied address.
+        address ours = kit.predictExecTimelock(execMod, p);
+        assertTrue(ours != theirs, "a different caller must not share the address");
+        assertEq(kit.deployExecTimelock(execMod, p), ours, "we deploy our own instance regardless");
     }
 
     // ── Veto semantics ─────────────────────────────────────────────────────────

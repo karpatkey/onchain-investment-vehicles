@@ -1107,13 +1107,17 @@ contract KpkOivFactoryTest is OivTestConstants {
 
     /// @dev Two proposers, two cancellers — the shape the rollout actually uses.
     function _timelockParams(uint256 minDelay) internal view returns (TimelockParams memory p) {
-        address[] memory proposers = new address[](2);
-        proposers[0] = govSafe;
-        proposers[1] = superadminSafe;
-        address[] memory cancellers = new address[](2);
-        cancellers[0] = managerVeto;
-        cancellers[1] = lpVeto;
-        p = TimelockParams({minDelay: minDelay, proposers: proposers, cancellers: cancellers});
+        // Sorted: the deployer requires strictly ascending arrays.
+        p = TimelockParams({
+            minDelay: minDelay,
+            proposers: _sortedPair(govSafe, superadminSafe),
+            cancellers: _sortedPair(managerVeto, lpVeto)
+        });
+    }
+
+    function _sortedPair(address a, address b) internal pure returns (address[] memory out) {
+        out = new address[](2);
+        (out[0], out[1]) = a < b ? (a, b) : (b, a);
     }
 
     function test_deployOiv_execTimelockOwnsExecModifier() public {

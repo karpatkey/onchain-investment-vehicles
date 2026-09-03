@@ -57,7 +57,7 @@ interface IAccessControlView {
 ///
 ///         | Role                 | Holder                                                      |
 ///         |----------------------|-------------------------------------------------------------|
-///         | `PROPOSER_ROLE`      | `params.proposers` (>= 2, enforced)                          |
+///         | `PROPOSER_ROLE`      | `params.proposers` — NO minimum is enforced, see `_validate`  |
 ///         | `CANCELLER_ROLE`     | `params.cancellers`, plus every proposer (OZ constructor)     |
 ///         | `EXECUTOR_ROLE`      | `address(0)` — open execution                                |
 ///         | `DEFAULT_ADMIN_ROLE` | the timelock itself only — self-administered                 |
@@ -147,6 +147,11 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @notice Thrown when a role array exceeds `MAX_ROLE_MEMBERS`.
     /// @param provided The rejected length.
     error TooManyRoleMembers(uint256 provided);
+
+    /// @notice Thrown when a role array is not in strictly ascending order. Ordering is part of the
+    ///         contract, not a style rule — see `_validateMembers`.
+    /// @param member The out-of-order entry.
+    error MembersNotAscending(address member);
 
     /// @notice Thrown when a role array contains the same address twice. Rejected so that a timelock's
     ///         address remains a one-to-one function of its effective role set.
@@ -297,11 +302,16 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///      removed proposer, a changed delay, a closed executor, or an admin other than the timelock
     ///      itself.
     ///
-    ///      LIMIT, and it is a real one: OpenZeppelin's `AccessControl` is not enumerable, so an
-    ///      ADDED member cannot be detected. An attacker who pre-deploys and grants themselves
-    ///      `PROPOSER_ROLE` passes this check. That weakens the proposer set but does NOT defeat the
-    ///      veto — every configured canceller is still verified present, so a hostile proposal
-    ///      remains cancellable. Removal, which does defeat it, is caught.
+    ///      LIMIT: `AccessControl` is not enumerable, so an ADDED member cannot be detected here —
+    ///      and an added `DEFAULT_ADMIN_ROLE` holder is total, immediate control, since as a direct
+    ///      admin it can revoke every canceller and grant itself `PROPOSER_ROLE` without scheduling
+    ///      anything. An earlier version of this comment claimed an added member merely "weakens the
+    ///      proposer set"; that was wrong, and a PoC demonstrated the full takeover.
+    ///
+    ///      This function is therefore NOT the defence against a hostile pre-deployment — `_salt`
+    ///      binding `msg.sender` is. What remains here is a check on the one instance the caller
+    ///      itself created earlier under the same configuration, catching removal and delay
+    ///      reduction, which is what a legitimate retry needs verified.
     function _requireLiveConfigMatches(address timelock, TimelockParams calldata params) internal view {
         TimelockController tl = TimelockController(payable(timelock));
 
@@ -364,27 +374,50 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         }
     }
 
-    /// @dev Enforces the bound, non-zero and distinctness rules on one role array.
+    /// @dev Enforces the bound, non-zero and strictly-ascending rules on one role array.
+    ///
+    ///      Ascending order is required rather than merely tidy: `_salt` hashes these arrays, so
+    ///      `[A, B]` and `[B, A]` describe one role set but produce two different timelock addresses.
+    ///      A config whose `proposers` array was reordered between chains — a reformat, a regenerated
+    ///      JSON — would put a fund's exec modifier under a DIFFERENT timelock on that chain while
+    ///      every other address still matched: mixed governance with nothing on-chain to flag it.
+    ///      Ordering makes the address a function of the SET, and makes duplicate detection one pass
+    ///      instead of O(n^2).
     function _validateMembers(address[] calldata members) internal pure {
         uint256 length = members.length;
         if (length > MAX_ROLE_MEMBERS) revert TooManyRoleMembers(length);
 
+        address previous;
         for (uint256 i; i < length; ++i) {
             address member = members[i];
             if (member == address(0)) revert ZeroAddress();
-            for (uint256 j = i + 1; j < length; ++j) {
-                if (members[j] == member) revert DuplicateRoleMember(member);
+            if (member <= previous) {
+                if (member == previous) revert DuplicateRoleMember(member);
+                revert MembersNotAscending(member);
             }
+            previous = member;
         }
     }
 
-    /// @dev The CREATE2 salt. `cancellers` is load-bearing here and not merely descriptive: cancellers
-    ///      are granted *after* construction, so unlike `minDelay` and `proposers` they are absent from
-    ///      the init code and would otherwise not influence the address. Binding them into the salt is
-    ///      what makes a predicted address a complete attestation of the timelock's role set.
-    function _salt(bytes32 domain, address governed, TimelockParams calldata params) internal pure returns (bytes32) {
-        return
-            keccak256(abi.encode(KIT_VERSION, domain, governed, params.minDelay, params.proposers, params.cancellers));
+    /// @dev The CREATE2 salt.
+    ///
+    ///      `msg.sender` is the security-critical term. Without it this contract's addresses are
+    ///      shared between the factory and every direct caller, so anyone could deploy the timelock a
+    ///      fund is about to adopt, use its own governance to grant themselves `DEFAULT_ADMIN_ROLE`,
+    ///      and hand the factory a contract on which they can then revoke every canceller and grant
+    ///      themselves `PROPOSER_ROLE` with no delay at all. Neither the address nor
+    ///      `_requireLiveConfigMatches` can observe an ADDED role holder, so the address has to be
+    ///      unreachable instead. With the caller bound in, only `KpkOivFactory` can produce the
+    ///      address `KpkOivFactory` adopts — and the factory is at one address on every chain, so
+    ///      cross-chain determinism is untouched.
+    ///
+    ///      `cancellers` is included because cancellers are granted *after* construction, so unlike
+    ///      `minDelay` and `proposers` they are absent from the init code and would otherwise not
+    ///      influence the address at all.
+    function _salt(bytes32 domain, address governed, TimelockParams calldata params) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(KIT_VERSION, domain, msg.sender, governed, params.minDelay, params.proposers, params.cancellers)
+        );
     }
 
     /// @dev CREATE2 address for the init code this contract would deploy under `_salt`.
