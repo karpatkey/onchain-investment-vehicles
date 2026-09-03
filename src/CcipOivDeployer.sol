@@ -274,7 +274,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///                       `StackConfig` sent to each sidechain is derived via
     ///                       `factory.oivToStackConfig` (the factory's own mapping), so the five
     ///                       operational-stack addresses match the local OIV.
-    /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.55M
+    /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.55M,
+    ///                       or ~1.86M with an exec timelock configured; ~1.55M
     ///                       measured; a 2.0M–2.2M value is recommended). Capped at 3M by CCIP.
     ///                       The measured figure rose from ~1.38M when the factory began registering
     ///                       MultiSend unwrap adapters (six `setTransactionUnwrapper` writes across
