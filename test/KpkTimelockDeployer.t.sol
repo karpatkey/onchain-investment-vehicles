@@ -286,6 +286,69 @@ contract KpkTimelockDeployerTest is Test {
         kit.deployExecTimelock(address(0), _params());
     }
 
+    // ── Adoption of a pre-deployed instance ────────────────────────────────────
+
+    /// @notice A CREATE2 address attests the CONSTRUCTOR state, not the state at adoption. A
+    ///         `TimelockController` is self-administered, so a proposer can pre-deploy the predicted
+    ///         address, schedule and execute `revokeRole` on the instance itself to strip the veto,
+    ///         and then let the factory adopt an address that still matches its prediction.
+    ///         Adoption must reject it.
+    function test_adoption_rejectsAPreDeployedTimelockWithTheVetoStripped() public {
+        TimelockParams memory p = _params();
+        address predicted = kit.predictExecTimelock(execMod, p);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertEq(address(tl), predicted, "front-run lands at the predicted address");
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "veto present at construction");
+
+        bytes memory payload = abi.encodeCall(tl.revokeRole, (tl.CANCELLER_ROLE(), lpVetoSafe));
+        vm.prank(governanceSafe);
+        tl.schedule(address(tl), 0, payload, bytes32(0), bytes32(0), 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(address(tl), 0, payload, bytes32(0), bytes32(0));
+        assertFalse(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "veto stripped");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TimelockStateMismatch.selector, predicted));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    /// @dev A reduced delay is the other mutation that guts the veto — a canceller cannot react
+    ///      inside a window that has been shortened under it.
+    function test_adoption_rejectsAPreDeployedTimelockWithAReducedDelay() public {
+        TimelockParams memory p = _params();
+        address predicted = kit.predictExecTimelock(execMod, p);
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+
+        bytes memory payload = abi.encodeCall(tl.updateDelay, (12 hours));
+        vm.prank(governanceSafe);
+        tl.schedule(address(tl), 0, payload, bytes32(0), bytes32(0), 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(address(tl), 0, payload, bytes32(0), bytes32(0));
+        assertEq(tl.getMinDelay(), 12 hours, "delay reduced");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TimelockStateMismatch.selector, predicted));
+        kit.deployExecTimelock(execMod, p);
+    }
+
+    /// @dev The legitimate retry path must still work: an untouched instance is returned as before.
+    function test_adoption_acceptsAnUnmutatedPreDeployedTimelock() public {
+        TimelockParams memory p = _params();
+        address first = kit.deployExecTimelock(execMod, p);
+        assertEq(kit.deployExecTimelock(execMod, p), first, "an untouched instance is still idempotent");
+    }
+
+    /// @dev Zero proposers is deliberately supported and permanently freezes whatever adopts it.
+    ///      Pinned so a future validation change cannot silently remove the option.
+    function test_acceptsZeroProposers() public {
+        TimelockParams memory p = _params();
+        p.proposers = new address[](0);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), governanceSafe), "no proposer role granted");
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), lpVetoSafe), "cancellers are still provisioned");
+        assertTrue(tl.hasRole(0x00, address(tl)), "still self-administered");
+    }
+
     // ── Veto semantics ─────────────────────────────────────────────────────────
 
     /// @notice A canceller stops a scheduled operation from ever becoming executable.

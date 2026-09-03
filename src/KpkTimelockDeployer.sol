@@ -46,8 +46,10 @@ interface IAccessControlView {
 ///         It additionally rejects the misconfigurations that would make an address ambiguous (see
 ///         `_validate`) and gives every
 ///         timelock a CREATE2 address that is a function of its full effective configuration, so a
-///         predicted address is a cryptographic attestation of the roles and delay it was created
-///         with. That matters because adopting a timelock is one-way in practice: transferring exec
+///         predicted address attests the roles and delay it was CREATED with. That is not the same as
+///         its state at adoption — a self-administered timelock can be mutated in between — which is
+///         why an already-occupied address is re-checked against its live state before it is
+///         returned. See `_requireLiveConfigMatches`. That matters because adopting a timelock is one-way in practice: transferring exec
 ///         Roles Modifier ownership is single-step, so a transfer to a misconfigured timelock
 ///         permanently strands policy administration for that fund.
 ///
@@ -148,6 +150,11 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         address remains a one-to-one function of its effective role set.
     /// @param duplicate The repeated address.
     error DuplicateRoleMember(address duplicate);
+
+    /// @notice Thrown when the deterministic address is already occupied by a timelock whose LIVE
+    ///         role state no longer matches `params` — see `_requireLiveConfigMatches`.
+    /// @param timelock The occupant that was rejected.
+    error TimelockStateMismatch(address timelock);
 
     /// @notice Thrown if this contract still holds `DEFAULT_ADMIN_ROLE` after provisioning. Unreachable
     ///         defensively — a failure here would mean a deployed timelock is externally administrable.
@@ -250,7 +257,15 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         _validate(governed, params);
 
         address predicted = _predict(domain, governed, params);
-        if (predicted.code.length != 0) return predicted;
+        if (predicted.code.length != 0) {
+            // The address attests the CONSTRUCTOR state only. A `TimelockController` is
+            // self-administered, so between a permissionless pre-deployment and adoption here, any
+            // proposer can schedule and execute `revokeRole`/`updateDelay` on the instance itself —
+            // stripping the cancellers and leaving an address that still matches the prediction.
+            // Verify the live state before handing this instance a fund's authority.
+            _requireLiveConfigMatches(predicted, params);
+            return predicted;
+        }
 
         // Open execution: granting EXECUTOR_ROLE to address(0) makes `onlyRoleOrOpenRole` accept any
         // caller. See the contract-level note on why this is a liveness property, not a weakness.
@@ -272,6 +287,37 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
 
         timelock = address(tl);
         emit TimelockDeployed(domain, governed, timelock, params.minDelay);
+    }
+
+    /// @dev Checks that an already-deployed occupant still matches the configuration its address was
+    ///      derived from. Detects the mutations that defeat the design — a removed canceller, a
+    ///      removed proposer, a changed delay, a closed executor, or an admin other than the timelock
+    ///      itself.
+    ///
+    ///      LIMIT, and it is a real one: OpenZeppelin's `AccessControl` is not enumerable, so an
+    ///      ADDED member cannot be detected. An attacker who pre-deploys and grants themselves
+    ///      `PROPOSER_ROLE` passes this check. That weakens the proposer set but does NOT defeat the
+    ///      veto — every configured canceller is still verified present, so a hostile proposal
+    ///      remains cancellable. Removal, which does defeat it, is caught.
+    function _requireLiveConfigMatches(address timelock, TimelockParams calldata params) internal view {
+        TimelockController tl = TimelockController(payable(timelock));
+
+        if (tl.getMinDelay() != params.minDelay) revert TimelockStateMismatch(timelock);
+        if (!tl.hasRole(tl.EXECUTOR_ROLE(), address(0))) revert TimelockStateMismatch(timelock);
+        if (!tl.hasRole(DEFAULT_ADMIN_ROLE, timelock)) revert TimelockStateMismatch(timelock);
+        if (tl.hasRole(DEFAULT_ADMIN_ROLE, address(this))) revert TimelockStateMismatch(timelock);
+
+        bytes32 proposerRole = tl.PROPOSER_ROLE();
+        uint256 proposerCount = params.proposers.length;
+        for (uint256 i; i < proposerCount; ++i) {
+            if (!tl.hasRole(proposerRole, params.proposers[i])) revert TimelockStateMismatch(timelock);
+        }
+
+        bytes32 cancellerRole = tl.CANCELLER_ROLE();
+        uint256 cancellerCount = params.cancellers.length;
+        for (uint256 i; i < cancellerCount; ++i) {
+            if (!tl.hasRole(cancellerRole, params.cancellers[i])) revert TimelockStateMismatch(timelock);
+        }
     }
 
     /// @dev Rejects only what would make a timelock's address ambiguous or one of its members
