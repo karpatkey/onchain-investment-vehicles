@@ -584,9 +584,10 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         funds the CCIP fees in native via `msg.value` (surplus refunded). Source-chain only.
     /// @dev    `config` MUST be the SAME config (notably the same `salt`, manager owners/threshold,
     ///         and `admin`) used in the original `deployEverywhere`, so the dispatched stack lands
-    ///         at the fund's existing operational addresses. A destination that already has the
-    ///         stack will revert on the CREATE2 collision when its message executes — do not
-    ///         re-dispatch to an already-deployed chain.
+    ///         at the fund's existing operational addresses. A destination whose stack is already
+    ///         WIRED reverts `KpkOivFactory.StackAlreadyDeployedHere` when its message executes, so
+    ///         do not re-dispatch to a completed chain — the source-chain fee is spent either way.
+    ///         A destination where only some components exist is fine: the factory adopts them.
     function dispatchTo(
         KpkOivFactory.OivConfig calldata config,
         SharesChain[] calldata sharesChains,
@@ -741,9 +742,10 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         //
         // What the guards below actually buy: the sender check stops a forged message entirely, and
         // the shares-chain refusal stops a GENUINE sibling being used to occupy a fund's addresses.
-        // Third-party squatting of the stack addresses is a separate, pre-existing exposure that
-        // neither closes; `KpkOivFactory.deployShares` defends against building on top of a squatted
-        // stack by checking the exec modifier's avatar rather than merely that code exists.
+        // Third-party squatting of those five addresses is no longer a denial — `KpkOivFactory`
+        // ADOPTS pristine components instead of colliding with them (see `_deployRolesModifier`),
+        // which is sound because CREATE2 binds each address to the factory's own initializer. What
+        // it refuses is a stack that has already been wired.
         if (!_isKnownSelector[message.sourceChainSelector]) {
             revert InvalidSourceChain(message.sourceChainSelector);
         }

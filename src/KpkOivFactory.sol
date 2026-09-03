@@ -489,7 +489,20 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
     ///         the stack first is also what turns a pre-landed stack from a denial into a
     ///         prerequisite: an attacker who occupies those addresses has paid the fund's gas bill.
+    ///         Pinned by `test_adopt_isCheaperThanDeployingFresh`, which asserts the adopted
+    ///         deployment costs strictly less than a fresh one.
     error StackNotDeployed();
+
+    /// @notice Thrown when a stack deployment targets addresses where a COMPLETED fund already
+    ///         lives. Deployment is otherwise tolerant of pre-existing components — see
+    ///         `_deployRolesModifier` — so this error is the boundary between adopting a squatter's
+    ///         pristine contracts and touching a live fund.
+    /// @dev    `owner()` is the signal because `transferOwnership` is the last act of
+    ///         `_wireExecModifier`, in the same transaction as every other wiring call: it reads as
+    ///         this factory if and only if no wiring has ever completed. Moving it back requires
+    ///         being the owner, so it cannot be forged in either direction — unlike `avatar()`,
+    ///         which a live fund's admin could repoint with one cheap call.
+    error StackAlreadyDeployedHere();
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
@@ -973,10 +986,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
     ///         the same `(salt, caller)` — see that function's NatSpec. The shares impl is deployed
     ///         the chain's shared `kpkSharesMastercopy`; the ERC-1967 proxy is deployed by this
-    ///         factory using a salt derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code includes the
-    ///         `KpkShares.initialize(params)` calldata where `params.safe` is overridden with the
-    ///         predicted Avatar Safe and `params.admin` is set to `address(this)`, mirroring
-    ///         `_deploySharesProxy` exactly.
+    ///         factory using a salt derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code
+    ///         carries EMPTY constructor data — initialization is a separate call — which is what
+    ///         keeps the proxy at one address on every chain despite `params.asset` being
+    ///         chain-specific. See `_deploySharesProxy`.
     /// @param  config  Fund deployment parameters.
     /// @param  caller  Address that would call `deployOiv`.
     /// @return inst    Predicted addresses for all seven contracts.
@@ -1165,8 +1178,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(config.salt, msg.sender);
 
-        // Step 1 – Deploy all three roles modifiers with factory as temp owner/avatar/target.
+        // Step 1 – Deploy (or adopt) all three roles modifiers with factory as temp
+        //          owner/avatar/target.
         address execMod = _deployRolesModifier(execSalt);
+
+        // The one state adoption must refuse: a completed fund already living at these addresses.
+        // Checked before the remaining components so a re-run against a live fund stops here rather
+        // than part-way through, and checked on ownership because that is both the unforgeable
+        // signal and the capability the wiring below needs. Wiring is not idempotent, so even
+        // without this gate a re-run would fail closed — this makes it fail legibly.
+        if (IRoles(execMod).owner() != address(this)) revert StackAlreadyDeployedHere();
+
         address subMod = _deployRolesModifier(subSalt);
         address managerMod = _deployRolesModifier(mgrSalt);
 
@@ -1265,11 +1287,30 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     // ── Internal: deployment helpers ────────────────────────────────────────────
 
     /// @dev Deploys a Zodiac Roles Modifier EIP-1167 proxy via the ModuleProxyFactory using
-    ///      CREATE2. The factory is set as the initial owner, avatar, and target so it can
-    ///      fully configure the modifier before transferring ownership.
+    ///      CREATE2, or ADOPTS one that already exists at the predicted address. The factory is
+    ///      the initial owner, avatar and target so it can fully configure the modifier before
+    ///      transferring ownership.
+    ///
+    ///      Adoption is what keeps this address un-squattable. `moduleProxyFactory` is
+    ///      permissionless and its salt is a public function of the config, so anyone can land
+    ///      this address; `deployModule` reverts `TakenAddress` on a collision, which used to deny
+    ///      the fund that chain forever (recovery meant changing the config, which moves every
+    ///      address on every chain). Adopting instead is safe because CREATE2 binds the address to
+    ///      the initializer: `ModuleProxyFactory` only ever deploys the EIP-1167 stub for
+    ///      `rolesModifierMastercopy` and always calls `setUp`, so code here means a modifier in
+    ///      exactly the state this function would have produced — owner, avatar and target all
+    ///      this factory. Nor can that state have drifted since: `setUp` is one-shot and every
+    ///      mutator is owner- or module-gated, with the factory as owner and no modules enabled.
+    ///      Pinned against the real factory and the patched mastercopy by the `test_premise_*`
+    ///      tests, since neither property can be inferred from the stock Zodiac sources.
+    ///
+    ///      A pre-existing WIRED stack is rejected by `_deployAndWireStack`, not here.
     /// @param salt  CREATE2 salt for this modifier (derived from the base salt).
-    /// @return mod  Address of the deployed Roles Modifier proxy.
+    /// @return mod  Address of the deployed or adopted Roles Modifier proxy.
     function _deployRolesModifier(uint256 salt) internal returns (address mod) {
+        mod = _predictRolesModifier(salt);
+        if (mod.code.length != 0) return mod;
+
         bytes memory initParams = abi.encode(address(this), address(this), address(this));
         bytes memory initializer = abi.encodeCall(IRoles.setUp, (initParams));
         mod = IModuleProxyFactory(moduleProxyFactory).deployModule(rolesModifierMastercopy, initializer, salt);
@@ -1285,11 +1326,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param modulesToEnable Modules to enable during `setup()`. Enabled in array order; each is
     ///                        inserted at the front of the linked list.
     /// @param nonce           CREATE2 nonce (salt) for address determinism.
-    /// @return safe           Address of the deployed Safe proxy.
+    /// @return safe           Address of the deployed or adopted Safe proxy.
     function _deploySafe(address[] memory owners, uint256 threshold, address[] memory modulesToEnable, uint256 nonce)
         internal
         returns (address safe)
     {
+        // Adopt an existing occupant rather than colliding with it. `safeProxyFactory` is
+        // permissionless and its salt is a public function of the config, so anyone can land this
+        // address; `createProxyWithNonce` then reverts `Create2 call failed`, which used to deny the
+        // fund that chain forever. Safe to adopt for the reason given on `_deployRolesModifier`:
+        // CREATE2 binds the address to the initializer, and `SafeProxyFactory` only ever deploys its
+        // own proxy creation code for `safeSingleton` and always runs `setup`. An adopted Avatar
+        // Safe also proves itself behaviourally — the factory must be an enabled module at the head
+        // of its list for the terminal `_disableFactoryAsAvatarModule` to succeed, and that call
+        // asserts the removal afterwards.
+        safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
+        if (safe.code.length != 0) return safe;
+
         bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
 
         bytes memory initializer = abi.encodeCall(
