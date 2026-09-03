@@ -11,6 +11,40 @@ Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonic
 
 ---
 
+## Pending — salt v4 (NOT DEPLOYED — predictions only)
+
+`deployOiv` / `deployStack` now take timelock configuration and deploy a fund's `TimelockController`
+instances through a new `KpkTimelockDeployer`. That changed `KpkOivFactory`'s runtime, so its CREATE2
+address moved — and with it `KpkSharesDeployer` (factory address is a constructor argument) and
+`CcipOivDeployer` (factory address is an immutable). Salts were bumped `3 → 4`.
+
+**Nothing below exists on-chain yet.** These are predictions from the source in this branch, pinned by
+[`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol). Re-derive them from a **fresh
+`git clone --recurse-submodules`** before any rollout — a drifted working tree silently produces
+different bytecode, and therefore different addresses (see the clean-clone warning further down).
+
+| Contract | Predicted salt-v4 address |
+|---|---|
+| `KpkOivFactory` | `0x8dE6C23864A19216848cc40e3b4194752af057D7` |
+| `KpkSharesDeployer` | `0x9fa5f3921b679b352908127C11859688e3A5e9dd` |
+| `CcipOivDeployer` (orchestrator) | `0x7D5B26C2b14De1F4A43733980955B4408B82F7b2` |
+| `KpkTimelockDeployer` | `0x961dB77DCe77eC08C37ce068209a8bFE9732e649` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+
+`KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its address does not
+depend on the deployer EOA. `script/base/OivChainDeploy.sol` deploys it and wires it via
+`setTimelockDeployer` in the same run that wires `setKpkSharesDeployer`.
+
+> **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
+> run until the rollout lands. Until then the live infra is the salt-v3 stack below.
+
+> **The rollout constraint at the bottom of this file applies in full.** No fund may straddle a v3
+> factory on one chain and a v4 factory on another — the factory's address is inside each Avatar
+> Safe's `setup()` initializer, so the same `(caller, salt)` produces different Avatar Safe addresses
+> under the two generations, silently.
+
+---
+
 ## Current — salt v3 (LIVE on 19 chains, Safe-owned)
 
 Deployed **2026-07-24**. The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moved; `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three moved together**. Only `Empty` keeps its address. Salts are `uint256(3)`.

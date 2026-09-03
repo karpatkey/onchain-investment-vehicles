@@ -30,7 +30,8 @@ contract KpkOivFactoryRegistryTest is Test {
             address(0xA4), // safeFallbackHandler
             address(0xA5), // moduleProxyFactory
             address(0xA6), // rolesModifierMastercopy
-            address(0xA7) //  kpkSharesDeployer
+            address(0xA7), // kpkSharesDeployer
+            address(0xA8) //  timelockDeployer
         );
     }
 
@@ -43,7 +44,9 @@ contract KpkOivFactoryRegistryTest is Test {
             subRolesModifier: address(0x400000 + seed),
             managerRolesModifier: address(0x500000 + seed),
             kpkSharesImpl: address(0x600000 + seed),
-            kpkSharesProxy: address(0x700000 + seed)
+            kpkSharesProxy: address(0x700000 + seed),
+            execTimelock: address(0x800000 + seed),
+            sharesTimelock: address(0x900000 + seed)
         });
     }
 
@@ -55,6 +58,8 @@ contract KpkOivFactoryRegistryTest is Test {
         assertEq(a.managerRolesModifier, b.managerRolesModifier, "managerRolesModifier");
         assertEq(a.kpkSharesImpl, b.kpkSharesImpl, "kpkSharesImpl");
         assertEq(a.kpkSharesProxy, b.kpkSharesProxy, "kpkSharesProxy");
+        assertEq(a.execTimelock, b.execTimelock, "execTimelock");
+        assertEq(a.sharesTimelock, b.sharesTimelock, "sharesTimelock");
     }
 
     /// @dev Reads `registeredFunds[id]` back through the auto-generated public getter.
@@ -66,7 +71,9 @@ contract KpkOivFactoryRegistryTest is Test {
             address subRolesModifier,
             address managerRolesModifier,
             address kpkSharesImpl,
-            address kpkSharesProxy
+            address kpkSharesProxy,
+            address execTimelock,
+            address sharesTimelock
         ) = factory.registeredFunds(id);
         return KpkOivFactory.OivInstance(
             avatarSafe,
@@ -75,7 +82,9 @@ contract KpkOivFactoryRegistryTest is Test {
             subRolesModifier,
             managerRolesModifier,
             kpkSharesImpl,
-            kpkSharesProxy
+            kpkSharesProxy,
+            execTimelock,
+            sharesTimelock
         );
     }
 

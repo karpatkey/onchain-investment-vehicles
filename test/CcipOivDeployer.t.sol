@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
+import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
@@ -62,8 +63,12 @@ contract CcipOivDeployerTest is OivTestConstants {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
         _requireInfraDeployed();
 
+        // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = factory. The timelock
+        // deployer must be constructed on its own line — inline in the argument list it would still
+        // consume a nonce, but only after this arithmetic had already been done.
         uint256 nextNonce = vm.getNonce(address(this));
-        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 1);
+        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 2);
+        KpkTimelockDeployer timelockDeployer = new KpkTimelockDeployer();
         KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
         factory = new KpkOivFactory(
             factoryOwner,
@@ -73,7 +78,8 @@ contract CcipOivDeployerTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(sharesDeployer)
+            address(sharesDeployer),
+            address(timelockDeployer)
         );
         require(address(factory) == predictedFactory, "factory address mismatch");
 

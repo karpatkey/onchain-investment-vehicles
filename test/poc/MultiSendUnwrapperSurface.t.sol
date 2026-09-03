@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
+import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
@@ -103,8 +104,10 @@ contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
         _requireInfraDeployed();
 
+        // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = factory.
         uint256 n = vm.getNonce(address(this));
-        address predicted = vm.computeCreateAddress(address(this), n + 1);
+        address predicted = vm.computeCreateAddress(address(this), n + 2);
+        KpkTimelockDeployer tdep = new KpkTimelockDeployer();
         KpkSharesDeployer dep = new KpkSharesDeployer(predicted);
         factory = new KpkOivFactory(
             factoryOwner,
@@ -114,7 +117,8 @@ contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(dep)
+            address(dep),
+            address(tdep)
         );
         require(address(factory) == predicted, "factory addr");
 

@@ -4,6 +4,9 @@ pragma solidity ^0.8.0;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
+import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
+import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
@@ -16,6 +19,7 @@ import {OivTestConstants} from "test/OivTestConstants.sol";
 ///         mastercopy) must have bytecode at the forked block — proxy deployment reverts
 ///         TargetHasNoCode otherwise. It is live on mainnet, so a latest fork is fine; only a fork
 ///         pinned before its deploy block fails.
+
 contract KpkOivFactoryTest is OivTestConstants {
     // USDC + Safe/Zodiac infra (SAFE_*, MODULE_PROXY_FACTORY, ROLES_MODIFIER_MASTERCOPY) are inherited
     // from OivTestConstants — the single test-side source.
@@ -31,6 +35,7 @@ contract KpkOivFactoryTest is OivTestConstants {
     // ── Contracts under test ────────────────────────────────────────────────────
 
     KpkOivFactory factory;
+    KpkTimelockDeployer timelockDeployer;
 
     KpkOivFactory.OivConfig oivConfig;
 
@@ -52,9 +57,11 @@ contract KpkOivFactoryTest is OivTestConstants {
         // KpkSharesDeployer is now factory-locked. Pre-compute the factory address so the
         // deployer can be constructed with it: this contract's next nonce produces the
         // deployer, and the one after that produces the factory.
+        // Nonce map for this contract: n = timelock deployer, n+1 = shares deployer, n+2 = factory.
         uint256 nextNonce = vm.getNonce(address(this));
-        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 1);
+        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 2);
 
+        timelockDeployer = new KpkTimelockDeployer();
         KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
 
         factory = new KpkOivFactory(
@@ -65,7 +72,8 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(sharesDeployer)
+            address(sharesDeployer),
+            address(timelockDeployer)
         );
         require(address(factory) == predictedFactory, "factory address mismatch");
 
@@ -587,6 +595,7 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
+            address(0),
             address(0)
         );
 
@@ -615,6 +624,7 @@ contract KpkOivFactoryTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
+            address(0),
             address(0)
         );
         require(address(unwired) == predictedUnwired, "unwired factory address mismatch");
@@ -1087,6 +1097,187 @@ contract KpkOivFactoryTest is OivTestConstants {
             performanceFeeRate: 0
         });
     }
+
+    // ── Timelock governance (deployOiv / deployStack) ───────────────────────────
+
+    address govSafe = makeAddr("govSafe");
+    address superadminSafe = makeAddr("superadminSafe");
+    address managerVeto = makeAddr("managerVeto");
+    address lpVeto = makeAddr("lpVeto");
+
+    /// @dev Two proposers, two cancellers — the shape the rollout actually uses.
+    function _timelockParams(uint256 minDelay) internal view returns (TimelockParams memory p) {
+        address[] memory proposers = new address[](2);
+        proposers[0] = govSafe;
+        proposers[1] = superadminSafe;
+        address[] memory cancellers = new address[](2);
+        cancellers[0] = managerVeto;
+        cancellers[1] = lpVeto;
+        p = TimelockParams({minDelay: minDelay, proposers: proposers, cancellers: cancellers});
+    }
+
+    function test_deployOiv_execTimelockOwnsExecModifier() public {
+        oivConfig.execTimelock = _timelockParams(2 days);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertTrue(inst.execTimelock != address(0), "execTimelock not recorded");
+        assertEq(
+            IRoles(inst.execRolesModifier).owner(), inst.execTimelock, "exec modifier must be owned by the timelock"
+        );
+        assertTrue(IRoles(inst.execRolesModifier).owner() != admin, "admin must no longer own the exec modifier");
+    }
+
+    function test_deployOiv_sharesTimelockReplacesAdminEntirely() public {
+        oivConfig.sharesTimelock = _timelockParams(7 days);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        KpkShares shares = KpkShares(inst.kpkSharesProxy);
+        assertTrue(inst.sharesTimelock != address(0), "sharesTimelock not recorded");
+        assertTrue(shares.hasRole(0x00, inst.sharesTimelock), "timelock must hold DEFAULT_ADMIN_ROLE");
+        assertFalse(
+            shares.hasRole(0x00, admin), "admin must NOT retain DEFAULT_ADMIN_ROLE - that would be a delay-free bypass"
+        );
+    }
+
+    /// @dev The default config leaves both delays at zero, which must behave exactly as before.
+    function test_deployOiv_zeroDelayMeansNoTimelock() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertEq(inst.execTimelock, address(0), "no exec timelock expected");
+        assertEq(inst.sharesTimelock, address(0), "no shares timelock expected");
+        assertEq(IRoles(inst.execRolesModifier).owner(), admin, "admin must still own the exec modifier");
+        assertTrue(KpkShares(inst.kpkSharesProxy).hasRole(0x00, admin), "admin must still hold DEFAULT_ADMIN_ROLE");
+    }
+
+    function test_deployOiv_timelockRolesAreWiredThrough() public {
+        oivConfig.execTimelock = _timelockParams(2 days);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        TimelockController tl = TimelockController(payable(inst.execTimelock));
+
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), govSafe), "governance proposes");
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "superadmin proposes");
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), lpVeto), "lp veto cancels");
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), lpVeto), "veto must not gain proposal rights");
+        assertTrue(tl.hasRole(tl.EXECUTOR_ROLE(), address(0)), "execution is open");
+        assertFalse(tl.hasRole(0x00, address(factory)), "factory must hold no role on the timelock");
+        assertEq(tl.getMinDelay(), 2 days, "minDelay must be the supplied parameter");
+    }
+
+    /// @dev End to end: the timelock really does control the modifier it owns.
+    function test_deployOiv_execTimelockCanGovernTheModifier() public {
+        oivConfig.execTimelock = _timelockParams(2 days);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        TimelockController tl = TimelockController(payable(inst.execTimelock));
+
+        // A no-op re-set of the avatar the modifier already has.
+        bytes memory payload = abi.encodeCall(IRoles.setAvatar, (inst.avatarSafe));
+
+        vm.prank(govSafe);
+        tl.schedule(inst.execRolesModifier, 0, payload, bytes32(0), bytes32(0), 2 days);
+
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(inst.execRolesModifier, 0, payload, bytes32(0), bytes32(0));
+
+        assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "timelocked call must have landed");
+    }
+
+    /// @dev The veto stops a queued change to the fund's permission layer.
+    function test_deployOiv_vetoBlocksAQueuedModifierChange() public {
+        oivConfig.execTimelock = _timelockParams(2 days);
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        TimelockController tl = TimelockController(payable(inst.execTimelock));
+
+        address hostileAvatar = makeAddr("hostileAvatar");
+        bytes memory payload = abi.encodeCall(IRoles.setAvatar, (hostileAvatar));
+        bytes32 id = tl.hashOperation(inst.execRolesModifier, 0, payload, bytes32(0), bytes32(0));
+
+        vm.prank(govSafe);
+        tl.schedule(inst.execRolesModifier, 0, payload, bytes32(0), bytes32(0), 2 days);
+
+        vm.prank(lpVeto);
+        tl.cancel(id);
+
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        vm.expectRevert();
+        tl.execute(inst.execRolesModifier, 0, payload, bytes32(0), bytes32(0));
+        assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "vetoed change must not have landed");
+    }
+
+    function test_predictOivAddresses_includesBothTimelocks() public {
+        oivConfig.execTimelock = _timelockParams(2 days);
+        oivConfig.sharesTimelock = _timelockParams(7 days);
+
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertEq(predicted.execTimelock, inst.execTimelock, "exec timelock prediction");
+        assertEq(predicted.sharesTimelock, inst.sharesTimelock, "shares timelock prediction");
+    }
+
+    function test_deployStack_deploysExecTimelockToo() public {
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        stackConfig.execTimelock = _timelockParams(2 days);
+
+        KpkOivFactory.StackInstance memory inst = factory.deployStack(stackConfig);
+        assertEq(IRoles(inst.execRolesModifier).owner(), inst.execTimelock, "sidechain exec modifier must be timelocked");
+    }
+
+    function test_oivToStackConfig_carriesExecTimelockThrough() public view {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.execTimelock = _timelockParams(2 days);
+
+        KpkOivFactory.StackConfig memory mapped = factory.oivToStackConfig(cfg);
+        assertEq(mapped.execTimelock.minDelay, 2 days, "delay must map through to the sidechain payload");
+        assertEq(mapped.execTimelock.proposers.length, 2, "proposers must map through");
+        assertEq(mapped.execTimelock.cancellers.length, 2, "cancellers must map through");
+    }
+
+    // ── Deliberately-permitted weak configurations ─────────────────────────────
+
+    /// @dev A single proposer is accepted. One lost key then freezes the modifier permanently, and
+    ///      that is the deployer's call to make, not the factory's.
+    function test_deployOiv_acceptsASingleProposer() public {
+        TimelockParams memory p = _timelockParams(2 days);
+        address[] memory one = new address[](1);
+        one[0] = govSafe;
+        p.proposers = one;
+        oivConfig.execTimelock = p;
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        TimelockController tl = TimelockController(payable(inst.execTimelock));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), govSafe), "single proposer must be wired");
+    }
+
+    /// @dev No dedicated canceller is accepted: a delay with no veto beyond the proposers.
+    function test_deployOiv_acceptsNoCancellers() public {
+        TimelockParams memory p = _timelockParams(2 days);
+        p.cancellers = new address[](0);
+        oivConfig.execTimelock = p;
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        TimelockController tl = TimelockController(payable(inst.execTimelock));
+        assertFalse(tl.hasRole(tl.CANCELLER_ROLE(), lpVeto), "no dedicated canceller expected");
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), govSafe), "proposers still receive CANCELLER from OZ");
+    }
+
+    function test_deployOiv_revertsWhenTimelockConfiguredButDeployerUnset() public {
+        vm.prank(factoryOwner);
+        KpkOivFactory bare = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(new KpkSharesDeployer(address(this))),
+            address(0)
+        );
+
+        oivConfig.execTimelock = _timelockParams(2 days);
+        vm.expectRevert(KpkOivFactory.TimelockDeployerNotSet.selector);
+        bare.deployOiv(oivConfig);
+    }
 }
 
 /// @notice Exposes internal KpkOivFactory functions for unit testing.
@@ -1099,7 +1290,8 @@ contract KpkOivFactoryHarness is KpkOivFactory {
         address safeFallbackHandler,
         address moduleProxyFactory,
         address rolesModifierMastercopy,
-        address kpkSharesDeployer
+        address kpkSharesDeployer,
+        address timelockDeployer_
     )
         KpkOivFactory(
             owner,
@@ -1109,7 +1301,8 @@ contract KpkOivFactoryHarness is KpkOivFactory {
             safeFallbackHandler,
             moduleProxyFactory,
             rolesModifierMastercopy,
-            kpkSharesDeployer
+            kpkSharesDeployer,
+            timelockDeployer_
         )
     {}
 
@@ -1150,8 +1343,10 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
         // KpkSharesDeployer is factory-locked. Pre-compute the harness address so the deployer
         // can be constructed with it: this contract's next nonce produces the deployer,
         // and the one after that produces the harness.
+        // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = harness.
         uint256 nextNonce = vm.getNonce(address(this));
-        address predictedHarness = vm.computeCreateAddress(address(this), nextNonce + 1);
+        address predictedHarness = vm.computeCreateAddress(address(this), nextNonce + 2);
+        KpkTimelockDeployer harnessTimelockDeployer = new KpkTimelockDeployer();
 
         KpkSharesDeployer deployer = new KpkSharesDeployer(predictedHarness);
         harness = new KpkOivFactoryHarness(
@@ -1162,7 +1357,8 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(deployer)
+            address(deployer),
+            address(harnessTimelockDeployer)
         );
         require(address(harness) == predictedHarness, "harness address mismatch");
     }

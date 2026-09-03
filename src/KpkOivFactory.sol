@@ -11,6 +11,7 @@ import {ISafeProxyFactory} from "./interfaces/ISafeProxyFactory.sol";
 import {ISafeModuleSetup} from "./interfaces/ISafeModuleSetup.sol";
 import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
+import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
 import {OivInfraConstants} from "./OivInfraConstants.sol";
 
 /// @notice Minimal interface for KpkSharesDeployer.
@@ -191,6 +192,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         in this factory's runtime, which would exceed EIP-170's 24 576-byte limit.
     address public kpkSharesDeployer;
 
+    /// @notice Deploys a fund's `TimelockController` instances. Isolated in its own contract for the
+    ///         same EIP-170 reason as `kpkSharesDeployer`: `TimelockController`'s creation bytecode
+    ///         alone is larger than this factory's remaining runtime margin.
+    address public timelockDeployer;
+
     // ── Structs ────────────────────────────────────────────────────────────────
 
     /// @notice Signer configuration for a Gnosis Safe.
@@ -232,6 +238,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         ///         CREATE2 salts/nonces. The same salt on the same factory yields identical
         ///         addresses on every chain.
         uint256 salt;
+        /// @notice Timelock that receives ownership of the exec Roles Modifier instead of
+        ///         `execRolesMod.finalOwner`.
+        ///
+        ///         A `minDelay` of zero means no timelock: the modifier is transferred to
+        ///         `finalOwner` exactly as before. Any non-zero delay causes the factory to deploy a
+        ///         `TimelockController` through `timelockDeployer` and hand it the modifier, leaving
+        ///         `finalOwner` unused (it is still validated non-zero, since it is what
+        ///         `oivToStackConfig` derives from `admin` and the owner a fund falls back to).
+        ///
+        ///         Carried in `StackConfig` rather than only in `OivConfig` so `deployStack` and the
+        ///         CCIP fan-out configure it identically: the exec Roles Modifier exists on every
+        ///         chain a fund lives on, and a fund timelocked on one chain but not the others is
+        ///         mixed governance with nothing on-chain to flag it. Because the timelock's address
+        ///         derives from the exec modifier's — itself identical across chains — the timelock
+        ///         lands at one address everywhere too.
+        TimelockParams execTimelock;
     }
 
     /// @notice Enables an ERC-20 asset on the KpkShares proxy beyond the base deposit asset.
@@ -273,6 +295,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         /// @notice Additional assets to register on the KpkShares proxy beyond the base asset.
         ///         The factory temporarily holds OPERATOR to call `updateAsset`, then revokes it.
         AssetConfig[] additionalAssets;
+        /// @notice Timelock that receives ownership of the exec Roles Modifier. Mapped straight
+        ///         through to `StackConfig.execTimelock` by `oivToStackConfig`, so mainnet and every
+        ///         sidechain agree. Zero `minDelay` means no timelock.
+        TimelockParams execTimelock;
+        /// @notice Timelock that receives `DEFAULT_ADMIN_ROLE` on the KpkShares proxy **instead of**
+        ///         `admin`. Zero `minDelay` means no timelock and `admin` receives the role as before.
+        ///
+        ///         Deliberately a separate instance from `execTimelock`, and deliberately not sent to
+        ///         sidechains: the shares proxy exists only where `deployOiv` runs, and the two
+        ///         authorities have different risk cadences — routine policy edits on the exec
+        ///         modifier versus a total-control `upgradeToAndCall` on the shares proxy. Separate
+        ///         instances let each carry its own delay and canceller set, and stop a frozen one
+        ///         from freezing the other.
+        ///
+        ///         The role is granted to the timelock ALONE. Granting it while `admin` kept the role
+        ///         would leave a delay-free bypass of everything the timelock exists to gate.
+        TimelockParams sharesTimelock;
     }
 
     /// @notice Addresses of the five contracts deployed by `deployStack`.
@@ -287,9 +326,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address subRolesModifier;
         /// @notice Manager Roles Modifier — guards Manager Safe's own actions.
         address managerRolesModifier;
+        /// @notice Timelock owning the exec Roles Modifier, or `address(0)` if none was configured.
+        address execTimelock;
     }
 
-    /// @notice Addresses of all seven contracts deployed by `deployOiv`.
+    /// @notice Addresses of the contracts deployed by `deployOiv`.
     struct OivInstance {
         /// @notice Avatar Safe — holds fund assets; execution via Roles Modifiers only.
         address avatarSafe;
@@ -306,6 +347,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address kpkSharesImpl;
         /// @notice KpkShares ERC-1967 UUPS proxy — the fund's shares token.
         address kpkSharesProxy;
+        /// @notice Timelock owning the exec Roles Modifier, or `address(0)` if none was configured.
+        address execTimelock;
+        /// @notice Timelock holding `DEFAULT_ADMIN_ROLE` on the shares proxy, or `address(0)` if
+        ///         none was configured (in which case `admin` holds it).
+        address sharesTimelock;
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -438,6 +484,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         regardless of wiring status.
     error KpkSharesDeployerNotSet();
 
+    /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
+    ///         `timelockDeployer` has not been wired yet.
+    error TimelockDeployerNotSet();
+
     /// @notice Thrown when `registerFund` is given a fund whose KpkShares proxy is already in the
     ///         curated registry.
     error FundAlreadyRegistered();
@@ -468,6 +518,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _kpkSharesDeployer       KpkSharesDeployer contract address. May be `address(0)`
     ///                                 at construction; must be set via `setKpkSharesDeployer`
     ///                                 before `deployOiv` is callable.
+    /// @param _timelockDeployer        KpkTimelockDeployer contract address. May be `address(0)`
+    ///                                 at construction for the same chicken-and-egg reason, and is
+    ///                                 only required by deployments that actually configure a
+    ///                                 timelock — funds with a zero `minDelay` never touch it.
     constructor(
         address _owner,
         address _safeProxyFactory,
@@ -476,7 +530,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address _safeFallbackHandler,
         address _moduleProxyFactory,
         address _rolesModifierMastercopy,
-        address _kpkSharesDeployer
+        address _kpkSharesDeployer,
+        address _timelockDeployer
     ) Ownable(_owner) {
         if (
             _safeProxyFactory == address(0) || _safeSingleton == address(0) || _safeModuleSetup == address(0)
@@ -491,6 +546,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         moduleProxyFactory = _moduleProxyFactory;
         rolesModifierMastercopy = _rolesModifierMastercopy;
         kpkSharesDeployer = _kpkSharesDeployer;
+        timelockDeployer = _timelockDeployer;
     }
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
@@ -503,6 +559,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     //           deployments is unbounded. The factory `owner` MUST therefore be a
     //           TimelockController or governance multisig — never an EOA — and any value
     //           change SHOULD go through a public proposal/timelock cycle.
+
+    /// @notice Updates the KpkTimelockDeployer address.
+    /// @dev    Same blast radius as `setKpkSharesDeployer`: a hostile deployer could hand every
+    ///         FUTURE fund a timelock whose proposer and canceller sets it controls. Past
+    ///         deployments are unaffected — each fund's timelock is already deployed and
+    ///         self-administered.
+    /// @param _timelockDeployer New address. Must not be zero.
+    function setTimelockDeployer(address _timelockDeployer) external onlyOwner {
+        if (_timelockDeployer == address(0)) revert ZeroAddress();
+        timelockDeployer = _timelockDeployer;
+    }
 
     /// @notice Updates the Gnosis Safe proxy factory address.
     /// @param _safeProxyFactory New address. Must not be zero.
@@ -639,14 +706,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         StackInstance memory stack = _deployAndWireStack(stackConfig);
 
         (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, msg.sender);
-        (address sharesImpl, address sharesProxy) = _deploySharesProxy(
+        (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
             config.sharesParams,
             stack.managerSafe,
             stack.avatarSafe,
             config.admin,
             config.additionalAssets,
             implSalt,
-            proxySalt
+            proxySalt,
+            config.sharesTimelock
         );
 
         // Grant infinite allowance from Avatar Safe to shares proxy for all assets.
@@ -662,7 +730,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
             kpkSharesImpl: sharesImpl,
-            kpkSharesProxy: sharesProxy
+            kpkSharesProxy: sharesProxy,
+            execTimelock: stack.execTimelock,
+            sharesTimelock: sharesTimelock
         });
 
         instances[id] = instance;
@@ -760,7 +830,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             execRolesMod: RolesModifierConfig({finalOwner: config.admin}),
             subRolesMod: RolesModifierConfig({finalOwner: address(0)}),
             managerRolesMod: RolesModifierConfig({finalOwner: address(0)}),
-            salt: config.salt
+            salt: config.salt,
+            execTimelock: config.execTimelock
         });
     }
 
@@ -785,7 +856,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         view
         returns (StackInstance memory inst)
     {
-        return _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
+        inst = _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
+
+        if (config.execTimelock.minDelay != 0) {
+            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(
+                inst.execRolesModifier, config.execTimelock
+            );
+        }
     }
 
     /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
@@ -822,8 +899,33 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             subRolesModifier: stack.subRolesModifier,
             managerRolesModifier: stack.managerRolesModifier,
             kpkSharesImpl: predictedImpl,
-            kpkSharesProxy: predictedProxy
+            kpkSharesProxy: predictedProxy,
+            execTimelock: address(0),
+            sharesTimelock: address(0)
         });
+
+        // Both timelocks key on the address of the contract they will govern, so they are predictable
+        // from the same `(caller, salt)` as everything else. Prediction mirrors deployment exactly,
+        // including reverting when a timelock is configured but no deployer is wired.
+        if (config.execTimelock.minDelay != 0) {
+            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(
+                stack.execRolesModifier, config.execTimelock
+            );
+        }
+        if (config.sharesTimelock.minDelay != 0) {
+            inst.sharesTimelock = IKpkTimelockDeployer(_requireTimelockDeployer()).predictSharesTimelock(
+                predictedProxy, config.sharesTimelock
+            );
+        }
+    }
+
+    /// @dev Returns `timelockDeployer`, reverting if it has not been wired. Mirrors the
+    ///      `KpkSharesDeployerNotSet` guard: the factory may be constructed with a zero deployer so
+    ///      its CREATE2 address does not depend on it, and only deployments that actually configure a
+    ///      timelock require it to have been set since.
+    function _requireTimelockDeployer() internal view returns (address deployer) {
+        deployer = timelockDeployer;
+        if (deployer == address(0)) revert TimelockDeployerNotSet();
     }
 
     /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
@@ -995,8 +1097,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         managerModules[0] = managerMod;
         address managerSafe = _deploySafe(managerOwners, config.managerSafe.threshold, managerModules, mgrNonce);
 
-        // Steps 4-6 – Wire all three modifiers.
-        _wireExecModifier(execMod, avatarSafe, managerSafe, subMod, config.execRolesMod.finalOwner);
+        // Step 4 – Deploy the exec timelock, if one was configured, and make it the modifier's
+        //          owner in place of `finalOwner`. Deployed here rather than by the caller after the
+        //          fact so a fund is never briefly live under an un-timelocked owner, and so its
+        //          address is fixed by the same `(caller, salt)` that fixes everything else.
+        address execTimelock;
+        address execOwner = config.execRolesMod.finalOwner;
+        if (config.execTimelock.minDelay != 0) {
+            execTimelock =
+                IKpkTimelockDeployer(_requireTimelockDeployer()).deployExecTimelock(execMod, config.execTimelock);
+            execOwner = execTimelock;
+        }
+
+        // Steps 5-7 – Wire all three modifiers. Ownership transfer is the last act of each helper,
+        //             so every unwrapper registration still happens while the factory is owner.
+        _wireExecModifier(execMod, avatarSafe, managerSafe, subMod, execOwner);
         _wireSubModifier(subMod, avatarSafe, execMod, managerSafe);
         _wireManagerModifier(managerMod, managerSafe);
 
@@ -1005,7 +1120,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             managerSafe: managerSafe,
             execRolesModifier: execMod,
             subRolesModifier: subMod,
-            managerRolesModifier: managerMod
+            managerRolesModifier: managerMod,
+            execTimelock: execTimelock
         });
     }
 
@@ -1195,8 +1311,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address finalAdmin,
         AssetConfig[] calldata additionalAssets,
         bytes32 implSalt,
-        bytes32 proxySalt
-    ) internal returns (address impl, address proxy) {
+        bytes32 proxySalt,
+        TimelockParams memory timelockParams
+    ) internal returns (address impl, address proxy, address timelock) {
         impl = IKpkSharesDeployer(kpkSharesDeployer).deploy(implSalt);
         params.safe = avatarSafe;
         params.admin = address(this);
@@ -1216,7 +1333,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         }
 
         shares.grantRole(OPERATOR, operator);
-        shares.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
+
+        // The timelock REPLACES `finalAdmin` as the role holder — it is never granted alongside it.
+        // Leaving `admin` with DEFAULT_ADMIN_ROLE would keep a delay-free path to `upgradeToAndCall`
+        // and every fee setter, which is precisely what the timelock exists to close.
+        if (timelockParams.minDelay != 0) {
+            timelock = IKpkTimelockDeployer(_requireTimelockDeployer()).deploySharesTimelock(proxy, timelockParams);
+            shares.grantRole(DEFAULT_ADMIN_ROLE, timelock);
+        } else {
+            shares.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
+        }
+
         shares.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
         // Defensive: under OZ AccessControl v5, `renounceRole` cannot fail when the caller passes
         // its own address, so this assert holds in all valid execution paths. Kept as a guard

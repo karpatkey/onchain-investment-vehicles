@@ -47,7 +47,14 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
         );
     }
 
-    // ── Documented salt-v3 predictions ─────────────────────────────────────────
+    // ── Documented salt-v4 predictions ─────────────────────────────────────────
+    //
+    // GENERATION NOTE. These are salt-v4 values and are NOT DEPLOYED ANYWHERE YET. Adding the
+    // timelock arguments to `deployOiv` changed `KpkOivFactory`'s runtime, which moved its CREATE2
+    // address, which moved `KpkSharesDeployer` (factory address is a constructor argument) and
+    // `CcipOivDeployer` (factory address is an immutable) with it. The salts were bumped 3 -> 4 to
+    // make the generation explicit. Re-derive from a FRESH CLONE before the rollout — a drifted
+    // working tree silently produces different bytecode and therefore different addresses.
     //
     // docs/DEPLOYED_ADDRESSES.md publishes all three predicted addresses, but only the factory was
     // pinned — and all three shipped stale once already, moved by a metadata-hash change from a
@@ -55,8 +62,12 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
     // 19-chain rollout. When they fail, re-derive from a CLEAN CLONE (a drifted working tree
     // produces different values) and update both the constants here and the doc table.
 
-    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0xea084E763F8535CBe28759b990F963BeDf60be9a;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b;
+    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0x9fa5f3921b679b352908127C11859688e3A5e9dd;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0x7D5B26C2b14De1F4A43733980955B4408B82F7b2;
+
+    /// @dev `KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its
+    ///      address is independent of the deployer EOA — the same on every chain for anyone.
+    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0x961dB77DCe77eC08C37ce068209a8bFE9732e649;
 
     function test_documentedSharesDeployerAddressMatchesDeployPath() public pure {
         address factory = _predictFactory(CANONICAL_EOA_OWNER);
@@ -73,6 +84,14 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
             _create2Address(SALT_CCIP, _orchestratorInitCode(CANONICAL_EOA_OWNER, factory)),
             DOCUMENTED_ORCHESTRATOR,
             "CcipOivDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
+
+    function test_documentedTimelockDeployerAddressMatchesDeployPath() public pure {
+        assertEq(
+            DOCUMENTED_TIMELOCK_DEPLOYER,
+            _predictTimelockDeployer(),
+            "KpkTimelockDeployer prediction drifted - re-derive from a clean clone"
         );
     }
 }
