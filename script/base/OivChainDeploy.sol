@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 import {Script, console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
 import {KpkShares} from "../../src/kpkShares.sol";
+import {KpkSharesNav} from "../../src/KpkSharesNav.sol";
+import {OivStackWiring} from "../../src/utils/OivStackWiring.sol";
 import {
     TimelockControllerUpgradeable
 } from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
@@ -74,6 +76,13 @@ abstract contract OivChainDeploy is Script {
     // setup (setChainSelectors) stranded behind the multisig.
     bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(4)));
     bytes32 internal constant SALT_SHARES_MASTERCOPY = keccak256(abi.encodePacked("KpkSharesMastercopy", uint256(4)));
+    /// @notice The `OivStackWiring` address pinned in `foundry.toml`'s `[libraries]`, and therefore
+    ///         baked into `KpkOivFactory`'s creation code. Kept here so a deploy FAILS rather than
+    ///         shipping a factory whose library lives somewhere else.
+    address internal constant LINKED_STACK_WIRING = 0xFf49570a50Bb558261ff644d6588884a974c9762;
+
+    bytes32 internal constant SALT_STACK_WIRING = keccak256(abi.encodePacked("OivStackWiring", uint256(4)));
+    bytes32 internal constant SALT_NAV_MASTERCOPY = keccak256(abi.encodePacked("KpkSharesNavMastercopy", uint256(4)));
     bytes32 internal constant SALT_TIMELOCK_MASTERCOPY =
         keccak256(abi.encodePacked("TimelockControllerMastercopy", uint256(4)));
     bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(4)));
@@ -147,6 +156,17 @@ abstract contract OivChainDeploy is Script {
 
     function _timelockMastercopyInitCode() internal pure returns (bytes memory) {
         return type(TimelockControllerUpgradeable).creationCode;
+    }
+
+    function _navMastercopyInitCode() internal pure returns (bytes memory) {
+        return type(KpkSharesNav).creationCode;
+    }
+
+    /// @dev `OivStackWiring` is LINKED into `KpkOivFactory`, so its address is inside the factory's
+    ///      creation code. It must therefore be deployed before the factory, and at the address
+    ///      `foundry.toml` pinned — `_runChain` asserts exactly that rather than trusting it.
+    function _stackWiringInitCode() internal pure returns (bytes memory) {
+        return type(OivStackWiring).creationCode;
     }
 
     function _orchestratorInitCode(address eoaOwner, address factory) internal pure returns (bytes memory) {
@@ -265,6 +285,8 @@ abstract contract OivChainDeploy is Script {
         address factory = _create2Address(SALT_FACTORY, factoryInitCode);
         address sharesMastercopy = _create2Address(SALT_SHARES_MASTERCOPY, sharesMastercopyInitCode);
         address timelockMastercopy = _create2Address(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode);
+        address navMastercopy = _create2Address(SALT_NAV_MASTERCOPY, _navMastercopyInitCode());
+        address stackWiring = _create2Address(SALT_STACK_WIRING, _stackWiringInitCode());
         bytes memory ccipInitCode = _orchestratorInitCode(eoaOwner, factory);
         address orchestrator = _create2Address(SALT_CCIP, ccipInitCode);
         address timelockDeployer = _create2Address(SALT_TIMELOCK, _timelockDeployerInitCode());
@@ -274,6 +296,8 @@ abstract contract OivChainDeploy is Script {
         console.log("Predicted KpkOivFactory: ", factory);
         console.log("Predicted KpkShares mastercopy:", sharesMastercopy);
         console.log("Predicted Timelock mastercopy:", timelockMastercopy);
+        console.log("Predicted KpkSharesNav mastercopy:", navMastercopy);
+        console.log("Predicted OivStackWiring library:", stackWiring);
         console.log("Predicted CcipOivDeployer:", orchestrator);
         console.log("Predicted KpkTimelockDeployer:", timelockDeployer);
         console.log("CCIP router:             ", ccipRouter);
@@ -286,7 +310,30 @@ abstract contract OivChainDeploy is Script {
         _ensureEmpty();
         _ensureMultiSendUnwrapper();
 
-        // ── 2. Factory + deployer ──
+        // ── 2. Linked library, mastercopies, then the factory ──
+        //
+        // `OivStackWiring` FIRST, and its address asserted: it is LINKED into the factory, so the
+        // factory's creation code already contains this address. A factory deployed against a library
+        // that is absent — or at a different address than `foundry.toml` pinned — deploys fine and
+        // then reverts on every fund it tries to wire.
+        if (stackWiring.code.length == 0) {
+            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_STACK_WIRING, _stackWiringInitCode()));
+            require(ok, "stack wiring library CREATE2 deploy failed");
+            console.log("[OK]   OivStackWiring deployed at:   ", stackWiring);
+        } else {
+            console.log("[SKIP] OivStackWiring already at:    ", stackWiring);
+        }
+        require(stackWiring == LINKED_STACK_WIRING, "stack wiring address != the one linked into the factory");
+
+        if (navMastercopy.code.length == 0) {
+            (bool ok,) =
+                CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_NAV_MASTERCOPY, _navMastercopyInitCode()));
+            require(ok, "nav mastercopy CREATE2 deploy failed");
+            console.log("[OK]   KpkSharesNav mastercopy at:   ", navMastercopy);
+        } else {
+            console.log("[SKIP] KpkSharesNav mastercopy at:   ", navMastercopy);
+        }
+
         if (factory.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
             require(ok, "factory CREATE2 deploy failed");
@@ -326,6 +373,12 @@ abstract contract OivChainDeploy is Script {
         } else {
             require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
         }
+        if (f.kpkSharesNavMastercopy() == address(0)) {
+            f.setKpkSharesNavMastercopy(navMastercopy);
+            console.log("[OK]   factory.kpkSharesNavMastercopy set");
+        } else {
+            require(f.kpkSharesNavMastercopy() == navMastercopy, "factory nav mastercopy mismatch");
+        }
         if (f.timelockDeployer() == address(0)) {
             f.setTimelockDeployer(timelockDeployer);
             console.log("[OK]   factory.timelockDeployer set");
@@ -361,6 +414,7 @@ abstract contract OivChainDeploy is Script {
         // ── Post-flight: assert the END STATE, regardless of which branches ran ──
         require(KpkOivFactory(factory).kpkSharesMastercopy() == sharesMastercopy, "post: shares mastercopy not wired");
         require(KpkOivFactory(factory).timelockDeployer() == timelockDeployer, "post: timelock deployer not wired");
+        require(KpkOivFactory(factory).kpkSharesNavMastercopy() == navMastercopy, "post: nav mastercopy not wired");
         require(KpkOivFactory(factory).owner() == finalOwner, "post: factory owner != finalOwner");
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");

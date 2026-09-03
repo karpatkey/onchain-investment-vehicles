@@ -20,7 +20,12 @@ optimizer = true
 optimizer_runs = 2000
 via_ir = true
 
-no_match_test = "upgrade"
+
+# NOTE: a `no_match_test = "upgrade"` filter used to live here. It was inert -- the match is
+# case-sensitive and every upgrade test is named `testUpgrade*` -- so all 18 of them have been
+# running all along. Removed rather than left in place: it silently excluded nothing today, but it
+# was armed to swallow any future test whose name happened to contain a lowercase "upgrade", which
+# is exactly what a new upgrade suite would be called.
 
 [profile.coverage]
 # Exclude script folder from coverage reports (regex pattern)

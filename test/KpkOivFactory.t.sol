@@ -653,7 +653,7 @@ contract KpkOivFactoryTest is OivTestConstants {
         // Make USDC.approve revert so that the Avatar Safe's execTransactionFromModule
         // returns false when the factory tries to grant the shares proxy its allowance.
         vm.mockCallRevert(USDC, abi.encodeWithSelector(IERC20.approve.selector), "");
-        vm.expectRevert("KpkOivFactory: approve module call failed");
+        vm.expectRevert(KpkOivFactory.ApproveModuleCallFailed.selector);
         factory.deployOiv(oivConfig);
     }
 
@@ -1403,7 +1403,7 @@ contract KpkOivFactoryHarness is KpkOivFactory {
             .execTransactionFromModule(
                 avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(this))), 0
             );
-        require(moduleDisabled, "KpkOivFactory: failed to disable module");
+        if (!moduleDisabled) revert KpkOivFactory.FactoryModuleNotDisabled();
     }
 }
 
@@ -1449,7 +1449,7 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
             abi.encode(false)
         );
 
-        vm.expectRevert("KpkOivFactory: approve module call failed");
+        vm.expectRevert(KpkOivFactory.ApproveModuleCallFailed.selector);
         harness.exposed_execApprove(mockSafe, mockToken, spender);
     }
 
@@ -1465,7 +1465,7 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
             abi.encode(false)
         );
 
-        vm.expectRevert("KpkOivFactory: failed to disable module");
+        vm.expectRevert(KpkOivFactory.FactoryModuleNotDisabled.selector);
         harness.exposed_disableFactoryModule(mockSafe);
     }
 }

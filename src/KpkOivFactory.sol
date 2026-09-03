@@ -6,11 +6,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkShares} from "./kpkShares.sol";
+import {KpkSharesNav} from "./KpkSharesNav.sol";
 import {ISafe} from "./interfaces/ISafe.sol";
 import {ISafeProxyFactory} from "./interfaces/ISafeProxyFactory.sol";
 import {ISafeModuleSetup} from "./interfaces/ISafeModuleSetup.sol";
 import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
+import {OivStackWiring} from "./utils/OivStackWiring.sol";
 import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
 import {OivInfraConstants} from "./OivInfraConstants.sol";
 
@@ -189,6 +191,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         3,000,000-gas ceiling that 10 of the 20 CCIP lanes enforce.
     address public kpkSharesMastercopy;
 
+    /// @notice The single `KpkSharesNav` implementation every NAV fund on this chain proxies to.
+    ///         Shared for the same reason `kpkSharesMastercopy` is, and additionally because
+    ///         `KpkSharesNav` is 24,473 bytes — 103 under EIP-170 — so a per-fund copy would cost
+    ///         nearly 5M gas of code deposit each.
+    address public kpkSharesNavMastercopy;
+
     /// @notice Deploys a fund's `TimelockController` instances. Isolated in its own contract for the
     ///         same reason clones are used there: `TimelockController`'s creation bytecode
     ///         alone is larger than this factory's remaining runtime margin.
@@ -270,8 +278,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         /// @notice Signer configuration for the Manager Safe.
         ///         SECURITY: `managerSafe.owners` MUST be trusted at the same operational level
         ///         as `admin`. The deployed Manager Safe receives ownership of both the sub
-        ///         Roles Modifier and the manager Roles Modifier (see `_wireSubModifier` /
-        ///         `_wireManagerModifier`), so a hostile Manager Safe can re-wire those two
+        ///         Roles Modifier and the manager Roles Modifier (see `OivStackWiring.wireSub` /
+        ///         `OivStackWiring.wireManager`), so a hostile Manager Safe can re-wire those two
         ///         modifiers' avatar/target/enabled-modules — disrupting fund operations and
         ///         potentially diverting sub-modifier-routed traffic away from the exec
         ///         modifier. The exec modifier (owned by `admin`) remains the authoritative
@@ -328,6 +336,50 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address execTimelock;
     }
 
+    /// @notice Full configuration for a NAV-priced fund (stack + `KpkSharesNav` proxy + timelocks).
+    /// @dev    NAV funds are deliberately MONO-CHAIN. `KpkSharesNav` prices every mint and burn from
+    ///         the chain's own `NAVCalculator`, so a fund's shares are only meaningful on the chain
+    ///         whose portfolio that calculator values. There is no `deployStack` counterpart and
+    ///         nothing here is carried over CCIP.
+    struct NavFundConfig {
+        /// @notice Signer configuration for the Manager Safe. Same trust warning as `OivConfig`.
+        SafeConfig managerSafe;
+        /// @notice Base salt controlling every deployed address, hashed with the caller.
+        uint256 salt;
+        /// @notice Receives exec Roles Modifier ownership and `DEFAULT_ADMIN_ROLE` on the fund —
+        ///         unless the corresponding timelock is configured, which takes its place. Must not be
+        ///         zero, and must not be this factory.
+        address admin;
+        /// @notice Fund initialization parameters. `safe` is overwritten with the deployed Avatar Safe
+        ///         and `admin` with this factory for the duration of the call; both inputs are ignored.
+        KpkSharesNav.ConstructorParams sharesParams;
+        /// @notice Assets to list beyond the base asset. Each must already be registered and priceable
+        ///         in the NAV calculator, or the deployment reverts.
+        AssetConfig[] additionalAssets;
+        /// @notice Timelock receiving ownership of the exec Roles Modifier. Zero `minDelay` = none.
+        TimelockParams execTimelock;
+        /// @notice Timelock receiving `DEFAULT_ADMIN_ROLE` on the fund INSTEAD of `admin`.
+        ///         Zero `minDelay` = none.
+        TimelockParams sharesTimelock;
+    }
+
+    /// @notice Addresses of the contracts `deployNavFund` produces.
+    struct NavFundInstance {
+        address avatarSafe;
+        address managerSafe;
+        address execRolesModifier;
+        address subRolesModifier;
+        address managerRolesModifier;
+        /// @notice The chain's SHARED `KpkSharesNav` implementation, not a per-fund one.
+        address navImpl;
+        /// @notice The fund's ERC-1967 UUPS proxy — the NAV-priced shares token.
+        address navProxy;
+        /// @notice Timelock owning the exec Roles Modifier, or zero if none was configured.
+        address execTimelock;
+        /// @notice Timelock holding `DEFAULT_ADMIN_ROLE` on the fund, or zero if none was configured.
+        address sharesTimelock;
+    }
+
     /// @notice Addresses of the contracts deployed by `deployOiv`.
     struct OivInstance {
         /// @notice Avatar Safe — holds fund assets; execution via Roles Modifiers only.
@@ -377,6 +429,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         funds this factory itself deployed): entries here are owner-asserted and removable. A
     ///         removed entry is zeroed; a live entry always has a non-zero `kpkSharesProxy`.
     mapping(uint256 => OivInstance) public registeredFunds;
+
+    /// @notice Number of NAV funds deployed by this factory. Also the id of the next one.
+    uint256 public navFundCount;
+
+    /// @notice Append-only log of NAV funds this factory deployed, keyed by id.
+    mapping(uint256 => NavFundInstance) public navFunds;
 
     /// @notice Whether a fund — keyed by its KpkShares proxy — is currently in the curated registry.
     ///         Prevents duplicate registration and gives O(1) membership lookups.
@@ -428,6 +486,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Emitted when the owner updates the timelock deployer address.
     event TimelockDeployerUpdated(address indexed newAddress);
+
+    /// @notice Emitted when the owner updates the KpkSharesNav mastercopy address.
+    event KpkSharesNavMastercopyUpdated(address indexed newAddress);
+
+    /// @notice Emitted once per successful NAV fund deployment.
+    /// @param  navFundId Zero-based index in the `navFunds` mapping.
+    /// @param  instance  Addresses of the deployed contracts.
+    event NavFundDeployed(uint256 indexed navFundId, NavFundInstance instance);
 
     // ── Errors ─────────────────────────────────────────────────────────────────
 
@@ -484,6 +550,27 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         is unaffected — it does not touch `kpkSharesMastercopy` and remains callable
     ///         regardless of wiring status.
     error KpkSharesMastercopyNotSet();
+
+    /// @notice Thrown when the Avatar Safe module call that disables this factory fails, or when the
+    ///         factory is still an enabled module afterwards. Either leaves the factory with standing
+    ///         execution rights over a live fund's assets.
+    error FactoryModuleNotDisabled();
+
+    /// @notice Thrown when the Avatar Safe module call issuing an ERC-20 approval returns false.
+    error ApproveModuleCallFailed();
+
+    /// @notice Thrown when `deployNavFund` is called before `kpkSharesNavMastercopy` is wired.
+    error KpkSharesNavMastercopyNotSet();
+
+    /// @notice Thrown when the NAV calculator address holds no code. A NAV fund prices every mint and
+    ///         burn through it, so a codeless calculator produces a fund that cannot settle anything.
+    error NavCalculatorNotAContract();
+
+    /// @notice Thrown when a NAV fund's `admin` is this factory. The grant would be a no-op on a role
+    ///         the factory already holds and the renounce would then remove the only holder, leaving a
+    ///         fund nobody can administer — which a factory-only assertion passes precisely because
+    ///         nobody is left.
+    error AdminIsFactory();
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
@@ -621,6 +708,16 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         emit RolesModifierMastercopyUpdated(_rolesModifierMastercopy);
     }
 
+    /// @notice Updates the KpkSharesNav mastercopy used by future NAV fund deployments.
+    /// @dev    Existing funds are unaffected: each proxy holds its own implementation pointer, so
+    ///         changing this never migrates a fund that is already deployed.
+    /// @param _kpkSharesNavMastercopy New address. Must not be zero.
+    function setKpkSharesNavMastercopy(address _kpkSharesNavMastercopy) external onlyOwner {
+        if (_kpkSharesNavMastercopy == address(0)) revert ZeroAddress();
+        kpkSharesNavMastercopy = _kpkSharesNavMastercopy;
+        emit KpkSharesNavMastercopyUpdated(_kpkSharesNavMastercopy);
+    }
+
     /// @notice Updates the KpkShares mastercopy address.
     /// @param _kpkSharesMastercopy New address. Must not be zero.
     function setKpkSharesMastercopy(address _kpkSharesMastercopy) external onlyOwner {
@@ -745,6 +842,145 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         instances[id] = instance;
         emit OivDeployed(id, instance);
+    }
+
+    /// @notice Deploys a complete NAV-priced fund: operational stack + `KpkSharesNav` proxy, with
+    ///         either timelock the config asks for.
+    /// @dev    Permissionless, like the other entry points. The fund is priced from the chain's
+    ///         `NAVCalculator` rather than from an operator-supplied price, so unlike `deployOiv`
+    ///         there is no sidechain counterpart: see `NavFundConfig` for why these funds are
+    ///         mono-chain.
+    ///
+    ///         Everything else is shared with `deployOiv` — the same stack wiring, the same timelock
+    ///         deployment, the same Avatar Safe approvals — so the two cannot drift in how a fund is
+    ///         assembled.
+    /// @param  config   Fund deployment parameters.
+    /// @return instance Addresses of the deployed contracts.
+    function deployNavFund(NavFundConfig calldata config)
+        external
+        nonReentrant
+        returns (NavFundInstance memory instance)
+    {
+        address impl = kpkSharesNavMastercopy;
+        if (impl == address(0)) revert KpkSharesNavMastercopyNotSet();
+        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
+
+        _validateNavFundConfig(config);
+
+        // Reserve the id before any external call (CEI), so an attacker-controlled ERC-20 callback
+        // firing during `updateAsset` or the approvals cannot shift indices.
+        uint256 id = navFundCount++;
+
+        StackInstance memory stack = _deployAndWireStack(
+            StackConfig({
+                managerSafe: config.managerSafe,
+                execRolesMod: RolesModifierConfig({finalOwner: config.admin}),
+                subRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+                managerRolesMod: RolesModifierConfig({finalOwner: address(0)}),
+                salt: config.salt,
+                execTimelock: config.execTimelock
+            })
+        );
+
+        (address proxy, address sharesTimelock) = _deployNavProxy(impl, config, stack.managerSafe, stack.avatarSafe);
+
+        _grantApprovals(stack.avatarSafe, proxy, config.sharesParams.asset, config.additionalAssets);
+        _disableFactoryAsAvatarModule(stack.avatarSafe);
+
+        instance = NavFundInstance({
+            avatarSafe: stack.avatarSafe,
+            managerSafe: stack.managerSafe,
+            execRolesModifier: stack.execRolesModifier,
+            subRolesModifier: stack.subRolesModifier,
+            managerRolesModifier: stack.managerRolesModifier,
+            navImpl: impl,
+            navProxy: proxy,
+            execTimelock: stack.execTimelock,
+            sharesTimelock: sharesTimelock
+        });
+
+        navFunds[id] = instance;
+        emit NavFundDeployed(id, instance);
+    }
+
+    /// @dev Deploys and initializes the NAV fund proxy, lists the extra assets and hands over the
+    ///      roles. Mirrors `_deploySharesProxy`, minus the `isFeeModuleAsset` flag `KpkSharesNav` does
+    ///      not have — a single USD share price makes the high-water mark one coherent series across
+    ///      every asset.
+    function _deployNavProxy(address impl, NavFundConfig calldata config, address operator, address avatarSafe)
+        internal
+        returns (address proxy, address timelock)
+    {
+        KpkSharesNav.ConstructorParams memory params = config.sharesParams;
+        params.safe = avatarSafe;
+        params.admin = address(this);
+
+        // Empty constructor data, initialized on the next line — see `_deploySharesProxy` for why the
+        // initializer must stay out of the CREATE2 init code.
+        proxy = address(new ERC1967Proxy{salt: _deriveNavProxySalt(config.salt, msg.sender)}(impl, ""));
+        KpkSharesNav fund = KpkSharesNav(proxy);
+        fund.initialize(params);
+
+        uint256 length = config.additionalAssets.length;
+        if (length > 0) {
+            // `updateAsset` is operator-gated rather than admin-gated, so the factory holds OPERATOR
+            // for exactly as long as it needs it.
+            fund.grantRole(OPERATOR, address(this));
+            for (uint256 i = 0; i < length; i++) {
+                fund.updateAsset(
+                    config.additionalAssets[i].asset,
+                    config.additionalAssets[i].canDeposit,
+                    config.additionalAssets[i].canRedeem
+                );
+            }
+            fund.revokeRole(OPERATOR, address(this));
+        }
+
+        fund.grantRole(OPERATOR, operator);
+
+        address finalAdmin = config.admin;
+        if (config.sharesTimelock.minDelay != 0) {
+            timelock = IKpkTimelockDeployer(timelockDeployer).deploySharesTimelock(proxy, config.sharesTimelock);
+            finalAdmin = timelock;
+        }
+        fund.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);
+        fund.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
+
+        // Asserted POSITIVELY, unlike `_deploySharesProxy`'s factory-only check: if `finalAdmin` were
+        // this factory the grant would be a no-op and the renounce would remove the only holder,
+        // leaving a fund nobody can administer — which a factory-only assertion passes precisely
+        // because nobody is left. `_validateNavFundConfig` refuses that outright; this is the backstop.
+        assert(fund.hasRole(DEFAULT_ADMIN_ROLE, finalAdmin));
+    }
+
+    /// @dev Index 7, so a NAV fund and a `deployOiv` fund from the same `(caller, salt)` never collide
+    ///      on the proxy. Their operational stacks still would — deploy them under different salts.
+    function _deriveNavProxySalt(uint256 baseSalt, address caller) internal pure returns (bytes32) {
+        return keccak256(abi.encode(caller, baseSalt, uint8(7)));
+    }
+
+    /// @dev Mirrors `_validateOivConfig`, plus the two failures unique to a NAV fund: a calculator
+    ///      that cannot price anything, and an admin that would leave the fund unadministrable.
+    function _validateNavFundConfig(NavFundConfig calldata config) internal view {
+        _validateManagerOwners(config.managerSafe);
+        if (config.admin == address(0)) revert ZeroAddress();
+        if (config.admin == address(this)) revert AdminIsFactory();
+        if (config.sharesParams.asset == address(0)) revert ZeroAddress();
+        if (config.sharesParams.navCalculator.code.length == 0) revert NavCalculatorNotAContract();
+        if (
+            config.sharesParams.feeReceiver == address(0) || config.sharesParams.subscriptionRequestTtl == 0
+                || config.sharesParams.redemptionRequestTtl == 0
+        ) revert InvalidSharesParams();
+
+        uint256 len = config.additionalAssets.length;
+        for (uint256 i = 0; i < len; i++) {
+            address asset = config.additionalAssets[i].asset;
+            if (asset == address(0)) revert ZeroAddress();
+            if (asset == config.sharesParams.asset) revert DuplicateAsset();
+            for (uint256 j = i + 1; j < len; j++) {
+                if (asset == config.additionalAssets[j].asset) revert DuplicateAsset();
+            }
+        }
     }
 
     // ── Curated external-fund registry ───────────────────────────────────────────
@@ -1028,8 +1264,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             .execTransactionFromModule(
                 avatarSafe, 0, abi.encodeCall(ISafe.disableModule, (SENTINEL_MODULES, address(this))), 0
             );
-        require(moduleDisabled, "KpkOivFactory: failed to disable module");
-        require(!ISafe(avatarSafe).isModuleEnabled(address(this)), "KpkOivFactory: factory still enabled as module");
+        if (!moduleDisabled) revert FactoryModuleNotDisabled();
+        if (ISafe(avatarSafe).isModuleEnabled(address(this))) revert FactoryModuleNotDisabled();
     }
 
     // ── Internal: stack deployment ──────────────────────────────────────────────
@@ -1112,9 +1348,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
         // Steps 5-7 – Wire all three modifiers. Ownership transfer is the last act of each helper,
         //             so every unwrapper registration still happens while the factory is owner.
-        _wireExecModifier(execMod, avatarSafe, managerSafe, subMod, execOwner);
-        _wireSubModifier(subMod, avatarSafe, execMod, managerSafe);
-        _wireManagerModifier(managerMod, managerSafe);
+        OivStackWiring.wireExec(execMod, avatarSafe, managerSafe, subMod, execOwner);
+        OivStackWiring.wireSub(subMod, avatarSafe, execMod, managerSafe);
+        OivStackWiring.wireManager(managerMod, managerSafe);
 
         inst = StackInstance({
             avatarSafe: avatarSafe,
@@ -1207,80 +1443,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     // ── Internal: wiring helpers ────────────────────────────────────────────────
-
-    /// @dev Wires the exec (primary) Roles Modifier. After this call:
-    ///      - avatar = avatarSafe, target = avatarSafe.
-    ///      - Manager Safe has the MANAGER role.
-    ///      - Sub Roles Modifier is enabled as a nested module; its default role is MANAGER
-    ///        and it also holds the MANAGER role, so calls it routes inherit the role automatically.
-    ///      - Ownership is transferred to `finalOwner` (typically the Security Council).
-    /// @param mod         Exec Roles Modifier address (factory is still owner/avatar at call time).
-    /// @param avatarSafe  Avatar Safe address — becomes avatar and target.
-    /// @param managerSafe Manager Safe address — receives the MANAGER role.
-    /// @param subMod      Sub Roles Modifier address — enabled as a nested module.
-    /// @param finalOwner  Address that receives ownership (must not be zero).
-    function _wireExecModifier(address mod, address avatarSafe, address managerSafe, address subMod, address finalOwner)
-        internal
-    {
-        bytes32[] memory roleKeys = new bytes32[](1);
-        roleKeys[0] = MANAGER_ROLE;
-        bool[] memory memberOf = new bool[](1);
-        memberOf[0] = true;
-
-        IRoles(mod).assignRoles(managerSafe, roleKeys, memberOf);
-        IRoles(mod).enableModule(subMod);
-        IRoles(mod).setDefaultRole(subMod, MANAGER_ROLE);
-        IRoles(mod).assignRoles(subMod, roleKeys, memberOf);
-        IRoles(mod).setAvatar(avatarSafe);
-        IRoles(mod).setTarget(avatarSafe);
-        _registerMultiSendUnwrappers(mod);
-        IRoles(mod).transferOwnership(finalOwner);
-    }
-
-    /// @dev Wires the sub Roles Modifier. After this call:
-    ///      - avatar = avatarSafe, target = execRolesModifier (calls are forwarded to the exec
-    ///        layer, not directly to the Avatar Safe).
-    ///      - Ownership is transferred to Manager Safe.
-    /// @param mod         Sub Roles Modifier address.
-    /// @param avatarSafe  Avatar Safe address — becomes avatar.
-    /// @param execMod     Exec Roles Modifier address — becomes target.
-    /// @param managerSafe Manager Safe address — receives ownership.
-    function _wireSubModifier(address mod, address avatarSafe, address execMod, address managerSafe) internal {
-        IRoles(mod).setAvatar(avatarSafe);
-        IRoles(mod).setTarget(execMod);
-        _registerMultiSendUnwrappers(mod);
-        IRoles(mod).transferOwnership(managerSafe);
-    }
-
-    /// @dev Wires the manager Roles Modifier. After this call:
-    ///      - avatar = managerSafe, target = managerSafe (guards actions originating from the
-    ///        Manager Safe itself).
-    ///      - Ownership is transferred to Manager Safe.
-    /// @param mod         Manager Roles Modifier address.
-    /// @param managerSafe Manager Safe address — becomes avatar, target, and owner.
-    function _wireManagerModifier(address mod, address managerSafe) internal {
-        IRoles(mod).setAvatar(managerSafe);
-        IRoles(mod).setTarget(managerSafe);
-        _registerMultiSendUnwrappers(mod);
-        IRoles(mod).transferOwnership(managerSafe);
-    }
-
-    /// @dev Registers the Zodiac MultiSendUnwrapper against both Safe MultiSend contracts on `mod`.
-    ///      A Roles Modifier permission-checks one call at a time; a `multiSend(bytes)` batch
-    ///      arrives as a single opaque delegatecall, so without an unwrap adapter the modifier
-    ///      cannot decompose it and rejects the whole batch. Both MultiSend variants share the
-    ///      `multiSend(bytes)` selector but the adapter is keyed on `(target, selector)`, so each
-    ///      needs its own registration.
-    ///
-    ///      MUST be called while the factory is still the modifier's owner — i.e. before the
-    ///      `transferOwnership` that ends each wiring helper. `setTransactionUnwrapper` is
-    ///      `onlyOwner`, and once ownership has moved to the Security Council or Manager Safe the
-    ///      registration can only be done by a multisig transaction after the fact.
-    /// @param mod Roles Modifier to configure (factory must still be its owner).
-    function _registerMultiSendUnwrappers(address mod) internal {
-        IRoles(mod).setTransactionUnwrapper(MULTI_SEND, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
-        IRoles(mod).setTransactionUnwrapper(MULTI_SEND_CALLS_ONLY, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
-    }
 
     /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy` (each fund
     ///      has an isolated upgrade surface) and an ERC-1967 UUPS proxy pointing to it.
@@ -1393,7 +1555,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function _execApprove(address avatarSafe, address asset, address spender) internal {
         bool success = ISafe(avatarSafe)
             .execTransactionFromModule(asset, 0, abi.encodeCall(IERC20.approve, (spender, type(uint256).max)), 0);
-        require(success, "KpkOivFactory: approve module call failed");
+        if (!success) revert ApproveModuleCallFailed();
         require(
             IERC20(asset).allowance(avatarSafe, spender) == type(uint256).max,
             "KpkOivFactory: approve did not set allowance"
