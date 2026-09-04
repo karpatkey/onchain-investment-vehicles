@@ -63,6 +63,15 @@ contract DeployOiv is OivConfigReader {
     ///         stack alone. `deployOiv` and `deployStack` remain available for a deliberate override.
     function deploy(string calldata configPath) external {
         string memory json = vm.readFile(configPath);
+        // `deploy` exists to pick the branch per chain, so it must be TOLD which chains carry
+        // shares. `_shouldDeployShares` answers "true" for a config with no `.sharesChains` — the
+        // right default for the explicit entry points below, and the wrong one here: run across 19
+        // chains it would put a live shares token on every one of them. The explicit
+        // `deployOiv` / `deployStack` paths keep the permissive default.
+        require(
+            vm.keyExists(json, ".sharesChains"),
+            "config: deploy(configPath) requires .sharesChains - use deployOiv or deployStack to choose per chain"
+        );
         if (_shouldDeployShares(json)) {
             _deployOiv(json);
         } else {
@@ -89,8 +98,22 @@ contract DeployOiv is OivConfigReader {
 
     // ── Internals ──────────────────────────────────────────────────────────────
 
+    /// @dev `.oiv.sharesParams.asset` holds the MAINNET token by convention, so a chain added to
+    ///      `.sharesChains` without a matching `.oiv.assetOverrides` entry silently inherits it.
+    ///      Nothing downstream rejects that: `_validateOivConfig` only refuses the zero address, and
+    ///      the Avatar Safe's `approve` succeeds against a codeless address — so the fund would go
+    ///      live denominated in a token that does not exist on its chain. Checked here rather than in
+    ///      `OivConfigReader` because the reader is a pure parser, unit-tested without a fork.
+    function _requireAssetIsLive(KpkOivFactory.OivConfig memory config) internal view {
+        require(
+            config.sharesParams.asset.code.length != 0,
+            "config: base asset has no code on this chain - add an .oiv.assetOverrides entry for it"
+        );
+    }
+
     function _deployOiv(string memory json) internal {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        _requireAssetIsLive(config);
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);

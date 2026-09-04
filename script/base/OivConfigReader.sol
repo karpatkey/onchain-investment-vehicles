@@ -64,6 +64,17 @@ abstract contract OivConfigReader is Script {
         config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");
         config.managerSafe.threshold = json.readUint(".managerSafe.threshold");
         config.execRolesMod.finalOwner = json.readAddress(".execRolesModFinalOwner");
+        // The factory derives the shares path's owner as `finalOwner := admin` (`oivToStackConfig`),
+        // so these two keys describe the same role. Since `deploy` now picks either branch per chain
+        // from one config, letting them differ would give the stack-only chains a different exec
+        // modifier owner than the shares chains — mixed governance, with every address still
+        // matching and nothing on-chain to flag it.
+        if (vm.keyExists(json, ".oiv.admin")) {
+            require(
+                config.execRolesMod.finalOwner == json.readAddress(".oiv.admin"),
+                "config: .execRolesModFinalOwner must equal .oiv.admin - they are the same role"
+            );
+        }
         config.salt = json.readUint(".salt");
         // Read from the SAME `.oiv.execTimelock` block `_buildOivConfig` uses. A sidechain configured
         // from a different block would produce a different timelock address there, since the address
@@ -90,9 +101,24 @@ abstract contract OivConfigReader is Script {
             string.concat("config: ", key, " exists but has no minDelay - a timelock would be silently skipped")
         );
         params.minDelay = json.readUint(string.concat(key, ".minDelay"));
-        params.proposers = vm.keyExists(json, string.concat(key, ".proposers"))
-            ? json.readAddressArray(string.concat(key, ".proposers"))
-            : new address[](0);
+        // A zero delay means "no timelock" on-chain, so a present block with `minDelay: 0` is the
+        // same silent skip the check above exists to prevent — a placeholder left unfilled, or a bad
+        // unit conversion. To express "no timelock", omit the block.
+        require(
+            params.minDelay != 0,
+            string.concat("config: ", key, ".minDelay is 0 - omit the block entirely to deploy without a timelock")
+        );
+        // The KEY must be present, though an explicitly empty array is allowed: zero proposers is a
+        // permitted (if drastic) choice on-chain, but it must be a choice. Defaulting a MISSING key
+        // to zero turns a typo like "proposer" into a timelock that can never schedule anything,
+        // freezing whatever it governs with no way back and no error at deploy time.
+        require(
+            vm.keyExists(json, string.concat(key, ".proposers")),
+            string.concat(
+                "config: ", key, " exists but has no proposers - state [] explicitly to accept a frozen timelock"
+            )
+        );
+        params.proposers = json.readAddressArray(string.concat(key, ".proposers"));
         params.cancellers = vm.keyExists(json, string.concat(key, ".cancellers"))
             ? json.readAddressArray(string.concat(key, ".cancellers"))
             : new address[](0);
@@ -111,6 +137,9 @@ abstract contract OivConfigReader is Script {
     ///      to it through the `sharesChains` topology instead, which is identical everywhere.
     function _assetForThisChain(string memory json) internal view returns (address) {
         string memory key = string.concat(".oiv.assetOverrides.", vm.toString(block.chainid));
+        // Deliberately NOT checked for code here: this is a pure parsing helper, exercised by
+        // `OivConfigReaderTest` without a fork, where no token has code. `_requireAssetIsLive`
+        // in the deploy script applies that check where a real chain is guaranteed.
         return vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
     }
 
