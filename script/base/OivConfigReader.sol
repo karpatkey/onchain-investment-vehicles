@@ -26,16 +26,26 @@ abstract contract OivConfigReader is Script {
     ///      The timelock rows print `0x0` when none was configured, and that is deliberately visible
     ///      rather than omitted: a fund the operator believes is timelocked but is not is the exact
     ///      failure this file previously made silent.
-    function _logInstance(KpkOivFactory.OivInstance memory inst) internal pure {
+    /// @param sharesOnThisChain Whether the config gives THIS chain a shares token. When it does
+    ///        not, the shares rows are addresses that will never exist here — `predictOivAddresses`
+    ///        computes them regardless — and printing them unqualified invites an operator to
+    ///        pre-fund or allowlist an address that is never deployed.
+    function _logInstance(KpkOivFactory.OivInstance memory inst, bool sharesOnThisChain) internal pure {
         console.log("  Avatar Safe:          ", inst.avatarSafe);
         console.log("  Manager Safe:         ", inst.managerSafe);
         console.log("  execRolesModifier:    ", inst.execRolesModifier);
         console.log("  subRolesModifier:     ", inst.subRolesModifier);
         console.log("  managerRolesModifier: ", inst.managerRolesModifier);
-        console.log("  kpkShares impl:       ", inst.kpkSharesImpl);
-        console.log("  kpkShares proxy:      ", inst.kpkSharesProxy);
         console.log("  exec timelock:        ", inst.execTimelock);
-        console.log("  shares timelock:      ", inst.sharesTimelock);
+        if (sharesOnThisChain) {
+            console.log("  kpkShares impl:       ", inst.kpkSharesImpl);
+            console.log("  kpkShares proxy:      ", inst.kpkSharesProxy);
+            console.log("  shares timelock:      ", inst.sharesTimelock);
+        } else {
+            console.log("  kpkShares:             NOT on this chain (not listed in .sharesChains)");
+            console.log("  would-be proxy:       ", inst.kpkSharesProxy);
+            console.log("  (that address is reachable later via promoteShares, not by this deploy)");
+        }
     }
 
     function _buildOivConfig(string memory json) internal view returns (KpkOivFactory.OivConfig memory config) {
