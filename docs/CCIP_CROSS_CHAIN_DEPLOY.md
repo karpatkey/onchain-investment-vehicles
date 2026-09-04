@@ -84,11 +84,12 @@ config's addresses; an identical config still yields identical addresses on ever
 code must predict via the orchestrator's `predictOiv(config, sharesChains)`** (which applies this derivation), not
 the factory's raw `predictOivAddresses`.
 
-**Source-chain only.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
-fan-out, so they are restricted to the source chain (Ethereum mainnet, `SOURCE_CHAIN_ID = 1`) and
-revert `NotSourceChain` elsewhere. Without this, a permissionless caller could run the full `deployOiv`
-directly on a *destination* chain and pre-occupy the deterministic stack addresses — the later CCIP
-`deployStack` would then collide and stick in `FAILED`, leaving a stray shares token behind. The
+**Any wired chain.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
+fan-out from whichever chain you call them on, provided that chain is in the orchestrator's registry
+(`onlyWiredChain`). There is no designated source chain: `SOURCE_CHAIN_ID` and `NotSourceChain` are
+gone. Pre-occupation of the deterministic stack addresses — the reason the old restriction existed —
+is handled at the factory instead, which adopts pristine pre-landed components and refuses only a
+stack that has already been wired. The
 orchestrator never holds a privileged role on any deployed fund — the exec Roles Modifier (owned by
 `config.admin`) remains the authoritative gatekeeper of Avatar Safe execution.
 
@@ -244,12 +245,12 @@ source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDepl
   --rpc-url base \
   --account $DEPLOYER_NAME \
   --broadcast \
-  --sig "run(address,address,address,address,address,uint64)" \
-  <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken> 5009297550715157269
+  --sig "run(address,address,address,address,address)" \
+  <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken>
 ```
 
-`mainnetSelector` (`5009297550715157269`) is the same on every chain — it identifies the trusted
-*source* (Ethereum mainnet), not the chain being deployed to.
+There is no trusted-source argument any more. The orchestrator accepts a message from any chain in
+its registry, and that registry is baked in at construction.
 
 ### Destination chain registry ("selected chains")
 
