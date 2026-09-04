@@ -5,8 +5,9 @@ direct, per-chain path: `deployOiv` for the full fund (typically mainnet) and `d
 operational stack on additional chains. For the one-transaction multichain path, see
 [CCIP_FUND_DEPLOYMENT_FLOW.md](CCIP_FUND_DEPLOYMENT_FLOW.md).
 
-> **Assumed already deployed** (same address on every supported chain): `KpkOivFactory`,
-> `KpkSharesDeployer`, the `Empty` contract (Avatar Safe signer), and the canonical Safe v1.4.1 +
+> **Assumed already deployed** (same address on every supported chain): `KpkOivFactory`, the
+> `KpkShares` mastercopy, `KpkTimelockDeployer` and its `TimelockController` mastercopy, the `Empty`
+> contract (Avatar Safe signer), and the canonical Safe v1.4.1 +
 > Zodiac infrastructure. See [DEPLOYED_ADDRESSES.md](DEPLOYED_ADDRESSES.md). This doc is only about
 > deploying a **fund** through them.
 
@@ -40,7 +41,7 @@ sequenceDiagram
     participant F as KpkOivFactory
     participant Z as Zodiac ModuleProxyFactory
     participant S as Safe ProxyFactory
-    participant D as KpkSharesDeployer
+    participant D as KpkShares mastercopy
     participant Av as Avatar Safe
 
     Op->>Fg: deployOiv(configPath)
