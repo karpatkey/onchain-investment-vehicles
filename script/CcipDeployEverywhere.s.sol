@@ -47,7 +47,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Factory:              ", address(factory));
-        _logInstance(predicted);
+        _logInstance(predicted, _shouldDeployShares(json));
         console.log("  NOTE: bound to this config AND its .sharesChains topology; the base asset is");
         console.log("        excluded from the salt, so these are identical on every chain. Any other");
         console.log("        field, or the topology, moves them.");
@@ -80,7 +80,7 @@ contract CcipDeployEverywhere is OivConfigReader {
             console.log("  Fund deployed locally (this chain carries shares)");
         }
         console.log("============================================================");
-        _logInstance(instance);
+        _logInstance(instance, instance.kpkSharesProxy != address(0));
         console.log("============================================================");
     }
 
@@ -136,7 +136,7 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         console.log("  deployEverywhere complete (local OIV deployed, CCIP dispatched)");
         console.log("============================================================");
-        _logInstance(instance);
+        _logInstance(instance, instance.kpkSharesProxy != address(0));
         console.log("------------------------------------------------------------");
         // messageIds are in dispatch order; the orchestrator drops the local chain (if present in
         // destChainIds), so the two arrays may not align 1:1 — log by dispatch index, not by chainId.

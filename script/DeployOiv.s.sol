@@ -49,7 +49,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  Predicted addresses (no deployment)");
         console.log("============================================================");
-        _logInstance(predicted);
+        _logInstance(predicted, _shouldDeployShares(json));
         console.log("------------------------------------------------------------");
         console.log("  Caller (deployer):    ", caller);
         console.log("  NOTE: these addresses are identical across all chains");
@@ -123,7 +123,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  OIV Deployed");
         console.log("============================================================");
-        _logInstance(instance);
+        _logInstance(instance, true);
         console.log("============================================================");
     }
 
