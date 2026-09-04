@@ -271,10 +271,11 @@ whoever pays the gas. Shares never travel over CCIP: `deployOiv` measures ~2.88M
 >
 > **Promotion does not grant the Avatar Safe's asset approvals.** That needs the factory to be an
 > enabled Safe module, and re-enabling it would give a module unrestricted execution over a live,
-> funded Safe. Grant them afterwards through the exec Roles Modifier — a scoped `approve(sharesProxy,
-> max)` on the asset. Until then subscriptions work normally and redemption *settlement* reverts in the
-> operator's own transaction, so the gap is loud rather than silent. A timelocked fund can pre-schedule
-> the approval and land it in the same block, since the proxy address is predictable in advance.
+> funded Safe. Grant them BEFORE promoting — `promoteShares` now requires a maximum allowance from the
+> Avatar Safe to the shares proxy for the base asset AND every `additionalAssets` entry with
+> `canRedeem`, and reverts `ApprovalNotGranted(asset)` otherwise. Approve through the exec Roles
+> Modifier with a scoped `approve(sharesProxy, max)` on each. The proxy address is predictable before
+> promotion, so there is no window in which the fund is subscribable but not redeemable.
 
 #### Optional: timelocks, per-chain assets, and which chains get shares
 

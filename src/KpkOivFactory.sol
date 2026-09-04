@@ -477,9 +477,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param  multiSendContract The address whose codehash did not match.
     error MultiSendMissing(address multiSendContract);
 
-    /// @notice Thrown when `deployOiv` is called before `setKpkSharesDeployer` has wired the
+    /// @notice Thrown when `deployOiv` is called before `setKpkSharesMastercopy` has wired the
     ///         deployer post-construction. This is only reachable in the brief window between
-    ///         factory deployment and the post-deploy `setKpkSharesDeployer` call (see the
+    ///         factory deployment and the post-deploy `setKpkSharesMastercopy` call (see the
     ///         constructor NatSpec for the deterministic-CREATE2 deployment flow). `deployStack`
     ///         is unaffected — it does not touch `kpkSharesMastercopy` and remains callable
     ///         regardless of wiring status.
@@ -595,7 +595,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     //           change SHOULD go through a public proposal/timelock cycle.
 
     /// @notice Updates the KpkTimelockDeployer address.
-    /// @dev    Same blast radius as `setKpkSharesDeployer`: a hostile deployer could hand every
+    /// @dev    Same blast radius as `setKpkSharesMastercopy`: a hostile deployer could hand every
     ///         FUTURE fund a timelock whose proposer and canceller sets it controls. Past
     ///         deployments are unaffected — each fund's timelock is already deployed and
     ///         self-administered.
@@ -723,7 +723,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         // Guard the brief deploy-time window where the factory is constructed with
         // `kpkSharesMastercopy == address(0)` so its CREATE2 address is independent of it
-        // (see constructor NatSpec). Once `setKpkSharesDeployer` has wired the deployer the
+        // (see constructor NatSpec). Once `setKpkSharesMastercopy` has wired the mastercopy the
         // setter's non-zero check prevents this from ever reverting again.
         if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
         // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside

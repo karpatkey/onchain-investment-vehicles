@@ -10,6 +10,7 @@ import {
 } from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
+import {IRoles} from "src/interfaces/IRoles.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {MockCcipRouter} from "test/mocks/MockCcipRouter.sol";
@@ -495,6 +496,15 @@ contract CcipOivDeployerTest is OivTestConstants {
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, redeemable));
         orchestrator.promoteShares(cfg, topology);
 
+        // A PARTIAL allowance must not satisfy it either: `_grantApprovals` sets and asserts
+        // `type(uint256).max` on a normal deployment, so anything less would let a promoted fund
+        // settle a few redemptions and then begin reverting.
+        vm.prank(p.avatarSafe);
+        IERC20(redeemable).approve(p.kpkSharesProxy, 1);
+        vm.prank(cfg.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, redeemable));
+        orchestrator.promoteShares(cfg, topology);
+
         vm.prank(p.avatarSafe);
         IERC20(redeemable).approve(p.kpkSharesProxy, type(uint256).max);
 
@@ -687,6 +697,41 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertGt(oivPred.managerRolesModifier.code.length, 0, "managerMod should have code");
         // Shares proxy is NOT deployed on the sidechain (deployStack only).
         assertEq(oivPred.kpkSharesProxy.code.length, 0, "shares proxy must not exist on sidechain");
+    }
+
+    /// @notice The behaviour this branch exists for: a destination accepts a message from ANY wired
+    ///         chain, not only mainnet. Every other delivery test builds its message with
+    ///         `MAINNET_SELECTOR`, so the suite would have stayed green even if the receiver still
+    ///         accepted mainnet alone — the check would have been exercised only in its passing
+    ///         direction.
+    function test_ccipReceive_acceptsAMessageFromASidechainSource() public {
+        uint64 sidechain = orchestrator.chainSelectorOf(BASE_CHAIN_ID);
+        assertTrue(sidechain != 0, "Base must be baked into the registry");
+        assertTrue(sidechain != MAINNET_SELECTOR, "and must not be the mainnet selector");
+
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        m.sourceChainSelector = sidechain;
+        _deliver(m);
+
+        assertGt(pred.avatarSafe.code.length, 0, "a Base-originated message deployed the stack");
+        assertEq(IRoles(pred.execRolesModifier).avatar(), pred.avatarSafe, "and wired it, exactly as mainnet would");
+    }
+
+    /// @notice `effectiveSalt` is the helper off-chain code uses to re-derive a fund's addresses.
+    ///         Returning a salt for a topology no deployment could ever accept is worse than
+    ///         refusing: the caller gets an address set that will never exist.
+    function test_effectiveSalt_rejectsAnInvalidTopology() public {
+        CcipOivDeployer.SharesChain[] memory unordered = new CcipOivDeployer.SharesChain[](2);
+        unordered[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: USDC});
+        unordered[1] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+
+        vm.expectRevert();
+        orchestrator.effectiveSalt(oivConfig, unordered);
     }
 
     function test_ccipReceive_revertsForWrongRouter() public {
