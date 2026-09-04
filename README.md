@@ -114,7 +114,7 @@ Visual walk-throughs of the deployment flow (with diagrams):
 src/
   KpkOivFactory.sol        on-chain factory: deployOiv / deployStack
   CcipOivDeployer.sol      Chainlink CCIP cross-chain orchestrator
-  KpkSharesDeployer.sol    deploys a per-fund kpkShares implementation
+  KpkTimelockDeployer.sol  clones a per-fund TimelockController from a shared mastercopy
   kpkShares.sol            the fund's ERC-20 shares token (audited)
   IkpkShares.sol           kpkShares interface
   FeeModules/              WatermarkFee (perf fee) + IPerfFeeModule

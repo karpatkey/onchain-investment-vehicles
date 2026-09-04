@@ -57,8 +57,9 @@ every chain), so it needs no edit — but the following operator-facing referenc
 the deprecated factory:
 
 - `script/DeployOiv.s.sol` — the `FACTORY` constant.
-- `script/DeployKpkOivFactory.s.sol` — bump `SALT_FACTORY`/`SALT_DEPLOYER` if redeploying at a fresh
-  address (the script logs the address it produces).
+- `script/base/OivChainDeploy.sol` — bump the salt generation (`SALT_FACTORY`,
+  `SALT_SHARES_MASTERCOPY`, `SALT_TIMELOCK_MASTERCOPY`, `SALT_TIMELOCK`, `SALT_CCIP` — all currently
+  generation 4) if redeploying at fresh addresses. The script logs every address it produces.
 - `DEPLOYMENT.md` and `docs/DEPLOYED_ADDRESSES.md` — the deployed-address tables.
 
 ## Security model
@@ -225,8 +226,9 @@ source .env && script/deploy-all.sh                # every wired chain, then pri
 ```
 
 Or run the per-chain Solidity script directly (`script/chains/Deploy_<Chain>.s.sol`). Both perform,
-in one broadcast: `Empty` preflight → `KpkOivFactory` + `KpkSharesDeployer` → `CcipOivDeployer` +
-`configure`. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
+in one broadcast: `Empty` preflight → `MultiSendUnwrapper` → `KpkOivFactory` → the `KpkShares` and
+`TimelockController` mastercopies (the latter's initializer claimed immediately, so nobody else can)
+→ `KpkTimelockDeployer` → wire both into the factory → `CcipOivDeployer` + `configure`. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.

@@ -5,7 +5,7 @@ import {OivChainDeploy} from "../base/OivChainDeploy.sol";
 
 /// @title  Deploy_Worldchain
 /// @notice Per-chain OIV infra deploy for worldchain (chainId 480, verdict READY-AFTER-EMPTY).
-///         Runs Empty preflight -> KpkOivFactory + KpkSharesDeployer -> CcipOivDeployer (+configure),
+///         Runs Empty preflight -> KpkOivFactory + mastercopies + KpkTimelockDeployer -> CcipOivDeployer (+configure),
 ///         all deterministic. CCIP router/LINK below were resolved + verified on-chain and are kept
 ///         in sync with script/ccip-networks.json by test/CcipNetworksSync.t.sol; CHAIN_ID is guarded
 ///         against block.chainid in _runChain so a wrong --rpc-url cannot misconfigure the orchestrator.
