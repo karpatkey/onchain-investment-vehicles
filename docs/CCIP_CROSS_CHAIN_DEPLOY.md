@@ -81,7 +81,7 @@ neutralise that protection now that deploy is permissionless. To restore it the 
 the salt from the **whole config and the fund's shares topology**, with the base asset excluded because it legitimately differs per chain — `salt = keccak256(abi.encode(config-with-zeroed-asset, sharesChains))`. Any other config difference
 (notably `admin`) changes *every* deployed address, so an attacker cannot land a fund at another
 config's addresses; an identical config still yields identical addresses on every chain. **Off-chain
-code must predict via the orchestrator's `predictOiv(config)`** (which applies this derivation), not
+code must predict via the orchestrator's `predictOiv(config, sharesChains)`** (which applies this derivation), not
 the factory's raw `predictOivAddresses`.
 
 **Source-chain only.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
@@ -102,17 +102,19 @@ orchestrator never holds a privileged role on any deployed fund — the exec Rol
 - **Recovery / add-a-chain.** `deployEverywhere` is for the first, atomic fan-out and cannot be
   re-run with the same config (the local `deployOiv` would collide on its CREATE2 addresses). To
   extend a fund to a sidechain that was not in the original set — or to send a fresh message to one
-  whose prior delivery permanently failed — use **`dispatchTo(config, destChainIds, gasLimit)`**,
-  which performs the CCIP fan-out only (no local OIV). Pass the SAME `config` (notably the same
-  `salt`) so the stack lands at the fund's existing addresses; never re-dispatch to a chain that
-  already has the stack (its message would revert on the CREATE2 collision).
+  whose prior delivery permanently failed — use
+  **`dispatchTo(config, sharesChains, destChainIds, gasLimit)`**, which performs the CCIP fan-out
+  only (no local OIV). Pass the SAME `config` and `sharesChains` (notably the same `salt`) so the
+  stack lands at the fund's existing addresses. Re-dispatching to a chain whose stack is already
+  WIRED reverts `StackAlreadyDeployedHere` on arrival and the source-chain fee is spent anyway; a
+  chain where only some components exist is fine, since the factory adopts them.
 - **Native fees, caller-funded.** CCIP fees are paid in the source chain's **native gas** from the
   caller's `msg.value` — the orchestrator holds no fee balance. Use
-  `quoteDeployEverywhere(config, destChainIds, gasLimit)` to size the `msg.value` to send; any
+  `quoteDeployEverywhere(config, sharesChains, destChainIds, gasLimit)` to size the `msg.value`; any
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
-- **Gas limit.** `deployStack` measures at ~1.55M gas, or ~1.86M with an exec timelock configured;
-  pass `gasLimit` of ~2.2M–2.5M. CCIP caps destination execution at 3M — and that cap is exact on
+- **Gas limit.** Measured 2026-09-04: `deployStack` ~1.58M, or ~1.95M with an exec timelock
+  configured, plus the surrounding `ccipReceive` frame; pass `gasLimit` of **2.5M–2.8M**. CCIP caps destination execution at 3M — and that cap is exact on
   10 of the 20 lanes (gnosis, polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain,
   katana), verified against the live router: `getFee` reverts above it. Unspent gas is **not**
   refunded. The timelock is an EIP-1167 clone rather than a full `TimelockController` deployment
@@ -269,13 +271,18 @@ Everything is a direct contract call on the mainnet orchestrator; no Foundry scr
 
 1. Deploy + configure the orchestrator on mainnet and all target sidechains (above), and ensure
    `EMPTY_CONTRACT` is present on every target chain.
-2. **Owner**, once: seed the selected chains — **Write** `setChainSelectors([chainIds], [selectors])`
-   (values from `script/ccip-networks.json`). Confirm with **Read** `getChainIds()`.
+2. Nothing to seed. The orchestrator bakes the `chainId → CCIP selector` registry into its
+   CONSTRUCTOR, so a freshly deployed instance already knows every wired chain — confirm with
+   **Read** `getChainIds()`. Do **not** call `setChainSelectors` from `script/ccip-networks.json`:
+   that file includes `bob` and `katana`, which the baked list deliberately excludes, and adding
+   them makes the no-array `deployEverywhere` spend non-refundable fees on two dead lanes.
 3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
 4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
    the quoted fee (a little extra is fine; surplus is refunded). This deploys the OIV on mainnet and
    fans the stack out to every selected chain in one transaction. To target only a subset, use the
-   `deployEverywhere(config, destChainIds, gasLimit)` overload with an explicit chain-ID array.
+   `deployEverywhere(config, sharesChains, destChainIds, gasLimit)` overload with an explicit
+   chain-ID array. To fill a declared shares chain, or add one later, use `deployLocal` /
+   `promoteShares` on that chain — both are documented in `DEPLOYMENT.md`.
 5. Watch the [CCIP Explorer](https://ccip.chain.link); manually re-execute any failed destination
    message. To add a chain later (or re-send a permanently-failed one), call `dispatchTo`.
 

@@ -21,8 +21,8 @@ import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 /// Usage (per chain):
 ///   source .env && forge script script/DeployCcipOivDeployer.s.sol:DeployCcipOivDeployer \
 ///     --rpc-url <chain> --account $DEPLOYER_NAME --broadcast \
-///     --sig "run(address,address,address,address,address,uint64)" \
-///     <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken> 5009297550715157269
+///     --sig "run(address,address,address,address,address)" \
+///     <eoaOwner> <finalOwner> <factory> <ccipRouter> <linkToken>
 contract DeployCcipOivDeployer is OivChainDeploy {
     function run(address eoaOwner, address finalOwner, address factory, address ccipRouter, address linkToken)
         external
