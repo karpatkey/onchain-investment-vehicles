@@ -1726,6 +1726,28 @@ contract KpkOivFactoryTest is OivTestConstants {
         factory.deployStack(stackConfig);
     }
 
+    /// @notice Prediction must not answer where deployment would refuse. An unwired factory used to
+    ///         predict the shares proxy from `impl == address(0)` and hand back a plausible-looking
+    ///         address that no deployment can ever produce — and predictions are exactly what an
+    ///         operator pre-funds and allowlists against. `deployOiv` and `deployShares` already
+    ///         reverted here; the predictor did not.
+    function test_predictOivAddresses_revertsWhenNoSharesMastercopyIsWired() public {
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(timelockDeployer)
+        );
+
+        vm.expectRevert(KpkOivFactory.KpkSharesMastercopyNotSet.selector);
+        unwired.predictOivAddresses(oivConfig, address(this));
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
