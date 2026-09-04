@@ -25,16 +25,16 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0xd803bDAe72117a3Be5F78D625d4eFb9e2c264F48` |
+| `KpkOivFactory` | `0xd4B412272A0db75f4dac2d568Fa60aC4075Cf93d` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xf7FDc3aBCD9ad29081ceb0A01C2Ec0D6515b139E` |
+| `CcipOivDeployer` (orchestrator) | `0x91f9cDBfefD4678eF35EDE91fB614aC900053d10` |
 | `KpkTimelockDeployer` | `0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer`'s constructor takes the timelock mastercopy address
 (`src/KpkTimelockDeployer.sol:122`), so like the others its address depends on what it is given. `script/base/OivChainDeploy.sol` deploys it and wires it via
-`setTimelockDeployer` in the same run that wires `setKpkSharesDeployer`.
+`setTimelockDeployer` in the same run that wires `setKpkSharesMastercopy`.
 
 > **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
 > run until the rollout lands. Until then the live infra is the salt-v3 stack below.
@@ -120,7 +120,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + deployer deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesDeployer` wires the deployer in, then `transferOwnership` hands the factory to the OIV Safe.
+The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + shares mastercopy deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` wires the mastercopy in, then `transferOwnership` hands the factory to the OIV Safe. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 

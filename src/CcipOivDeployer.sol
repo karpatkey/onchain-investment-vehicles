@@ -895,7 +895,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // Checked here as well as in the factory so the more fundamental failure reports first: on a
         // chain with no stack at all, "no approval" would be a confusing thing to be told.
         if (predicted.avatarSafe.code.length == 0) revert KpkOivFactory.StackNotDeployed();
-        if (IERC20(config.sharesParams.asset).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) == 0) {
+        // MAXIMUM, not merely non-zero: `_grantApprovals` sets `type(uint256).max` on a normal
+        // deployment and asserts it, so anything less here would let a promoted fund settle a few
+        // redemptions and then start reverting — a slower version of the failure this prevents.
+        if (
+            IERC20(config.sharesParams.asset).allowance(predicted.avatarSafe, predicted.kpkSharesProxy)
+                != type(uint256).max
+        ) {
             revert ApprovalNotGranted(config.sharesParams.asset);
         }
         // The base asset is not the only one redemption can pull. `deployShares` registers every
@@ -906,7 +912,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         for (uint256 i = 0; i < config.additionalAssets.length; i++) {
             if (!config.additionalAssets[i].canRedeem) continue;
             address redeemable = config.additionalAssets[i].asset;
-            if (IERC20(redeemable).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) == 0) {
+            if (IERC20(redeemable).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) != type(uint256).max) {
                 revert ApprovalNotGranted(redeemable);
             }
         }
@@ -1051,9 +1057,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      is; it reads no state.
     function effectiveSalt(KpkOivFactory.OivConfig calldata config, SharesChain[] calldata sharesChains)
         external
-        pure
+        view
         returns (uint256)
     {
+        // Validated like every deploy and quote entry point. Without this the helper answers for
+        // duplicate, unordered or zero-valued topologies that no deployment can ever use, which is
+        // worse than not answering: the caller gets an address set that will never exist.
+        _validateSharesChains(sharesChains);
         return _effectiveConfig(config, sharesChains).salt;
     }
 
