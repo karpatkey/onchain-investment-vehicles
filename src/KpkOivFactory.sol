@@ -1015,6 +1015,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
+        // Guarded exactly as `deployOiv` and `deployShares` are. Without it an unwired factory
+        // predicted the proxy from `impl == address(0)` and returned a plausible-looking address
+        // that no deployment can ever produce — the same class of answer the timelock guard below
+        // already refuses to give.
+        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
+
         bytes32 proxySalt = _deriveSharesSalt(config.salt, caller);
         address predictedImpl = kpkSharesMastercopy;
         address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl);
@@ -1292,9 +1298,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param caller   The address calling `deployOiv`.
     /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
     function _deriveSharesSalt(uint256 baseSalt, address caller) internal pure returns (bytes32 proxySalt) {
-        // Index 5 was the per-fund implementation's salt and is deliberately left unused, so the
-        // proxy's salt — and therefore every existing prediction of it — is unaffected by the move to
-        // a shared mastercopy.
+        // Index 5 was the per-fund implementation's salt and is deliberately left unused, so this
+        // SALT is unchanged by the move to a shared mastercopy. The proxy's ADDRESS is not: the
+        // ERC-1967 init code embeds `impl`, which moved from a per-fund implementation to the shared
+        // mastercopy, so every prediction of the proxy changed with it. Keeping index 6 costs
+        // nothing and avoids reusing a retired index; it preserves no prediction.
         proxySalt = keccak256(abi.encode(caller, baseSalt, uint8(6)));
     }
 
