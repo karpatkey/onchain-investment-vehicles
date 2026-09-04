@@ -10,8 +10,8 @@ import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDep
 
 /// @notice Minimal view of OpenZeppelin `AccessControl`, used to inspect a KpkShares proxy's
 ///         `DEFAULT_ADMIN_ROLE` holders without importing `KpkShares` (which would pull its full
-///         creation bytecode into this contract's runtime — the same rationale as
-///         `IKpkSharesDeployer` in `KpkOivFactory.sol`).
+///         creation bytecode into this contract's runtime — the same rationale as the local
+///         `IRoles` / `ISafe` interfaces the factory declares instead of importing Zodiac and Safe).
 interface IAccessControlView {
     /// @notice Returns true if `account` holds `role`.
     function hasRole(bytes32 role, address account) external view returns (bool);
@@ -147,9 +147,27 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         milliseconds) permanently freezing a fund's governance behind a decade-long delay.
     uint256 public constant MIN_DELAY_CAP = 30 days;
 
-    /// @notice Upper bound on the length of the `proposers` and `cancellers` arrays. Validation is
-    ///         O(n^2) (duplicate detection), so this bounds worst-case gas.
-    uint256 public constant MAX_ROLE_MEMBERS = 20;
+    /// @notice Upper bound on the length of the `proposers` and `cancellers` arrays.
+    /// @dev    Set by the CCIP destination gas cap, not by validation cost. `oivToStackConfig`
+    ///         forwards `execTimelock` verbatim to every sidechain, so these arrays are provisioned
+    ///         again inside each destination's `deployStack` — and ten of the twenty live lanes cap
+    ///         destination execution at exactly 3,000,000 gas.
+    ///
+    ///         Measured 2026-09-04 on a mainnet fork, timelocked `deployStack` with N proposers and
+    ///         N cancellers: N=0 1.79M, N=4 2.05M, N=8 2.38M, N=10 2.56M, N=12 2.73M, N=14 2.91M,
+    ///         N=20 3.52M — roughly 86k per proposer+canceller pair. At the previous bound of 20 a
+    ///         config that validation ACCEPTED could not be delivered: `deployEverywhere` succeeds
+    ///         locally and spends every CCIP fee on the source chain, the destination then runs out
+    ///         of gas, `dispatchTo` cannot be given a limit above 3M on those lanes, and because the
+    ///         sidechain salts derive from the orchestrator as `msg.sender` no EOA can reproduce the
+    ///         fund's canonical addresses by calling `deployStack` directly. The fund could never
+    ///         exist on those chains at its canonical addresses at all.
+    ///
+    ///         10 leaves ~445k of margin (~15%). Pinned by
+    ///         `test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap`, which measures the
+    ///         largest set this constant permits rather than a typical one. This is a ceiling only —
+    ///         there is deliberately no floor on either array.
+    uint256 public constant MAX_ROLE_MEMBERS = 10;
 
     // ── Events ────────────────────────────────────────────────────────────────
 

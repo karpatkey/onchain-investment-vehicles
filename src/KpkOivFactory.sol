@@ -485,6 +485,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         regardless of wiring status.
     error KpkSharesMastercopyNotSet();
 
+    /// @notice Thrown when a mastercopy address has no code. Mirrors `KpkTimelockDeployer`'s guard
+    ///         of the same name, for the same reason: the value decides what every future fund on
+    ///         this chain delegates to.
+    error InvalidMastercopy();
+
     /// @notice Thrown when `deployShares` is called for a fund whose operational stack does not exist
     ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
     ///         the stack first is also what turns a pre-landed stack from a denial into a
@@ -658,6 +663,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _kpkSharesMastercopy New address. Must not be zero.
     function setKpkSharesMastercopy(address _kpkSharesMastercopy) external onlyOwner {
         if (_kpkSharesMastercopy == address(0)) revert ZeroAddress();
+        // Codeless is rejected as well as zero. This setter decides the implementation every future
+        // fund on this chain delegates to, and a codeless value fails only later, inside
+        // `deployOiv`, where `ERC1967Utils._setImplementation` reverts. `KpkTimelockDeployer`'s
+        // constructor already guards its own mastercopy this way (`InvalidMastercopy`); the same
+        // hazard deserves the same check here.
+        if (_kpkSharesMastercopy.code.length == 0) revert InvalidMastercopy();
         kpkSharesMastercopy = _kpkSharesMastercopy;
         emit KpkSharesMastercopyUpdated(_kpkSharesMastercopy);
     }
@@ -1051,7 +1062,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     /// @dev Returns `timelockDeployer`, reverting if it has not been wired. Mirrors the
-    ///      `KpkSharesDeployerNotSet` guard: the factory may be constructed with a zero deployer so
+    ///      `KpkSharesMastercopyNotSet` guard: the factory may be constructed with a zero deployer so
     ///      its CREATE2 address does not depend on it, and only deployments that actually configure a
     ///      timelock require it to have been set since.
     function _requireTimelockDeployer() internal view returns (address deployer) {
@@ -1490,8 +1501,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         IRoles(mod).setTransactionUnwrapper(MULTI_SEND_CALLS_ONLY, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
     }
 
-    /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy` (each fund
-    ///      has an isolated upgrade surface) and an ERC-1967 UUPS proxy pointing to it.
+    /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy`. Sharing one
+    ///      implementation costs no isolation: `upgradeToAndCall` writes the ERC-1967 slot of the
+    ///      CALLING proxy, so each fund still controls its own upgrades.
     ///      Role setup sequence:
     ///      1. Factory temporarily holds DEFAULT_ADMIN_ROLE (set during `initialize`).
     ///      2. If additional assets are provided, factory also temporarily holds OPERATOR to call
@@ -1529,8 +1541,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // necessarily chain-specific, and anything in the constructor data is inside the CREATE2 init
         // code and therefore inside the address. With it removed, the init code is
         // `creationCode ++ abi.encode(impl, "")` — and `impl` is itself chain-independent, since
-        // `KpkShares` takes no constructor arguments and `KpkSharesDeployer` sits at one address on
-        // every chain. Nothing chain-specific is left.
+        // `KpkShares` takes no constructor arguments, so its CREATE2 address is the same on every
+        // chain. Note what now carries that property: it used to rest on `KpkSharesDeployer` sitting
+        // at one address everywhere, and that contract no longer exists. It rests instead on
+        // `kpkSharesMastercopy` being wired to the same address on every chain, which the deploy
+        // script's post-flight `require` is what actually enforces — there is no on-chain binding.
+        // Nothing chain-specific is left in the init code either way.
         //
         // The two statements are atomic within this call, so there is no block in which the proxy
         // exists uninitialized and no window for anyone to front-run `initialize`. (The implementation

@@ -83,9 +83,13 @@ CONTRACTS = {
             "0000000000000000000000000000000000000000000000000000000000000000"
         ),
     },
+    # HISTORICAL, and no longer re-runnable from this tree: `src/KpkSharesDeployer.sol` was deleted
+    # when the factory moved to shared mastercopies. This contract is part of the LIVE salt-v3 stack
+    # and is already verified 30/30, so the entry is kept as the record of what was verified. To
+    # re-verify it, check out a commit that still contains the source.
     "kpkSharesDeployer": {
         "address": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
-        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",
+        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",  # deleted from HEAD
         "ctor": "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f",
     },
     "ccipOivDeployer": {
