@@ -373,9 +373,11 @@ contract CcipOivDeployerTest is OivTestConstants {
     ///         promotion then succeeded against a stack that was four-fifths absent: a shares token at
     ///         the fund's canonical address whose portfolio Safe has no execution path.
     ///
-    ///         The exec Roles Modifier's avatar is the check that cannot be forged — a squatted
-    ///         modifier is initialized pointing at the factory, and only a completed stack deployment
-    ///         repoints it at the Avatar Safe.
+    ///         This etches ONLY the Avatar Safe, so it stops at the `managerSafe.code.length`
+    ///         clause and does not reach the `execRolesModifier.avatar()` check — deleting that check
+    ///         leaves this test green. The avatar clause is pinned instead by
+    ///         `KpkOivFactoryTest.test_deployShares_refusesAPristineSquattedStack`, which squats all
+    ///         five components through the real third-party factories so the avatar is what rejects.
     function test_deployShares_revertsOnASquattedButUnwiredStack() public {
         CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
         KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
@@ -464,6 +466,41 @@ contract CcipOivDeployerTest is OivTestConstants {
         vm.prank(oivConfig.admin);
         KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
         assertGt(promoted.kpkSharesProxy.code.length, 0, "promotion succeeds once the approval exists");
+    }
+
+    /// @notice The approval precondition must cover every asset redemption can pull, not just the
+    ///         base one. `KpkOivFactory.deployShares` registers `additionalAssets` but grants no
+    ///         allowances — only `deployOiv` calls `_grantApprovals` — and settlement transfers
+    ///         `request.asset` out of the Avatar Safe. Checking the base asset alone therefore left
+    ///         the exact "subscribed but cannot redeem" state the precondition exists to prevent,
+    ///         one asset over.
+    function test_promoteShares_requiresApprovalForEveryRedeemableAsset() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+
+        // A real mainnet ERC-20, so the only thing that can reject promotion is the missing
+        // allowance rather than an incidental failure inside `initialize`.
+        address redeemable = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({asset: redeemable, canDeposit: false, canRedeem: true});
+
+        orchestrator.deployLocal(cfg, topology);
+
+        KpkOivFactory.OivInstance memory p = orchestrator.predictOiv(cfg, topology);
+        vm.prank(p.avatarSafe);
+        IERC20(cfg.sharesParams.asset).approve(p.kpkSharesProxy, type(uint256).max);
+
+        // Base asset approved, the redeemable one not.
+        vm.prank(cfg.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, redeemable));
+        orchestrator.promoteShares(cfg, topology);
+
+        vm.prank(p.avatarSafe);
+        IERC20(redeemable).approve(p.kpkSharesProxy, type(uint256).max);
+
+        vm.prank(cfg.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(cfg, topology);
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "promotes once every redeemable asset is approved");
     }
 
     function _fee(uint256 n) internal pure returns (uint256) {

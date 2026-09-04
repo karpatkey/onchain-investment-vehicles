@@ -408,9 +408,12 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///                       `StackConfig` sent to each sidechain is derived via
     ///                       `factory.oivToStackConfig` (the factory's own mapping), so the five
     ///                       operational-stack addresses match the local OIV.
-    /// @param gasLimit       Destination `ccipReceive` gas limit (must cover `deployStack`, ~1.55M,
-    ///                       or ~1.86M with an exec timelock configured; ~1.55M
-    ///                       measured; a 2.0M–2.2M value is recommended). Capped at 3M by CCIP.
+    /// @param gasLimit       Destination `ccipReceive` gas limit. Measured 2026-09-04 on this
+    ///                       branch: `deployStack` ~1.58M, ~1.95M with an exec timelock, and the
+    ///                       destination pays for the whole `ccipReceive` frame around that (payload
+    ///                       decode, the shares-chain loop, event). **Pass at least 2.5M**; the
+    ///                       previous 2.0M floor left under 3% headroom on a timelocked fund.
+    ///                       Capped at 3M by CCIP.
     ///                       The measured figure rose from ~1.38M when the factory began registering
     ///                       MultiSend unwrap adapters (six `setTransactionUnwrapper` writes across
     ///                       the three Roles Modifiers, ~155k gas). An under-sized `gasLimit` is not
@@ -894,6 +897,18 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         if (predicted.avatarSafe.code.length == 0) revert KpkOivFactory.StackNotDeployed();
         if (IERC20(config.sharesParams.asset).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) == 0) {
             revert ApprovalNotGranted(config.sharesParams.asset);
+        }
+        // The base asset is not the only one redemption can pull. `deployShares` registers every
+        // entry in `additionalAssets` but grants no allowances at all (only `deployOiv` calls
+        // `_grantApprovals`), and settlement transfers `request.asset` — any asset registered with
+        // `canRedeem` — out of the Avatar Safe. Checking only the base asset would leave exactly the
+        // hole this precondition exists to close, one asset over.
+        for (uint256 i = 0; i < config.additionalAssets.length; i++) {
+            if (!config.additionalAssets[i].canRedeem) continue;
+            address redeemable = config.additionalAssets[i].asset;
+            if (IERC20(redeemable).allowance(predicted.avatarSafe, predicted.kpkSharesProxy) == 0) {
+                revert ApprovalNotGranted(redeemable);
+            }
         }
 
         instance = factory.deployShares(eff);

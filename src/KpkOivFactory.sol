@@ -505,6 +505,19 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         pinned: test_adopt_refusesToTouchACompletedFund
     error StackAlreadyDeployedHere();
 
+    /// @notice Thrown when a Safe already at a predicted address does not match the configuration
+    ///         that address encodes — different owners, threshold, or module set.
+    /// @dev    Adoption is safe only while a pre-landed component is still in the state its
+    ///         initializer produced. Two of the three kinds cannot drift: the Roles Modifiers are
+    ///         factory-owned with no modules, and the Avatar Safe's sole owner is the always-
+    ///         reverting `Empty`. The MANAGER Safe can: its owners are live keys from the config, so
+    ///         a squatted one is a working multisig from the moment it exists, and a single
+    ///         compromised signer could lower its threshold or enable a module on it before the fund
+    ///         ever reaches that chain. Adopting that silently would hand `MANAGER_ROLE` and the
+    ///         shares `OPERATOR` role to a multisig the config never described — where before
+    ///         adoption existed, the same squat merely reverted the deployment.
+    error AdoptedSafeMismatch(address safe);
+
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
     error TimelockDeployerNotSet();
@@ -1346,7 +1359,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // pinned: test_premise_squattedAvatarSafeIsBornFactoryHeaded
         // pinned: test_adopt_deployOivAdoptsASquattedAvatarSafe
         safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
-        if (safe.code.length != 0) return safe;
+        if (safe.code.length != 0) {
+            _requireSafeMatchesConfig(safe, owners, threshold, modulesToEnable);
+            return safe;
+        }
 
         bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
 
@@ -1356,6 +1372,38 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         );
 
         safe = ISafeProxyFactory(safeProxyFactory).createProxyWithNonce(safeSingleton, initializer, nonce);
+    }
+
+    /// @dev Asserts an adopted Safe still matches the configuration its CREATE2 address encodes.
+    ///      The module set is compared exactly rather than with `isModuleEnabled`, because the
+    ///      dangerous drift is an ADDED module — a module can execute on the Safe unconditionally,
+    ///      so an extra one is full control. `SafeModuleSetup` enables in array order and each
+    ///      insertion goes to the front, so the live list is the reverse of `modulesToEnable`.
+    function _requireSafeMatchesConfig(
+        address safe,
+        address[] memory owners,
+        uint256 threshold,
+        address[] memory modulesToEnable
+    ) internal view {
+        if (ISafe(safe).getThreshold() != threshold) revert AdoptedSafeMismatch(safe);
+        // `setupOwners` appends, so owners come back in configuration order; `enableModule`
+        // prepends, so modules come back reversed. Both orders are pinned by
+        // test_premise_squattedAvatarSafeIsBornFactoryHeaded and test_adopt_rejectsAMutatedSafe.
+        if (!_matches(ISafe(safe).getOwners(), owners, false)) revert AdoptedSafeMismatch(safe);
+
+        (address[] memory live, address next) =
+            ISafe(safe).getModulesPaginated(SENTINEL_MODULES, modulesToEnable.length + 1);
+        if (next != SENTINEL_MODULES) revert AdoptedSafeMismatch(safe);
+        if (!_matches(live, modulesToEnable, true)) revert AdoptedSafeMismatch(safe);
+    }
+
+    /// @dev Element-wise comparison, optionally against `expected` read backwards.
+    function _matches(address[] memory live, address[] memory expected, bool reversed) internal pure returns (bool) {
+        if (live.length != expected.length) return false;
+        for (uint256 i = 0; i < live.length; i++) {
+            if (live[i] != expected[reversed ? expected.length - 1 - i : i]) return false;
+        }
+        return true;
     }
 
     // ── Internal: wiring helpers ────────────────────────────────────────────────
@@ -1559,9 +1607,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
     ///      Reverts with `ZeroAddress`      if any owner or `execRolesMod.finalOwner` is zero.
     ///      Reverts with `DuplicateOwner`   if `managerSafe.owners` contains duplicates.
-    function _validateStackConfig(StackConfig calldata config) internal pure {
+    function _validateStackConfig(StackConfig calldata config) internal view {
         _validateManagerOwners(config.managerSafe);
-        if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
+        // `address(this)` is rejected alongside zero: the factory is every modifier's TEMPORARY
+        // owner during wiring, so a `finalOwner` of the factory makes the completed stack
+        // indistinguishable from an unwired one — `StackAlreadyDeployedHere`'s ownership signal
+        // would read "adoptable" on a live fund, and the modifier would be factory-owned forever.
+        if (config.execRolesMod.finalOwner == address(0) || config.execRolesMod.finalOwner == address(this)) {
+            revert ZeroAddress();
+        }
     }
 
     /// @dev Validates an `OivConfig` before deployment.
@@ -1577,9 +1631,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `InvalidSharesParams` if `sharesParams.feeReceiver`,
     ///                                        `sharesParams.subscriptionRequestTtl`, or
     ///                                        `sharesParams.redemptionRequestTtl` is unset.
-    function _validateOivConfig(OivConfig calldata config) internal pure {
+    function _validateOivConfig(OivConfig calldata config) internal view {
         _validateManagerOwners(config.managerSafe);
-        if (config.admin == address(0)) revert ZeroAddress();
+        // Rejected for the same reason as `finalOwner`, plus one of its own: `deployOiv` grants
+        // the shares admin role to the factory and then renounces it, so an `admin` of the factory
+        // leaves the token with no `DEFAULT_ADMIN_ROLE` holder at all.
+        if (config.admin == address(0) || config.admin == address(this)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
         // Mirror KpkShares._validateInitializationParams so misconfiguration fails fast at the
         // factory level instead of deep inside the proxy initializer.
