@@ -103,7 +103,7 @@ contract OivConfigReaderTest is Test {
     ///         that makes the salt origin-dependent, which is the very defect the salt-bound topology
     ///         exists to remove. The direct factory path has no such problem and keeps its default.
     function test_buildSharesChains_requiresAnExplicitTopology() public {
-        string memory legacy = vm.readFile("script/ccip-test-fund-config.json");
+        string memory legacy = vm.readFile("test/fixtures/no-shares-chains.config.json");
         vm.expectRevert(
             bytes(
                 "config: .sharesChains is required for the CCIP path - a per-chain default would make the salt origin-dependent"
@@ -114,7 +114,7 @@ contract OivConfigReaderTest is Test {
 
     /// @dev A config predating these fields must keep deploying exactly as it did.
     function test_absentBlocksMeanNoTimelockAndNoRestriction() public {
-        string memory legacy = vm.readFile("script/ccip-test-fund-config.json");
+        string memory legacy = vm.readFile("test/fixtures/no-shares-chains.config.json");
         KpkOivFactory.OivConfig memory c = reader.oivConfig(legacy);
 
         assertEq(c.execTimelock.minDelay, 0, "absent block is the no-timelock sentinel");
@@ -219,12 +219,12 @@ contract OivConfigReaderTest is Test {
     ///         cannot give: `_shouldDeployShares` answers "true" for a config with no
     ///         `.sharesChains`, which is the right default for the explicit `deployOiv` /
     ///         `deployStack` paths and the wrong one for `deploy`. Run across 19 chains with a
-    ///         silent config — and the repo ships one, `script/ccip-test-fund-config.json` — it
+    ///         silent config — and the repo ships one, `test/fixtures/no-shares-chains.config.json` — it
     ///         would have put a live shares token on every chain, which is precisely the outcome
     ///         chain selection exists to prevent. The guard fires before any broadcast.
     function test_deploy_refusesAConfigThatDoesNotSayWhichChainsGetShares() public {
         DeployOiv script = new DeployOiv();
-        string memory path = "script/ccip-test-fund-config.json";
+        string memory path = "test/fixtures/no-shares-chains.config.json";
 
         // Guard the premise: if this file ever gains a `.sharesChains` key, this test would pass
         // vacuously, so assert the condition it depends on.

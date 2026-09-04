@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkShares} from "src/kpkShares.sol";
@@ -10,7 +11,6 @@ import {
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
@@ -1329,9 +1329,20 @@ contract KpkOivFactoryTest is OivTestConstants {
         address stranger = makeAddr("stranger");
         // Constructed on its own line: inline in the argument list it would consume the prank.
         address mastercopy = address(new KpkShares());
+        // Pinned to the authorization error, not a bare `expectRevert`: this setter now also
+        // rejects zero and codeless values, so a bare expectRevert would pass for those reasons and
+        // assert nothing about access control.
         vm.prank(stranger);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
         factory.setKpkSharesMastercopy(mastercopy);
+
+        // And the positive direction, which had no coverage at all: the owner can set it, and the
+        // event fires.
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit KpkOivFactory.KpkSharesMastercopyUpdated(mastercopy);
+        vm.prank(factoryOwner);
+        factory.setKpkSharesMastercopy(mastercopy);
+        assertEq(factory.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
     }
 
     function test_setTimelockDeployer_emitsEvent() public {
@@ -1746,6 +1757,53 @@ contract KpkOivFactoryTest is OivTestConstants {
 
         vm.expectRevert(KpkOivFactory.KpkSharesMastercopyNotSet.selector);
         unwired.predictOivAddresses(oivConfig, address(this));
+    }
+
+    /// @dev N strictly-ascending addresses, for measuring how role-set size drives deploy gas.
+    function _ascending(uint256 n, uint160 base) internal pure returns (address[] memory out) {
+        out = new address[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = address(base + uint160(i));
+        }
+    }
+
+    /// @dev Measures a timelocked `deployStack` with `n` proposers and `n` cancellers.
+    function _timelockedStackGas(uint256 n, uint256 salt) internal returns (uint256) {
+        KpkOivFactory.StackConfig memory cfg = factory.oivToStackConfig(oivConfig);
+        cfg.salt = salt;
+        cfg.execTimelock =
+            TimelockParams({minDelay: 2 days, proposers: _ascending(n, 0x1000), cancellers: _ascending(n, 0x9000)});
+
+        uint256 before = gasleft();
+        factory.deployStack(cfg);
+        return before - gasleft();
+    }
+
+    /// @notice THE WORST PERMITTED CONFIG must still fit the CCIP destination cap. Sampling a
+    ///         2-proposer/2-canceller timelock proves nothing about the config space the contract
+    ///         actually accepts: role provisioning costs roughly 83k gas per proposer+canceller
+    ///         pair, so the ceiling is set by `MAX_ROLE_MEMBERS`, not by the typical case.
+    ///
+    ///         Exceeding it is unrecoverable rather than merely inconvenient. `deployEverywhere`
+    ///         succeeds locally and spends every CCIP fee on the source chain; the destination then
+    ///         runs out of gas, `dispatchTo` cannot be given a `gasLimit` above 3M on the ten lanes
+    ///         where that cap is exact, and the sidechain salts derive from the orchestrator as
+    ///         `msg.sender`, so no EOA can reproduce the fund's canonical addresses by calling
+    ///         `deployStack` directly. The fund can then never exist on those chains at its
+    ///         canonical addresses at all.
+    function test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap() public {
+        uint256 max = timelockDeployer.MAX_ROLE_MEMBERS();
+        uint256 spent = _timelockedStackGas(max, 777);
+        assertLt(spent, 3_000_000, "the largest role set MAX_ROLE_MEMBERS permits must still fit the 3M cap");
+    }
+
+    /// @notice The setter decides what every future fund on this chain delegates to, so a codeless
+    ///         value must fail here rather than later inside `deployOiv`. `KpkTimelockDeployer`
+    ///         already guarded its own mastercopy this way; this one did not.
+    function test_setKpkSharesMastercopy_rejectsACodelessAddress() public {
+        vm.prank(factoryOwner);
+        vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+        factory.setKpkSharesMastercopy(makeAddr("notAContract"));
     }
 
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat

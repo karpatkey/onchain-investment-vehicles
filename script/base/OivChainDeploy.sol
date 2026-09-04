@@ -308,6 +308,23 @@ abstract contract OivChainDeploy is Script {
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode));
             require(ok, "timelock mastercopy CREATE2 deploy failed");
             console.log("[OK]   Timelock mastercopy deployed at:", timelockMastercopy);
+
+            // `TimelockControllerUpgradeable` has no constructor, so nothing calls
+            // `_disableInitializers()` and its `initialize` stays open at this published, canonical
+            // address. Clones are unaffected — they get their own storage — so an outsider claiming
+            // it is not a fund compromise, but it would leave a fully functional
+            // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
+            // publishes as kpk infrastructure. Claim the initializer here with NO roles at all: OZ
+            // grants no admin when `admin == address(0)`, and empty proposer/executor arrays leave
+            // nothing else. Done inside this branch only, so a re-run stays idempotent — a freshly
+            // CREATE2'd contract is definitively uninitialized, which is what makes it safe to
+            // require success.
+            address[] memory noMembers = new address[](0);
+            (bool claimed,) = timelockMastercopy.call(
+                abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembers, noMembers, address(0)))
+            );
+            require(claimed, "timelock mastercopy initializer could not be claimed");
+            console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
         }
