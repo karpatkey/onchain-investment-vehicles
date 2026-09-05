@@ -25,15 +25,24 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x5912BED37F97ABC12Dc4040b5cCAC28f23877C3C` |
-| `KpkSharesDeployer` | `0x1b9884AE02F2b9f14116B0Cc3247000Efe7046b9` |
-| `CcipOivDeployer` (orchestrator) | `0x6BeEB61CA5925A9C2091F3Ae606f0C8EE5479aAF` |
-| `KpkTimelockDeployer` | `0x1fb50B0e3F85050e3c40EBD3F78Ab8111Ab44094` |
+| `KpkOivFactory` | `0x72d50AccC2514809da4a00Bed629DA1F75513B71` |
+| `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
+| `CcipOivDeployer` (orchestrator) | `0xEbd6c0EA7cDCcbA9eEE3FC1e8536ccA958524Ac3` |
+| `KpkTimelockDeployer` | `0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
-`KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its address does not
-depend on the deployer EOA. `script/base/OivChainDeploy.sol` deploys it and wires it via
-`setTimelockDeployer` in the same run that wires `setKpkSharesDeployer`.
+`KpkSharesDeployer` is gone from this table because the contract is deleted: every fund's shares
+proxy now points at the chain's shared `KpkShares` mastercopy. Two mastercopy rows take its place,
+and both must exist BEFORE `KpkTimelockDeployer`, whose constructor rejects a codeless mastercopy.
+
+The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only argument is one
+of them, so those three are independent of the deployer EOA — the same on every chain for anyone.
+The factory and the orchestrator are not. `script/base/OivChainDeploy.sol` deploys all of them and
+wires them via `setKpkSharesMastercopy` and `setTimelockDeployer` in the same run.
+
+Every address above is pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol),
+which fails if this table drifts from what the deploy path would produce.
 
 > **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
 > run until the rollout lands. Until then the live infra is the salt-v3 stack below.

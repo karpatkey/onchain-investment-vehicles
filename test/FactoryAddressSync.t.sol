@@ -62,19 +62,28 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
     // 19-chain rollout. When they fail, re-derive from a CLEAN CLONE (a drifted working tree
     // produces different values) and update both the constants here and the doc table.
 
-    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0x1f5a33DdAC720874664d13a7804Cd1c43A33Ba41;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0x918E20DC102424364A72be3d9341C34f74Dbc556;
+    address internal constant DOCUMENTED_SHARES_MASTERCOPY = 0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC;
+    address internal constant DOCUMENTED_TIMELOCK_MASTERCOPY = 0x9760280fED9e760668186334f88b6d763A7d976E;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0xEbd6c0EA7cDCcbA9eEE3FC1e8536ccA958524Ac3;
 
-    /// @dev `KpkTimelockDeployer` takes no constructor arguments, so unlike the other three its
-    ///      address is independent of the deployer EOA — the same on every chain for anyone.
-    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0x1fb50B0e3F85050e3c40EBD3F78Ab8111Ab44094;
+    /// @dev The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only
+    ///      argument is one of them, so unlike the factory and orchestrator these three are
+    ///      independent of the deployer EOA — the same on every chain for anyone.
+    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc;
 
-    function test_documentedSharesDeployerAddressMatchesDeployPath() public pure {
-        address factory = _predictFactory(CANONICAL_EOA_OWNER);
+    function test_documentedSharesMastercopyAddressMatchesDeployPath() public pure {
         assertEq(
-            _create2Address(SALT_DEPLOYER, _deployerInitCode(factory)),
-            DOCUMENTED_SHARES_DEPLOYER,
-            "KpkSharesDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+            _create2Address(SALT_SHARES_MASTERCOPY, _sharesMastercopyInitCode()),
+            DOCUMENTED_SHARES_MASTERCOPY,
+            "KpkShares mastercopy prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
+
+    function test_documentedTimelockMastercopyAddressMatchesDeployPath() public pure {
+        assertEq(
+            _create2Address(SALT_TIMELOCK_MASTERCOPY, _timelockMastercopyInitCode()),
+            DOCUMENTED_TIMELOCK_MASTERCOPY,
+            "Timelock mastercopy prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
         );
     }
 
