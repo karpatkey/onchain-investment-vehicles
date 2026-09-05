@@ -95,7 +95,7 @@ CREATE2 collision).
 
 - **Async, not atomic** — monitor delivery on the [CCIP Explorer](https://ccip.chain.link); a failed
   message enters the FAILED state and is manually re-executable within its retry window.
-- **`gasLimit`** must cover `deployStack` on the destination (~1.55M measured; ~2.0M–2.2M
+- **`gasLimit`** must cover `deployStack` on the destination (~1.55M measured, ~1.86M with an exec timelock; ~2.2M–2.5M
   recommended; CCIP caps destination execution at 3M). The figure rose from ~1.38M when the factory
   began registering MultiSend unwrap adapters (~155k gas), so the older ~1.8M advice is now too
   close to the floor. Under-sizing is not recoverable: the CCIP fee is spent on the source chain and
