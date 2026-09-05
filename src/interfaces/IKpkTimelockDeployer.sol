@@ -5,7 +5,7 @@ pragma solidity ^0.8.0;
 /// @dev    Declared in its own file so `KpkOivFactory` can reference the struct without importing
 ///         `KpkTimelockDeployer` (which imports `TimelockController` and would pull its creation
 ///         bytecode into the factory's runtime, exceeding EIP-170). Same rationale as the local
-///         `IKpkSharesDeployer` interface in `KpkOivFactory.sol`.
+///         `IRoles` / `ISafe` interfaces the factory declares rather than importing Zodiac and Safe.
 ///
 ///         `executors` and `admin` are absent by design: the deployer forces open execution and
 ///         self-administration respectively, and neither is caller-controllable.

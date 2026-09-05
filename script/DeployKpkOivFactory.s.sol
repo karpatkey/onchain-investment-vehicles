@@ -69,11 +69,11 @@ contract DeployKpkOivFactory is OivChainDeploy {
         KpkOivFactory factory = KpkOivFactory(predictedFactory);
         if (factory.kpkSharesMastercopy() == address(0)) {
             factory.setKpkSharesMastercopy(predictedDeployer);
-            console.log("[OK]   factory.kpkSharesDeployer set");
+            console.log("[OK]   factory.kpkSharesMastercopy set");
         } else if (factory.kpkSharesMastercopy() == predictedDeployer) {
-            console.log("[SKIP] factory.kpkSharesDeployer already wired");
+            console.log("[SKIP] factory.kpkSharesMastercopy already wired");
         } else {
-            revert("factory.kpkSharesDeployer is set to an unexpected address");
+            revert("factory.kpkSharesMastercopy is set to an unexpected address");
         }
 
         if (factory.owner() == eoaOwner && eoaOwner != finalOwner) {
@@ -107,7 +107,7 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("==========================================");
         console.log("[OK] Deployment verified");
         console.log("KpkOivFactory:     ", predictedFactory);
-        console.log("KpkSharesDeployer: ", predictedDeployer);
+        console.log("KpkShares mastercopy: ", predictedDeployer);
         console.log("Owner:             ", finalOwner);
         console.log("==========================================");
     }

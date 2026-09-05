@@ -6,9 +6,11 @@ see [FUND_DEPLOYMENT_FLOW.md](FUND_DEPLOYMENT_FLOW.md); for the full design, sec
 supported-network list, see [CCIP_CROSS_CHAIN_DEPLOY.md](CCIP_CROSS_CHAIN_DEPLOY.md).
 
 > **Assumed already deployed & configured** on every target chain (all at the same address):
-> `KpkOivFactory`, `KpkSharesDeployer`, the `Empty` contract, and `CcipOivDeployer` — the latter
-> `configure`d with each chain's CCIP router and the mainnet chain selector (the LINK token is
-> optional). CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
+> `KpkOivFactory`, the `KpkShares` mastercopy, `KpkTimelockDeployer` and its `TimelockController`
+> mastercopy, the `Empty` contract, and `CcipOivDeployer` — the latter `configure`d with each chain's
+> CCIP router (the LINK token is optional). There is no mainnet chain selector to configure any more:
+> the `chainId → selector` registry is baked in at construction, and any wired chain can originate a
+> fan-out. CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
 > pre-funding is required. This doc is only about deploying a **fund** through them.
 
 ## End-to-end overview

@@ -308,6 +308,23 @@ abstract contract OivChainDeploy is Script {
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode));
             require(ok, "timelock mastercopy CREATE2 deploy failed");
             console.log("[OK]   Timelock mastercopy deployed at:", timelockMastercopy);
+
+            // `TimelockControllerUpgradeable` has no constructor, so nothing calls
+            // `_disableInitializers()` and its `initialize` stays open at this published, canonical
+            // address. Clones are unaffected — they get their own storage — so an outsider claiming
+            // it is not a fund compromise, but it would leave a fully functional
+            // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
+            // publishes as kpk infrastructure. Claim the initializer here with NO roles at all: OZ
+            // grants no admin when `admin == address(0)`, and empty proposer/executor arrays leave
+            // nothing else. Done inside this branch only, so a re-run stays idempotent — a freshly
+            // CREATE2'd contract is definitively uninitialized, which is what makes it safe to
+            // require success.
+            address[] memory noMembers = new address[](0);
+            (bool claimed,) = timelockMastercopy.call(
+                abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembers, noMembers, address(0)))
+            );
+            require(claimed, "timelock mastercopy initializer could not be claimed");
+            console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
         }
@@ -346,11 +363,8 @@ abstract contract OivChainDeploy is Script {
         }
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         if (orch.owner() == eoaOwner) {
-            if (
-                orch.router() != ccipRouter || orch.linkToken() != linkToken
-                    || orch.mainnetChainSelector() != MAINNET_SELECTOR
-            ) {
-                orch.configure(ccipRouter, linkToken, MAINNET_SELECTOR);
+            if (orch.router() != ccipRouter || orch.linkToken() != linkToken) {
+                orch.configure(ccipRouter, linkToken);
                 console.log("[OK]   orchestrator configured");
             }
             if (eoaOwner != finalOwner) orch.transferOwnership(finalOwner);
@@ -365,8 +379,7 @@ abstract contract OivChainDeploy is Script {
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
 
-        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken
-            && orch.mainnetChainSelector() == MAINNET_SELECTOR;
+        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken;
         if (!configured) {
             // The orchestrator is owned by finalOwner but not (correctly) configured — only reachable
             // on a re-run of a chain whose first deploy handed off ownership before `configure()` landed
@@ -374,10 +387,9 @@ abstract contract OivChainDeploy is Script {
             // Surface the exact remaining action instead of a bare revert, and do NOT print "Chain
             // ready" — so this is an [ACTION REQUIRED], not a false-positive success.
             console.log("[ACTION REQUIRED] orchestrator deployed but NOT configured; finalOwner must call");
-            console.log("  configure(router, link, mainnetSelector):");
+            console.log("  configure(router, link):");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
-            console.log("  selector:", MAINNET_SELECTOR);
             return;
         }
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");

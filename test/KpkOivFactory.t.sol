@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkShares} from "src/kpkShares.sol";
@@ -10,10 +11,12 @@ import {
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {KpkShares} from "src/kpkShares.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
+import {IModuleProxyFactory} from "src/interfaces/IModuleProxyFactory.sol";
+import {ISafeProxyFactory} from "src/interfaces/ISafeProxyFactory.sol";
+import {ISafeModuleSetup} from "src/interfaces/ISafeModuleSetup.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 
 /// @notice Fork tests for KpkOivFactory against mainnet Safe and Zodiac contracts.
@@ -1326,9 +1329,20 @@ contract KpkOivFactoryTest is OivTestConstants {
         address stranger = makeAddr("stranger");
         // Constructed on its own line: inline in the argument list it would consume the prank.
         address mastercopy = address(new KpkShares());
+        // Pinned to the authorization error, not a bare `expectRevert`: this setter now also
+        // rejects zero and codeless values, so a bare expectRevert would pass for those reasons and
+        // assert nothing about access control.
         vm.prank(stranger);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
         factory.setKpkSharesMastercopy(mastercopy);
+
+        // And the positive direction, which had no coverage at all: the owner can set it, and the
+        // event fires.
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit KpkOivFactory.KpkSharesMastercopyUpdated(mastercopy);
+        vm.prank(factoryOwner);
+        factory.setKpkSharesMastercopy(mastercopy);
+        assertEq(factory.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
     }
 
     function test_setTimelockDeployer_emitsEvent() public {
@@ -1357,6 +1371,462 @@ contract KpkOivFactoryTest is OivTestConstants {
         oivConfig.execTimelock = _timelockParams(2 days);
         vm.expectRevert(KpkOivFactory.TimelockDeployerNotSet.selector);
         bare.deployOiv(oivConfig);
+    }
+
+    // ── Premise pinning: what a third-party squat can and cannot produce ─────────
+    //
+    // The five operational-stack addresses come from the PERMISSIONLESS third-party
+    // `SafeProxyFactory` / `ModuleProxyFactory`, whose salts are public functions of the config, so
+    // anyone can land them and deny the fund its own chain. Every recovery design rests on a single
+    // property: because CREATE2 binds the address to the initializer, code at a predicted address
+    // implies the component exists in exactly the state this factory would have produced — pristine,
+    // factory-owned, and useless to the squatter.
+    //
+    // These tests pin that property against the REAL third-party factories and the PATCHED Roles
+    // mastercopy. It cannot be inferred from the stock Zodiac sources: v2.1.0 carried an ERC-1271
+    // authorization bypass triggerable in exactly this architecture (OivInfraConstants:28-33), so
+    // this build is deliberately non-stock. `vm.etch` is unusable here — it fabricates code without
+    // the initializer that is the entire point.
+
+    /// @dev Mirrors `_deriveSalts(baseSalt, caller)`, which is `pure` and internal. Index 0 is the
+    ///      exec modifier's salt; index 3 is the Avatar Safe's nonce.
+    function _stackSalt(address caller, uint8 index) internal view returns (uint256) {
+        return uint256(keccak256(abi.encode(caller, oivConfig.salt, index)));
+    }
+
+    /// @dev Squats a Roles Modifier through the real Zodiac factory, using the factory's own
+    ///      initializer — the only initializer that can reach a factory-predicted address.
+    function _squatModifier(address squatter, uint256 saltNonce) internal returns (address mod) {
+        bytes memory initParams = abi.encode(address(factory), address(factory), address(factory));
+        bytes memory initializer = abi.encodeCall(IRoles.setUp, (initParams));
+        vm.prank(squatter);
+        mod = IModuleProxyFactory(MODULE_PROXY_FACTORY).deployModule(ROLES_MODIFIER_MASTERCOPY, initializer, saltNonce);
+    }
+
+    /// @dev Squats an Avatar Safe through the real Safe factory with the factory's own initializer,
+    ///      including `enableModules([execMod, factory])`.
+    function _squatSafe(
+        address squatter,
+        address[] memory owners,
+        uint256 threshold,
+        address[] memory mods,
+        uint256 nonce
+    ) internal returns (address safe) {
+        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (mods));
+        bytes memory initializer = abi.encodeCall(
+            ISafe.setup,
+            (owners, threshold, SAFE_MODULE_SETUP, setupData, SAFE_FALLBACK_HANDLER, address(0), 0, payable(address(0)))
+        );
+        vm.prank(squatter);
+        safe = ISafeProxyFactory(SAFE_PROXY_FACTORY).createProxyWithNonce(SAFE_SINGLETON, initializer, nonce);
+    }
+
+    function _squatAvatarSafe(address squatter, address execMod, uint256 nonce) internal returns (address safe) {
+        address[] memory owners = new address[](1);
+        owners[0] = EMPTY_CONTRACT;
+        address[] memory mods = new address[](2);
+        mods[0] = execMod;
+        mods[1] = address(factory);
+        safe = _squatSafe(squatter, owners, 1, mods, nonce);
+    }
+
+    /// @dev The Manager Safe's owners come from the config, so a squatter cannot substitute their
+    ///      own and still reach the predicted address.
+    function _squatManagerSafe(address squatter, address managerMod, uint256 nonce) internal returns (address safe) {
+        address[] memory owners = new address[](1);
+        owners[0] = managerSigner;
+        address[] memory mods = new address[](1);
+        mods[0] = managerMod;
+        safe = _squatSafe(squatter, owners, 1, mods, nonce);
+    }
+
+    /// @dev Squats all five operational-stack addresses through the real third-party factories.
+    function _squatWholeStack(address squatter, KpkOivFactory.OivInstance memory predicted) internal {
+        _squatModifier(squatter, _stackSalt(address(this), 0));
+        _squatModifier(squatter, _stackSalt(address(this), 1));
+        _squatModifier(squatter, _stackSalt(address(this), 2));
+        _squatAvatarSafe(squatter, predicted.execRolesModifier, _stackSalt(address(this), 3));
+        _squatManagerSafe(squatter, predicted.managerRolesModifier, _stackSalt(address(this), 4));
+    }
+
+    /// @dev Asserts a fund is fully wired and that the factory has retired its own module slot —
+    ///      the property that must hold identically whether the components were deployed or adopted.
+    function _assertFullyWired(KpkOivFactory.OivInstance memory inst) internal view {
+        assertEq(IRoles(inst.execRolesModifier).avatar(), inst.avatarSafe, "exec avatar repointed");
+        assertEq(IRoles(inst.execRolesModifier).target(), inst.avatarSafe, "exec target repointed");
+        assertEq(IRoles(inst.execRolesModifier).owner(), admin, "exec ownership handed over");
+        assertTrue(ISafe(inst.avatarSafe).isModuleEnabled(inst.execRolesModifier), "exec is an Avatar module");
+        assertTrue(IRoles(inst.execRolesModifier).isModuleEnabled(inst.subRolesModifier), "sub nested in exec");
+        assertEq(IRoles(inst.subRolesModifier).owner(), inst.managerSafe, "sub owned by Manager Safe");
+        assertEq(IRoles(inst.managerRolesModifier).owner(), inst.managerSafe, "manager mod owned by Manager Safe");
+        assertFalse(
+            ISafe(inst.avatarSafe).isModuleEnabled(address(factory)),
+            "INVARIANT: the factory must not remain a module on a live Avatar Safe"
+        );
+    }
+
+    /// @notice A squatter cannot choose the initial state: the address is a function of the
+    ///         initializer, so a modifier at a factory-predicted address is born owned by the
+    ///         factory, with the factory as avatar and target.
+    function test_premise_squattedModifierIsBornFactoryOwned() public {
+        address squatter = makeAddr("modifierSquatter");
+        address mod = _squatModifier(squatter, _stackSalt(address(this), 0));
+
+        assertEq(IRoles(mod).owner(), address(factory), "owner is the factory, not the squatter");
+        assertEq(IRoles(mod).avatar(), address(factory), "avatar is the factory");
+        assertEq(IRoles(mod).target(), address(factory), "target is the factory");
+    }
+
+    /// @notice THE load-bearing assertion for any adoption design. If `setUp` were re-callable on
+    ///         the patched mastercopy, a squatter could re-own a squatted modifier and the denial
+    ///         would be unrecoverable — no adopt path survives that, so it is pinned here rather
+    ///         than assumed from the stock Zodiac sources.
+    function test_premise_squattedModifierCannotBeReInitialized() public {
+        address squatter = makeAddr("reInitSquatter");
+        address mod = _squatModifier(squatter, _stackSalt(address(this), 0));
+
+        bytes memory hostileParams = abi.encode(squatter, squatter, squatter);
+        vm.prank(squatter);
+        vm.expectRevert(abi.encodeWithSignature("InvalidInitialization()"));
+        IRoles(mod).setUp(hostileParams);
+
+        assertEq(IRoles(mod).owner(), address(factory), "ownership survived the re-init attempt");
+    }
+
+    /// @notice Pristine is not a snapshot, it is a standing property: with the factory as owner and
+    ///         an empty module set, every mutator is closed to the squatter, so the state the
+    ///         initializer produced is the state adoption will find later.
+    function test_premise_squattedModifierRejectsEveryNonOwnerMutator() public {
+        address squatter = makeAddr("mutatorSquatter");
+        address mod = _squatModifier(squatter, _stackSalt(address(this), 0));
+
+        bytes32[] memory roleKeys = new bytes32[](1);
+        roleKeys[0] = keccak256("HOSTILE");
+        bool[] memory memberOf = new bool[](1);
+        memberOf[0] = true;
+
+        // Pinned rather than a bare `expectRevert`: the claim is that these fail FOR LACK OF
+        // OWNERSHIP, so an unrelated revert must not satisfy the test.
+        bytes memory notOwner = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", squatter);
+
+        vm.startPrank(squatter);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).transferOwnership(squatter);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).setAvatar(squatter);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).setTarget(squatter);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).assignRoles(squatter, roleKeys, memberOf);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).enableModule(squatter);
+
+        vm.expectRevert(notOwner);
+        IRoles(mod).setDefaultRole(squatter, roleKeys[0]);
+
+        vm.stopPrank();
+
+        assertEq(IRoles(mod).owner(), address(factory), "still factory-owned");
+        assertEq(IRoles(mod).avatar(), address(factory), "still factory-avatared");
+        assertFalse(IRoles(mod).isModuleEnabled(squatter), "squatter never became a module");
+    }
+
+    /// @notice The squatted Avatar Safe lands on the fund's canonical address and is born with the
+    ///         factory at the HEAD of its module list — which is exactly what
+    ///         `_disableFactoryAsAvatarModule`'s `prevModule == SENTINEL` argument requires. The
+    ///         squatter holds nothing: the sole owner is the always-reverting Empty contract, so no
+    ///         key can sign, and only enabled modules can execute.
+    function test_premise_squattedAvatarSafeIsBornFactoryHeaded() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("safeSquatter");
+
+        address safe = _squatAvatarSafe(squatter, predicted.execRolesModifier, _stackSalt(address(this), 3));
+        assertEq(safe, predicted.avatarSafe, "the squat lands on the fund's canonical Avatar Safe");
+
+        (address[] memory modules,) = ISafeModules(safe).getModulesPaginated(address(0x1), 10);
+        assertEq(modules.length, 2, "exactly two modules");
+        assertEq(modules[0], address(factory), "factory is at the HEAD of the list");
+        assertEq(modules[1], predicted.execRolesModifier, "exec modifier follows it");
+
+        assertTrue(ISafe(safe).isModuleEnabled(address(factory)), "factory is an enabled module");
+
+        address[] memory owners = ISafe(safe).getOwners();
+        assertEq(owners.length, 1, "one owner");
+        assertEq(owners[0], EMPTY_CONTRACT, "and it is the always-reverting Empty contract");
+        assertEq(ISafe(safe).getThreshold(), 1, "threshold 1");
+        assertFalse(ISafe(safe).isModuleEnabled(squatter), "the squatter is not a module");
+    }
+
+    // ── Adoption: the denial, inverted ──────────────────────────────────────────
+    //
+    // Each of these was a permanent denial before `_deploySafe` / `_deployRolesModifier` learned to
+    // adopt: the squat made the fund's own deployment revert `Create2 call failed` (or
+    // `TakenAddress`), and recovery meant changing the config, which moves every address on every
+    // chain. Reverting either adopt branch turns these back into that revert, which is what makes
+    // them guards rather than descriptions.
+
+    /// @notice The headline case: the Avatar Safe is the address an attacker is most likely to take,
+    ///         and it now costs them a donation instead of buying them a denial.
+    function test_adopt_deployOivAdoptsASquattedAvatarSafe() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("avatarSquatter");
+
+        address squatted = _squatAvatarSafe(squatter, predicted.execRolesModifier, _stackSalt(address(this), 3));
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertEq(inst.avatarSafe, squatted, "the fund adopted the squatter's Safe");
+        assertEq(inst.avatarSafe, predicted.avatarSafe, "at its canonical address");
+        _assertFullyWired(inst);
+        assertGt(inst.kpkSharesProxy.code.length, 0, "and the shares token exists");
+    }
+
+    /// @notice All five at once, which is the cheapest attack to mount and the one that used to be
+    ///         unrecoverable.
+    function test_adopt_deployOivAdoptsAFullySquattedStack() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("wholeStackSquatter");
+
+        _squatWholeStack(squatter, predicted);
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        assertEq(inst.avatarSafe, predicted.avatarSafe, "avatar adopted");
+        assertEq(inst.managerSafe, predicted.managerSafe, "manager Safe adopted");
+        assertEq(inst.execRolesModifier, predicted.execRolesModifier, "exec modifier adopted");
+        assertEq(inst.subRolesModifier, predicted.subRolesModifier, "sub modifier adopted");
+        assertEq(inst.managerRolesModifier, predicted.managerRolesModifier, "manager modifier adopted");
+        _assertFullyWired(inst);
+    }
+
+    /// @notice Each component is adopted independently, so any subset works with no coordination.
+    ///         Partial subsets are the only "partial" state that exists — a half-finished wiring is
+    ///         not reachable, because the whole stack is deployed and wired in one transaction.
+    function test_adopt_deployOivAdoptsAnyPartialSquat() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("partialSquatter");
+
+        // Modifiers only — nothing else.
+        _squatModifier(squatter, _stackSalt(address(this), 0));
+        _squatModifier(squatter, _stackSalt(address(this), 2));
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        assertEq(inst.execRolesModifier, predicted.execRolesModifier, "adopted exec modifier");
+        assertEq(inst.managerRolesModifier, predicted.managerRolesModifier, "adopted manager modifier");
+        _assertFullyWired(inst);
+    }
+
+    /// @notice Manager-Safe-only squat, kept separate because it is the one component whose owners
+    ///         are configurable and which the factory never touches after deployment.
+    function test_adopt_deployOivAdoptsASquattedManagerSafe() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("managerSafeSquatter");
+
+        address squatted = _squatManagerSafe(squatter, predicted.managerRolesModifier, _stackSalt(address(this), 4));
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        assertEq(inst.managerSafe, squatted, "adopted the squatted Manager Safe");
+        _assertFullyWired(inst);
+    }
+
+    /// @notice INVARIANT 6, the one thing adoption must never do. A completed fund is not
+    ///         adoptable, and the signal is ownership: `transferOwnership` is the last act of
+    ///         wiring, so `owner != factory` means a wiring transaction has completed here.
+    function test_adopt_refusesToTouchACompletedFund() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+        _assertFullyWired(inst);
+
+        vm.expectRevert(KpkOivFactory.StackAlreadyDeployedHere.selector);
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @notice The CCIP destination budget, pinned. A timelocked `deployStack` is what a fan-out
+    ///         message executes on arrival, and 10 of the 20 live lanes cap the destination
+    ///         `gasLimit` at exactly 3,000,000 — so a fund that outgrows this bound cannot be
+    ///         deployed cross-chain at all, on those lanes, at any price. The bound was previously
+    ///         only a recorded measurement, which is why adoption's extra `EXTCODESIZE` probes and
+    ///         `proxyCreationCode()` staticcalls could eat into it unnoticed. Headroom is generous
+    ///         (~1M), so this asserts the ceiling rather than a tight budget: it exists to fail on a
+    ///         step change, not to police small drift. Note the scope: this measures `deployStack`
+    ///         alone, not the surrounding `ccipReceive` frame the destination actually pays for, so
+    ///         it is narrower than the invariant it names.
+    function test_deployStack_timelockedFitsTheCcipDestinationGasCap() public {
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        stackConfig.execTimelock = _timelockParams(2 days);
+
+        uint256 before = gasleft();
+        factory.deployStack(stackConfig);
+        uint256 spent = before - gasleft();
+
+        assertLt(spent, 3_000_000, "timelocked deployStack must fit the 3M destination gasLimit cap");
+    }
+
+    /// @notice `deployShares` must refuse a stack that exists but was never wired. This is the
+    ///         avatar clause specifically: all five components are present, so the two
+    ///         `code.length` clauses pass and only `execRolesModifier.avatar()` can reject it. A
+    ///         squatted modifier points at the factory; only a completed wiring repoints it at the
+    ///         Avatar Safe, which is why the avatar cannot be forged into looking wired.
+    ///
+    ///         Pinned here rather than in `CcipOivDeployer.t.sol`, whose version of this test
+    ///         squats with `vm.etch` and so short-circuits on `managerSafe.code.length` without ever
+    ///         reaching the clause it claims to check.
+    function test_deployShares_refusesAPristineSquattedStack() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        _squatWholeStack(makeAddr("sharesSquatter"), predicted);
+
+        assertEq(
+            IRoles(predicted.execRolesModifier).avatar(),
+            address(factory),
+            "a squatted modifier points at the factory, not the Avatar Safe"
+        );
+
+        vm.expectRevert(KpkOivFactory.StackNotDeployed.selector);
+        factory.deployShares(oivConfig);
+    }
+
+    /// @notice Adoption must not extend to a Safe that has DRIFTED from the config its address
+    ///         encodes. The Manager Safe is the only stack component whose pre-adoption state is not
+    ///         frozen — its owners are live keys from the config, so a squatted one is a working
+    ///         multisig from the moment it exists. A single compromised signer can enable a module
+    ///         on it before the fund ever reaches this chain; a module executes on a Safe
+    ///         unconditionally, so adopting that silently would hand the fund's MANAGER_ROLE to an
+    ///         attacker. Before adoption existed, this same squat merely reverted the deployment,
+    ///         so the check is what keeps a loud failure from becoming a silent compromise.
+    function test_adopt_rejectsAMutatedSafe() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatter = makeAddr("mutatingSquatter");
+        address attacker = makeAddr("addedModule");
+
+        address squatted = _squatManagerSafe(squatter, predicted.managerRolesModifier, _stackSalt(address(this), 4));
+
+        // A Safe's own `enableModule` is self-authorized, which is exactly what an owner executing a
+        // transaction on the squatted Safe achieves.
+        vm.prank(squatted);
+        ISafeModules(squatted).enableModule(attacker);
+        assertTrue(ISafe(squatted).isModuleEnabled(attacker), "attacker is a module on the squatted Safe");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.AdoptedSafeMismatch.selector, squatted));
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @notice The factory is every modifier's TEMPORARY owner during wiring, so accepting it as
+    ///         `admin` would make a completed fund read as unwired to `StackAlreadyDeployedHere` —
+    ///         and would leave the shares token with no DEFAULT_ADMIN_ROLE holder at all, since
+    ///         `deployOiv` grants that role to the factory and then renounces it.
+    function test_deployOiv_rejectsTheFactoryAsAdmin() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.admin = address(factory);
+
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+        factory.deployOiv(cfg);
+    }
+
+    /// @notice Same signal, the `deployStack` side: a `finalOwner` of the factory leaves the exec
+    ///         modifier factory-owned forever, which is indistinguishable from never having been
+    ///         wired.
+    function test_deployStack_rejectsTheFactoryAsFinalOwner() public {
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        stackConfig.execRolesMod.finalOwner = address(factory);
+
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+        factory.deployStack(stackConfig);
+    }
+
+    /// @notice Prediction must not answer where deployment would refuse. An unwired factory used to
+    ///         predict the shares proxy from `impl == address(0)` and hand back a plausible-looking
+    ///         address that no deployment can ever produce — and predictions are exactly what an
+    ///         operator pre-funds and allowlists against. `deployOiv` and `deployShares` already
+    ///         reverted here; the predictor did not.
+    function test_predictOivAddresses_revertsWhenNoSharesMastercopyIsWired() public {
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(timelockDeployer)
+        );
+
+        vm.expectRevert(KpkOivFactory.KpkSharesMastercopyNotSet.selector);
+        unwired.predictOivAddresses(oivConfig, address(this));
+    }
+
+    /// @dev N strictly-ascending addresses, for measuring how role-set size drives deploy gas.
+    function _ascending(uint256 n, uint160 base) internal pure returns (address[] memory out) {
+        out = new address[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = address(base + uint160(i));
+        }
+    }
+
+    /// @dev Measures a timelocked `deployStack` with `n` proposers and `n` cancellers.
+    function _timelockedStackGas(uint256 n, uint256 salt) internal returns (uint256) {
+        KpkOivFactory.StackConfig memory cfg = factory.oivToStackConfig(oivConfig);
+        cfg.salt = salt;
+        cfg.execTimelock =
+            TimelockParams({minDelay: 2 days, proposers: _ascending(n, 0x1000), cancellers: _ascending(n, 0x9000)});
+
+        uint256 before = gasleft();
+        factory.deployStack(cfg);
+        return before - gasleft();
+    }
+
+    /// @notice THE WORST PERMITTED CONFIG must still fit the CCIP destination cap. Sampling a
+    ///         2-proposer/2-canceller timelock proves nothing about the config space the contract
+    ///         actually accepts: role provisioning costs roughly 83k gas per proposer+canceller
+    ///         pair, so the ceiling is set by `MAX_ROLE_MEMBERS`, not by the typical case.
+    ///
+    ///         Exceeding it is unrecoverable rather than merely inconvenient. `deployEverywhere`
+    ///         succeeds locally and spends every CCIP fee on the source chain; the destination then
+    ///         runs out of gas, `dispatchTo` cannot be given a `gasLimit` above 3M on the ten lanes
+    ///         where that cap is exact, and the sidechain salts derive from the orchestrator as
+    ///         `msg.sender`, so no EOA can reproduce the fund's canonical addresses by calling
+    ///         `deployStack` directly. The fund can then never exist on those chains at its
+    ///         canonical addresses at all.
+    function test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap() public {
+        uint256 max = timelockDeployer.MAX_ROLE_MEMBERS();
+        uint256 spent = _timelockedStackGas(max, 777);
+        assertLt(spent, 3_000_000, "the largest role set MAX_ROLE_MEMBERS permits must still fit the 3M cap");
+    }
+
+    /// @notice The setter decides what every future fund on this chain delegates to, so a codeless
+    ///         value must fail here rather than later inside `deployOiv`. `KpkTimelockDeployer`
+    ///         already guarded its own mastercopy this way; this one did not.
+    function test_setKpkSharesMastercopy_rejectsACodelessAddress() public {
+        vm.prank(factoryOwner);
+        vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+        factory.setKpkSharesMastercopy(makeAddr("notAContract"));
+    }
+
+    /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
+    ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
+    ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
+    ///         true rather than aspirational.
+    function test_adopt_isCheaperThanDeployingFresh() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        _squatWholeStack(makeAddr("subsidySquatter"), predicted);
+
+        uint256 before = gasleft();
+        factory.deployOiv(oivConfig);
+        uint256 adoptedCost = before - gasleft();
+
+        // A second fund, same shape, nothing pre-landed.
+        KpkOivFactory.OivConfig memory fresh = _buildOivConfig();
+        fresh.salt = oivConfig.salt + 1;
+
+        before = gasleft();
+        factory.deployOiv(fresh);
+        uint256 freshCost = before - gasleft();
+
+        assertLt(adoptedCost, freshCost, "adopting must cost less than deploying");
     }
 }
 
@@ -1472,4 +1942,17 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
         vm.expectRevert("KpkOivFactory: failed to disable module");
         harness.exposed_disableFactoryModule(mockSafe);
     }
+}
+
+/// @dev `ISafe` is deliberately minimal (only what the factory calls). Module-list ORDERING is a
+///      test-side concern, so `getModulesPaginated` is declared here rather than widening the
+///      production interface.
+interface ISafeModules {
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
+
+    /// @dev Self-authorized on a Safe, so pranking as the Safe stands in for an owner executing it.
+    function enableModule(address module) external;
 }

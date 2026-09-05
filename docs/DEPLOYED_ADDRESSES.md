@@ -25,24 +25,16 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x72d50AccC2514809da4a00Bed629DA1F75513B71` |
+| `KpkOivFactory` | `0x88AF14D28dEdFf621E989f6ea8E92D06114Da2FA` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xEbd6c0EA7cDCcbA9eEE3FC1e8536ccA958524Ac3` |
-| `KpkTimelockDeployer` | `0x55A36009e4cf19FF8F92cE071afCb94B27f5E4Fc` |
+| `CcipOivDeployer` (orchestrator) | `0x840E22825e7Ff52a23D0a68C6863f57843cB60D8` |
+| `KpkTimelockDeployer` | `0x819Ff3BD731417D06682BF6FCf242E031D833CE6` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
-`KpkSharesDeployer` is gone from this table because the contract is deleted: every fund's shares
-proxy now points at the chain's shared `KpkShares` mastercopy. Two mastercopy rows take its place,
-and both must exist BEFORE `KpkTimelockDeployer`, whose constructor rejects a codeless mastercopy.
-
-The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only argument is one
-of them, so those three are independent of the deployer EOA — the same on every chain for anyone.
-The factory and the orchestrator are not. `script/base/OivChainDeploy.sol` deploys all of them and
-wires them via `setKpkSharesMastercopy` and `setTimelockDeployer` in the same run.
-
-Every address above is pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol),
-which fails if this table drifts from what the deploy path would produce.
+`KpkTimelockDeployer`'s constructor takes the timelock mastercopy address
+(`src/KpkTimelockDeployer.sol:122`), so like the others its address depends on what it is given. `script/base/OivChainDeploy.sol` deploys it and wires it via
+`setTimelockDeployer` in the same run that wires `setKpkSharesMastercopy`.
 
 > **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
 > run until the rollout lands. Until then the live infra is the salt-v3 stack below.
@@ -75,7 +67,7 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 
 > **HyperEVM note.** As with salt v2, the deploy needed Hyperliquid "big blocks" enabled for the deployer (`usingBigBlocks` L1 action) — the ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again afterwards.
 
-> **Selector-registry note.** A freshly CREATE2'd orchestrator starts with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
+> **Selector-registry note — HISTORICAL from salt v4 onward.** The orchestrator now seeds its registry in the **constructor**, so none of the below applies to a salt-v4 deployment: there is no seeding step, nothing to do before handover, and `bob`/`katana` are excluded by construction (pinned by `test/CcipNetworksSync.t.sol::test_bakedTopologyMatchesRegistry`). Kept because it explains the salt-v3 rollout and why the change was made. Previously: a freshly CREATE2'd orchestrator started with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
 
 > ### ⚠️ Build these from a clean clone, not a working tree
 >
@@ -128,7 +120,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + deployer deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesDeployer` wires the deployer in, then `transferOwnership` hands the factory to the OIV Safe.
+The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + shares mastercopy deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` wires the mastercopy in, then `transferOwnership` hands the factory to the OIV Safe. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 

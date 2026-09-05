@@ -8,6 +8,10 @@ solc_version = "0.8.34"
 fs_permissions = [
   { access = "read-write", path = "script" },
   { access = "read-write", path = "out" },
+  # Read-only, for test fixtures. `test/fixtures/` holds configs that are deliberately invalid or
+  # incomplete so tests can assert they are REFUSED; they live under test/ rather than script/ so
+  # nobody can mistake one for something deployable.
+  { access = "read", path = "test" },
 ]
 ffi = true
 ast = true

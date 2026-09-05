@@ -34,7 +34,7 @@ contract DeployOiv is OivConfigReader {
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
     ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
     ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
-    address public constant FACTORY = 0x72d50AccC2514809da4a00Bed629DA1F75513B71;
+    address public constant FACTORY = 0x88AF14D28dEdFf621E989f6ea8E92D06114Da2FA;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  Predicted addresses (no deployment)");
         console.log("============================================================");
-        _logInstance(predicted);
+        _logInstance(predicted, _shouldDeployShares(json));
         console.log("------------------------------------------------------------");
         console.log("  Caller (deployer):    ", caller);
         console.log("  NOTE: these addresses are identical across all chains");
@@ -63,6 +63,15 @@ contract DeployOiv is OivConfigReader {
     ///         stack alone. `deployOiv` and `deployStack` remain available for a deliberate override.
     function deploy(string calldata configPath) external {
         string memory json = vm.readFile(configPath);
+        // `deploy` exists to pick the branch per chain, so it must be TOLD which chains carry
+        // shares. `_shouldDeployShares` answers "true" for a config with no `.sharesChains` — the
+        // right default for the explicit entry points below, and the wrong one here: run across 19
+        // chains it would put a live shares token on every one of them. The explicit
+        // `deployOiv` / `deployStack` paths keep the permissive default.
+        require(
+            vm.keyExists(json, ".sharesChains"),
+            "config: deploy(configPath) requires .sharesChains - use deployOiv or deployStack to choose per chain"
+        );
         if (_shouldDeployShares(json)) {
             _deployOiv(json);
         } else {
@@ -89,8 +98,22 @@ contract DeployOiv is OivConfigReader {
 
     // ── Internals ──────────────────────────────────────────────────────────────
 
+    /// @dev `.oiv.sharesParams.asset` holds the MAINNET token by convention, so a chain added to
+    ///      `.sharesChains` without a matching `.oiv.assetOverrides` entry silently inherits it.
+    ///      Nothing downstream rejects that: `_validateOivConfig` only refuses the zero address, and
+    ///      the Avatar Safe's `approve` succeeds against a codeless address — so the fund would go
+    ///      live denominated in a token that does not exist on its chain. Checked here rather than in
+    ///      `OivConfigReader` because the reader is a pure parser, unit-tested without a fork.
+    function _requireAssetIsLive(KpkOivFactory.OivConfig memory config) internal view {
+        require(
+            config.sharesParams.asset.code.length != 0,
+            "config: base asset has no code on this chain - add an .oiv.assetOverrides entry for it"
+        );
+    }
+
     function _deployOiv(string memory json) internal {
         KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        _requireAssetIsLive(config);
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
@@ -100,7 +123,7 @@ contract DeployOiv is OivConfigReader {
         console.log("============================================================");
         console.log("  OIV Deployed");
         console.log("============================================================");
-        _logInstance(instance);
+        _logInstance(instance, true);
         console.log("============================================================");
     }
 
