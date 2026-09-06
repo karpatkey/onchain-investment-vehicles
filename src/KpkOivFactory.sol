@@ -1561,8 +1561,16 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // script's post-flight `require` is what actually enforces — there is no on-chain binding.
         // Nothing chain-specific is left in the init code either way.
         //
-        // The two statements are atomic within this call, so there is no block in which the proxy
-        // exists uninitialized and no window for anyone to front-run `initialize`. (The implementation
+        // There is no block in which the proxy exists uninitialized and no window to front-run
+        // `initialize` — but atomicity is not the whole reason, and the difference matters. Being in
+        // one call rules out another TRANSACTION interleaving; it does not rule out reentrancy from
+        // inside this one. What rules that out is that the only external calls `initialize` can reach
+        // are `IERC20Metadata(asset).symbol()` and `.decimals()`, both `view`, so solc emits
+        // STATICCALL and a hostile asset physically cannot mutate anything on the way back in. A
+        // future `KpkShares` that made a NON-static call during initialization would reopen the
+        // window this comment used to claim was closed by ordering alone.
+        //
+        // (The implementation
         // is separately protected: `KpkShares`'s constructor calls `_disableInitializers`.)
         proxy = address(new ERC1967Proxy{salt: proxySalt}(impl, ""));
 

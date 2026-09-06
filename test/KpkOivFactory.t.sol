@@ -1119,7 +1119,13 @@ contract KpkOivFactoryTest is OivTestConstants {
     /// @notice The whole point of deploying the proxy with empty constructor data: the base asset is
     ///         necessarily chain-specific, so it must not reach the CREATE2 init code. Two funds that
     ///         differ ONLY in their base asset must predict the same shares proxy address.
-    function test_sharesProxyAddress_isIndependentOfTheBaseAsset() public view {
+    /// @notice The property this PR exists for, asserted against a REAL deployment rather than only
+    ///         against the predictor. Comparing two predictions to each other cannot catch a
+    ///         predict/deploy divergence: reverting `_deploySharesProxy` to the old constructor-init
+    ///         form while leaving `_predictSharesProxy` alone leaves a prediction-only test green,
+    ///         which is exactly the regression that matters here — operators pre-fund against
+    ///         predictions.
+    function test_sharesProxyAddress_isIndependentOfTheBaseAsset() public {
         KpkOivFactory.OivConfig memory withUsdc = oivConfig;
         KpkOivFactory.OivConfig memory withDai = oivConfig;
         withDai.sharesParams.asset = OTHER_ASSET;
@@ -1129,6 +1135,18 @@ contract KpkOivFactoryTest is OivTestConstants {
 
         assertEq(b.kpkSharesProxy, a.kpkSharesProxy, "a different base asset must not move the proxy");
         assertEq(b.kpkSharesImpl, a.kpkSharesImpl, "nor the implementation");
+
+        // And the deployment must actually land there. This is the half a prediction-only assertion
+        // misses.
+        KpkOivFactory.OivInstance memory deployed = factory.deployOiv(withDai);
+        assertEq(deployed.kpkSharesProxy, a.kpkSharesProxy, "the DAI fund deploys at the USDC prediction");
+        assertTrue(
+            KpkShares(deployed.kpkSharesProxy).isApprovedAsset(OTHER_ASSET),
+            "and it really is the different asset that was deployed"
+        );
+        assertFalse(
+            KpkShares(deployed.kpkSharesProxy).isApprovedAsset(USDC), "the USDC prediction's address, but not its asset"
+        );
     }
 
     /// @dev The prediction is worth nothing unless a real deploy with the OTHER asset lands there.
@@ -1157,7 +1175,10 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertTrue(shares.hasRole(0x00, admin), "admin holds DEFAULT_ADMIN_ROLE");
         assertFalse(shares.hasRole(0x00, address(factory)), "factory renounced");
 
-        vm.expectRevert();
+        // Pinned, not bare — see `test_sharesProxy_cannotReinitialize` for why: these params carry a
+        // zero `safe` and `admin`, so an UNINITIALIZED proxy rejects the same call on argument
+        // validation, and a bare `expectRevert` would pass with the initializer guard removed.
+        vm.expectRevert(abi.encodeWithSignature("InvalidInitialization()"));
         shares.initialize(oivConfig.sharesParams);
     }
 
