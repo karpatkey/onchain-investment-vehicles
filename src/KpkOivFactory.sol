@@ -29,7 +29,8 @@ import {OivInfraConstants} from "./OivInfraConstants.sol";
 ///           Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
 ///         - `deployOiv` deploys the same five-contract stack PLUS a KpkShares UUPS proxy,
 ///           grants infinite asset allowances from the Avatar Safe to the shares proxy, and
-///           wires the Manager Safe as the shares operator. Typically called on mainnet only.
+///           wires the Manager Safe as the shares operator. Callable on any chain — there is no
+///           chain-id restriction, and the shares proxy lands at one address everywhere.
 ///
 ///         Cross-flow address invariant: for the same `(caller, salt)`, `deployStack` and
 ///         `deployOiv` produce IDENTICAL Avatar Safe / Manager Safe / Roles Modifier addresses.
@@ -716,7 +717,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///           for the base asset and every additional asset with `canRedeem = true`.
     ///         - Wires the Manager Safe as the OPERATOR on the shares proxy.
     ///         - Removes itself as a module from the Avatar Safe before returning.
-    ///         Typically called on mainnet only; use `deployStack` for sidechain deployments.
+    ///         Callable on any chain. Use it on the chains that should carry shares and
+    ///         `deployStack` on the ones that should carry the operational stack only — but see the
+    ///         caller/salt precondition in `docs/KpkOivFactory.md` before calling it directly on a
+    ///         fund that was rolled out through `CcipOivDeployer`.
     ///         The five operational-stack addresses (Avatar Safe, Manager Safe, three Roles
     ///         Modifiers) are IDENTICAL to those produced by `deployStack` for the same
     ///         `(caller, config.salt)`.
@@ -1007,7 +1011,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
     ///         by `caller`. All seven addresses (5 operational-stack + KpkShares impl + proxy) are
     ///         CREATE2-deployed and fully predictable from `(factory, infrastructure addresses,
-    ///         caller, config.salt, manager owners/threshold, KpkShares constructor parameters)`.
+    ///         caller, config.salt, manager owners/threshold)`. The shares parameters are NOT among
+    ///         them: the proxy is deployed with empty constructor data, which is what lets one fund
+    ///         hold the same shares address on chains with different base assets.
     /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
     ///         the same `(salt, caller)` — see that function's NatSpec. The shares impl is deployed
     ///         the chain's shared `kpkSharesMastercopy`; the ERC-1967 proxy is deployed by this
@@ -1073,6 +1079,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
     ///      Mirrors the deployment exactly: empty constructor data, initialization performed
     ///      afterwards.
+    ///
+    ///      Accepted consequence: the proxy address used to act as a checksum over the WHOLE
+    ///      `sharesParams` struct, and now covers none of it. `name`, `symbol`, `feeReceiver`, both
+    ///      fee rates and both TTLs are as chain-invariant in intent as `asset` is chain-specific,
+    ///      but nothing enforces that any more — a fee rate fat-fingered on one chain still yields
+    ///      the same address, so `DeployOiv.predict`'s "addresses match everywhere" signal will not
+    ///      catch it. Cross-chain parameter equality is now the config's job, not the address's.
     ///
     ///      It takes neither the shares parameters nor the Avatar Safe, and that absence is the point
     ///      rather than an omission: the proxy address is a function of `(factory, proxySalt, impl)`
