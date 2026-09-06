@@ -28,7 +28,7 @@ import {OivConfigReader} from "./base/OivConfigReader.sol";
  *   - additionalAssets is bounded by OivConfigReader.MAX_ADDITIONAL_ASSETS (reverts if exceeded).
  */
 contract DeployOiv is OivConfigReader {
-    /// @dev Salt-v3 KpkOivFactory. Its CREATE2 address is a function of its bytecode, so this must be
+    /// @dev Salt-v4 KpkOivFactory. Its CREATE2 address is a function of its bytecode, so this must be
     ///      updated whenever the factory changes — `test/FactoryAddressSync.t.sol` asserts it equals
     ///      what `OivChainDeploy` would actually deploy, so a stale value fails CI instead of being
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which

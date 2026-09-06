@@ -13,6 +13,7 @@ import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {IkpkShares} from "src/IkpkShares.sol";
 import {ISafe} from "src/interfaces/ISafe.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 import {IModuleProxyFactory} from "src/interfaces/IModuleProxyFactory.sol";
 import {ISafeProxyFactory} from "src/interfaces/ISafeProxyFactory.sol";
@@ -555,11 +556,39 @@ contract KpkOivFactoryTest is OivTestConstants {
         );
     }
 
+    /// @notice A deployed fund's proxy must refuse a second `initialize`, from anyone, forever.
+    ///
+    ///         The expected error is PINNED rather than left as a bare `expectRevert`, and the
+    ///         negative control below is why that matters: the stored test params carry a zero
+    ///         `safe` and `admin` (the factory overrides both), so an UNINITIALIZED proxy rejects
+    ///         this same call too — on argument validation. A bare `expectRevert` therefore passed
+    ///         whether or not the initializer guard existed, which is to say it guarded nothing.
     function test_sharesProxy_cannotReinitialize() public {
         KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("InvalidInitialization()"));
         KpkShares(inst.kpkSharesProxy).initialize(oivConfig.sharesParams);
+    }
+
+    /// @dev The negative control for the test above: the same call against a proxy that was never
+    ///      initialized fails for a DIFFERENT reason. That is what makes pinning
+    ///      `InvalidInitialization()` a real assertion about the initializer guard rather than a
+    ///      restatement that the call reverts.
+    function test_sharesProxy_uninitializedProxyFailsForADifferentReason() public {
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(oivConfig);
+
+        // Same implementation, same empty constructor data as the real deployment — just never
+        // initialized.
+        address bare = address(new ERC1967Proxy(inst.kpkSharesImpl, ""));
+
+        try KpkShares(bare).initialize(oivConfig.sharesParams) {
+            revert("an uninitialized proxy must not accept these params");
+        } catch (bytes memory err) {
+            assertTrue(
+                bytes4(err) != bytes4(keccak256("InvalidInitialization()")),
+                "uninitialized proxy must fail for a reason OTHER than the initializer guard"
+            );
+        }
     }
 
     function test_instanceCount_incrementsOnEachDeploy() public {
