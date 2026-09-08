@@ -268,7 +268,12 @@ predicate and a plain bisection sufficient rather than a search for a maximum.
 The interval is clipped to the prices reachable with the balances at hand and to the range's own
 boundaries, so an optimum outside it becomes the corresponding endpoint: sell everything when the
 range sits wholly on one side of the price, sell nothing when the balances are already in ratio. The
-result is compared against not swapping at all, so a swap can never leave the vault worse off.
+result is compared against not swapping at all, so a swap cannot be worse than doing nothing **under
+this model**. The model holds the pool's liquidity constant, which is true only inside the current
+initialized-tick interval. A swap that crosses a tick trades against a different liquidity than was
+modelled and can end up marginally worse than not swapping, bounded by the pool fee on what was
+traded within the price-impact cap. The shortfall stays idle rather than being lost, because the
+mint runs against the balances actually held afterwards.
 
 The model is exact while the swap stays inside the current tick interval, which is the normal case.
 If it crosses an initialized tick the realised price differs slightly, which is why step 7 re-reads

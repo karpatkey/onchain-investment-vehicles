@@ -545,8 +545,13 @@ library UniswapV3VaultMath {
         }
 
         // No usable interior: the optimum is an endpoint, so take whichever of the two extremes
-        // mints more. Comparing against not swapping at all is what makes a swap unable to leave
-        // the vault worse off than it started.
+        // mints more, including not swapping at all. That comparison, and the one at the end of the
+        // search, are made against this model, in which the pool's liquidity is the constant the
+        // caller passed. A swap that crosses an initialized tick trades against a different
+        // liquidity than was modelled and can therefore end up worse than not swapping, by at most
+        // the pool fee on the amount traded within the caller's price-impact cap. The caller mints
+        // from the balances it actually holds afterwards, so the shortfall stays idle rather than
+        // being lost.
         if (degenerate) {
             uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
             uint128 mintAll = _mintableAfterSwap(params, sqrtLimit, zeroForOne, budget);

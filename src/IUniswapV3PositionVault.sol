@@ -3,11 +3,16 @@ pragma solidity ^0.8.0;
 
 /// @title  IUniswapV3PositionVault
 /// @author KPK
-/// @notice Errors, events, structs and the external surface of UniswapV3PositionVault.
-/// @dev    Declared next to the implementation, following the IkpkShares convention: interfaces of
-///         this repository's own contracts sit beside them, while interfaces of foreign contracts
+/// @notice The errors, events and structs of UniswapV3PositionVault.
+/// @dev    Declared next to the implementation, following the IkpkShares convention that interfaces
+///         of this repository's own contracts sit beside them while interfaces of foreign contracts
 ///         live in src/interfaces. Every error the vault and its math library can revert with is
-///         declared here so callers have a single, stable selector surface.
+///         declared here, so callers have one stable selector surface to decode against.
+///
+///         Unlike IkpkShares this declares no function signatures, so it cannot be used to CALL the
+///         vault: integrators bind to the concrete UniswapV3PositionVault type, or write their own
+///         minimal interface. Adding the call surface here is tracked as an open item on the pull
+///         request rather than assumed.
 interface IUniswapV3PositionVault {
     //
     // Errors
