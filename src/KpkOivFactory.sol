@@ -744,7 +744,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside
         // `_deploySharesProxy` on an unwired deployer. `_deployAndWireStack` performs the same check
         // for the exec timelock at the point it needs it, which is early enough.
-        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) {
+        // BOTH timelocks, not just the shares one. With an exec-only timelock and no deployer
+        // wired, this guard used to pass and the revert came later from `_deployAndWireStack` —
+        // after the whole five-contract stack had been deployed, burning exactly the gas the
+        // fail-fast exists to save.
+        if (
+            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
+        ) {
             revert TimelockDeployerNotSet();
         }
 
@@ -829,7 +835,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return instance The fund's addresses on this chain.
     function deployShares(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
-        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
+        if (
+            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
+        ) revert TimelockDeployerNotSet();
         _validateOivConfig(config);
 
         StackInstance memory stack =

@@ -46,8 +46,18 @@ Deploys the five-contract operational stack. All five addresses are deterministi
 | `execRolesMod.finalOwner` | Receives ownership of the exec Roles Modifier — typically the Security Council multisig. Must not be zero |
 | `salt` | Controls all five deployment addresses |
 | `execTimelock.minDelay` | Seconds of delay on the exec Roles Modifier's timelock. **`0` means no timelock** and `execRolesMod.finalOwner` receives ownership as before. Any non-zero value must be within the deployer's `[12 hours, 30 days]` band |
-| `execTimelock.proposers` | Addresses receiving `PROPOSER_ROLE` (and, from OpenZeppelin, `CANCELLER_ROLE`). Non-zero and distinct |
-| `execTimelock.cancellers` | Addresses receiving `CANCELLER_ROLE` — the veto — without proposal rights. Non-zero and distinct |
+| `execTimelock.proposers` | Addresses receiving `PROPOSER_ROLE` (and, from OpenZeppelin, `CANCELLER_ROLE`). Non-zero, and **strictly ascending by address value** — sort numerically, not by role or priority. At most `MAX_ROLE_MEMBERS`. May be empty |
+| `execTimelock.cancellers` | Addresses receiving `CANCELLER_ROLE` — the veto — without proposal rights. Same rules, and no canceller may also be a proposer. May be empty |
+
+> **Both arrays must be strictly ascending by address value.** Distinct non-zero entries in a
+> "natural" order — governance first, then superadmin — still revert `MembersNotAscending`, so a
+> config that looks valid against the rows above can fail to deploy. Ascending order is not
+> cosmetic: it gives each effective member set exactly one encoding, so the same governance cannot
+> land at two different timelock addresses. The arrays are hashed into the timelock's salt, which is
+> why order is load-bearing at all. `MAX_ROLE_MEMBERS` is a ceiling set by the CCIP destination gas
+> cap, not a governance opinion — see `KpkTimelockDeployer` for the measurements. There is
+> deliberately **no floor**: an empty `cancellers` means no veto, and an empty `proposers` means a
+> timelock that can never schedule anything, which is permitted but freezes what it governs.
 
 `subRolesMod.finalOwner` and `managerRolesMod.finalOwner` are ignored — ownership of those modifiers always transfers to the deployed Manager Safe.
 
