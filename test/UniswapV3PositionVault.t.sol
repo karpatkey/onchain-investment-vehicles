@@ -583,6 +583,40 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.stopPrank();
     }
 
+    function test_redeem_refusesToLeaveASupplyTooSmallToPriceAgainst() public {
+        _openPosition(100_000e6);
+        uint256 supply = vault.totalSupply();
+
+        // Redeeming down to a handful of shares used to be allowed. The residue is worth nothing to
+        // whoever holds it, but it survives an unwind, and once the vault is funded again those few
+        // shares stand behind everything in it. The next depositor's share count is a floor division
+        // by that supply, so a third of what they put in rounds away to the residue holder. The
+        // vault now refuses the redemption that sets it up.
+        vm.prank(curator);
+        vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
+        vault.redeem(supply - 3, 10_000, block.timestamp);
+
+        // Leaving the floor intact is fine, and so is leaving nothing at all.
+        vm.prank(curator);
+        vault.redeem(supply - 1e6, 10_000, block.timestamp);
+        assertEq(vault.totalSupply(), 1e6, "the floor itself is allowed");
+
+        vm.prank(curator);
+        vault.redeem(1e6, 10_000, block.timestamp);
+        assertEq(vault.totalSupply(), 0, "a full exit is always allowed");
+    }
+
+    function test_createPosition_refusesToOpenWithANegligibleSupply() public {
+        // The share supply starts equal to the opening liquidity, so opening with a negligible
+        // position is the other way to reach a supply too small to price deposits against.
+        _seedVault(100_000e6, 30e18);
+
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
+        vm.prank(curator);
+        vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
+        vault.createPosition(lower, upper, 1, true, block.timestamp);
+    }
+
     //
     // Fees and compounding
     //

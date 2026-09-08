@@ -70,6 +70,17 @@ contract UniswapV3PositionVault is
     /// @dev Largest deviation cap that can be configured, in basis points.
     uint256 private constant _MAX_BPS = 10_000;
 
+    /// @notice The smallest share supply the vault will ever carry while it carries any.
+    /// @dev    A deposit's share count is a floor division by the supply, so a supply small
+    ///         relative to the assets behind it makes that truncation a real fraction of the
+    ///         deposit, which existing holders keep. The supply starts equal to the opening
+    ///         position's liquidity, which for any position worth opening is many orders of
+    ///         magnitude above this; the floor exists to stop the ratio being driven the other way,
+    ///         by opening with a negligible position or by redeeming down to a residue and then
+    ///         refunding the vault. Holding the supply at or above a million bounds a depositor's
+    ///         truncation loss to a millionth of what they put in.
+    uint256 private constant _MIN_SHARES = 1e6;
+
     //
     // State Variables
     //
@@ -336,6 +347,11 @@ contract UniswapV3PositionVault is
         _compound();
 
         uint256 supply = totalSupply();
+        // Redeem everything or leave a supply that can still price a deposit. A residue below the
+        // floor is worth nothing to the holder and, once the vault is refunded, would make every
+        // later deposit round a visible fraction of itself away to whoever holds it.
+        if (shares < supply && supply - shares < _MIN_SHARES) revert SupplyTooSmall(supply - shares, _MIN_SHARES);
+
         uint256 idle0 = token0.balanceOf(address(this));
         uint256 idle1 = token1.balanceOf(address(this));
 
@@ -1207,12 +1223,19 @@ contract UniswapV3PositionVault is
     }
 
     /// @notice Mints the opening share supply when the vault has none.
-    /// @dev    Shares start one-to-one with liquidity, so no virtual offset is needed: a would-be
-    ///         attacker cannot inflate the share price by donating tokens, because donated balances
-    ///         are claimed pro-rata by every holder rather than by the next depositor.
+    /// @dev    Shares start one-to-one with liquidity. A donation cannot then be turned against the
+    ///         next depositor the way it can in a vault that prices shares off a balance, because
+    ///         donated tokens are claimed pro-rata by every holder rather than by whoever deposits
+    ///         next. What that argument needs, and what the floor here supplies, is a supply large
+    ///         enough that a deposit's floor division is not itself a way to take a fraction of the
+    ///         deposit: the opening liquidity must be at least _MIN_SHARES, and redeem will not
+    ///         leave a supply below it, so the ratio between shares and assets can never be driven
+    ///         far from where it starts.
     /// @param liquidity Liquidity just minted, which becomes the opening supply.
     function _bootstrapShares(uint128 liquidity) internal {
-        if (totalSupply() == 0 && liquidity != 0) _mint(msg.sender, liquidity);
+        if (totalSupply() != 0) return;
+        if (liquidity < _MIN_SHARES) revert SupplyTooSmall(liquidity, _MIN_SHARES);
+        _mint(msg.sender, liquidity);
     }
 
     /// @notice The sqrt ratios bounding a human price range, snapped to the pool's tick spacing.

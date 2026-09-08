@@ -111,6 +111,21 @@ side from the pool's current price. Both amounts must already be sitting in the 
 When the vault has no shares outstanding, the liquidity minted here becomes the opening share
 supply, credited to the caller. Shares and liquidity therefore start one-to-one.
 
+**The supply is never allowed to be small.** A deposit's share count is a floor division by the
+supply, so the truncation is a fraction of the deposit set by how many shares exist relative to what
+stands behind them, and existing holders keep whatever is truncated away. Starting the supply at the
+opening liquidity makes that fraction negligible, but only if the ratio stays where it started, and
+there are two ways to drive it: open the vault with a negligible position, or redeem down to a
+residue and then fund the vault again. Both are refused. The opening liquidity must be at least a
+million units, and a redemption must either take everything or leave at least that many shares
+outstanding, so a depositor can lose at most a millionth of what they commit to rounding.
+
+This is the same failure the virtual-offset trick addresses in vaults that price shares off a
+balance, reached from the other end. A donation into this vault cannot be turned against the next
+depositor, because donated tokens are claimed pro-rata by every holder rather than by whoever
+deposits next. What that argument assumes, and what the floor supplies, is that the share supply is
+large enough for the pro-rata arithmetic to be fine-grained.
+
 ### 2. Depositing
 
 `deposit(amount, isAmount0, maxSlippageBps, deadline)` takes the same shape as `createPosition`: the

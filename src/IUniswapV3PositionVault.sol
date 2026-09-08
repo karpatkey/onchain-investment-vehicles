@@ -75,6 +75,13 @@ interface IUniswapV3PositionVault {
     /// @notice The operation would mint or burn zero shares.
     error ZeroShares();
 
+    /// @notice Thrown when an action would leave a share supply too small to price a deposit
+    ///         against, whether by opening the vault with a negligible position or by redeeming
+    ///         down to a residue.
+    /// @param supply  The share supply the action would leave outstanding.
+    /// @param minimum The smallest supply the vault will carry.
+    error SupplyTooSmall(uint256 supply, uint256 minimum);
+
     /// @notice The amounts moved fell short of the caller's minimums.
     /// @param amount0 Token0 the operation actually moved.
     /// @param amount1 Token1 the operation actually moved.
