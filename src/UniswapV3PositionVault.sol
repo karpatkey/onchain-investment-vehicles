@@ -220,25 +220,25 @@ contract UniswapV3PositionVault is
     ///         shared with this deposit. Amounts are pulled exactly, and the wei-level remainder
     ///         left by the pool's own rounding is returned in the same call.
     ///
-    ///         Both sides are bounded: the named one by the amount itself, and the other by
-    ///         maxCounterAmount. That second cap is what a depositor is really exposed to. The
-    ///         counter amount is whatever the position's ratio demands at execution, and that ratio
-    ///         is a steep function of price near a range boundary, so a sub-one-percent move can
-    ///         more than double it. A bound on the price cannot express that; a bound on the amount
-    ///         can, and it rejects a manipulated price as a side effect, because a manipulated price
-    ///         is exactly what makes the counter amount blow past the cap.
+    ///         Both sides are bounded: the named one by the amount itself, and the other by how far
+    ///         it may run past what this deposit would have cost at a fair price. The counter amount
+    ///         is whatever the position's ratio demands at execution, and near a range boundary that
+    ///         ratio is a steep function of price, so a sub-one-percent move can more than double
+    ///         it. The allowance is therefore measured against the amount rather than against the
+    ///         price, and the reference it is measured from is the pool's own time-weighted average,
+    ///         which nobody can move cheaply. A caller needs no quote of their own to use it.
     ///
-    ///         Nothing else needs a price guard here. Shares are issued in proportion to the
-    ///         liquidity the deposit adds, and liquidity does not depend on price, so the split
-    ///         between this depositor and the existing holders is fair whatever the pool is doing.
-    /// @param amount           Amount of the named token to commit.
-    /// @param isAmount0        True when the amount is token0, false when it is token1.
-    /// @param maxCounterAmount Most of the other token the caller will let the vault take.
-    /// @param deadline         Latest timestamp at which the deposit may execute.
+    ///         Because the allowance is on an amount, it is not a fraction of a price and is not
+    ///         capped at one hundred percent. A tight range can legitimately need a large one.
+    /// @param amount          Amount of the named token to commit.
+    /// @param isAmount0       True when the amount is token0, false when it is token1.
+    /// @param maxSlippageBps  How far the other token may run past what this deposit would cost at
+    ///                        the pool's average price, in basis points. 100 is one percent.
+    /// @param deadline        Latest timestamp at which the deposit may execute.
     /// @return shares  Shares minted to the caller.
     /// @return amount0 Token0 taken from the caller.
     /// @return amount1 Token1 taken from the caller.
-    function deposit(uint256 amount, bool isAmount0, uint256 maxCounterAmount, uint256 deadline)
+    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
         external
         nonReentrant
         checkDeadline(deadline)
@@ -261,13 +261,22 @@ contract UniswapV3PositionVault is
         uint256 idle0 = token0.balanceOf(address(this));
         uint256 idle1 = token1.balanceOf(address(this));
 
+        uint256 allowed;
+        {
+            (, uint160 sqrtTwapX96) = _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
+            uint256 fairCounter = UniswapV3VaultMath.referenceCounter(
+                sqrtTwapX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, amount, isAmount0
+            );
+            allowed = fairCounter + fairCounter * maxSlippageBps / _MAX_BPS;
+        }
+
         (uint256 targetShares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) = UniswapV3VaultMath.depositPlan(
             sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount, isAmount0
         );
 
         // The hard guarantee on both sides: never more of the named token than was committed, and
-        // never more of the other than the caller allowed.
-        if ((isAmount0 ? pulled0 : pulled1) > amount || (isAmount0 ? pulled1 : pulled0) > maxCounterAmount) {
+        // never more of the other than the fair price implied plus the caller's allowance.
+        if ((isAmount0 ? pulled0 : pulled1) > amount || (isAmount0 ? pulled1 : pulled0) > allowed) {
             revert SlippageExceeded(pulled0, pulled1);
         }
 
@@ -670,29 +679,6 @@ contract UniswapV3PositionVault is
         (uint256 total0, uint256 total1) = totalAssets();
         amount0 = UniswapV3VaultMath.idleShareDown(total0, shares, supply);
         amount1 = UniswapV3VaultMath.idleShareDown(total1, shares, supply);
-    }
-
-    /// @notice What a deposit of the given maxima would mint and cost.
-    /// @dev    Indicative, on the same terms as previewRedeem.
-    /// @param amount    Amount of the named token the caller would commit.
-    /// @param isAmount0 True when that amount is token0.
-    /// @return shares  Shares the deposit would mint.
-    /// @return amount0 Token0 the deposit would take.
-    /// @return amount1 Token1 the deposit would take.
-    function previewDeposit(uint256 amount, bool isAmount0)
-        external
-        view
-        returns (uint256 shares, uint256 amount0, uint256 amount1)
-    {
-        uint256 supply = totalSupply();
-        if (supply == 0) return (0, 0, 0);
-
-        (uint256 total0, uint256 total1) = totalAssets();
-        shares = UniswapV3VaultMath.sharesForSide(amount, isAmount0 ? total0 : total1, supply);
-        if (shares == 0) return (0, 0, 0);
-
-        amount0 = UniswapV3VaultMath.idleShare(total0, shares, supply);
-        amount1 = UniswapV3VaultMath.idleShare(total1, shares, supply);
     }
 
     /// @notice Converts a human price into the pool's Q64.96 sqrt ratio.

@@ -308,6 +308,45 @@ library UniswapV3VaultMath {
         return FullMath.mulDiv(amount, supply, total);
     }
 
+    /// @notice What the unnamed side of a deposit would cost at a reference price.
+    /// @dev    The counter amount a deposit actually charges is set by the pool's spot price, which
+    ///         anyone can move. Pricing the same deposit at the pool's time-weighted average gives a
+    ///         figure nobody can move cheaply, which is what a caller's slippage allowance is
+    ///         measured against.
+    ///
+    ///         It prices the whole claim, position and idle together, exactly as the real charge
+    ///         does, so the two are comparable even when a rebalance has left a large one-sided
+    ///         surplus sitting in the vault.
+    /// @param sqrtPriceX96  The reference price, in practice the average rather than the spot.
+    /// @param sqrtRatioAX96 The position's lower sqrt ratio.
+    /// @param sqrtRatioBX96 The position's upper sqrt ratio.
+    /// @param liquidity     The position's current liquidity.
+    /// @param idle0         Token0 sitting idle in the vault.
+    /// @param idle1         Token1 sitting idle in the vault.
+    /// @param amount        The amount of the named token.
+    /// @param isAmount0     True when that amount is token0.
+    /// @return The amount of the other token the deposit would cost at that price.
+    function referenceCounter(
+        uint160 sqrtPriceX96,
+        uint160 sqrtRatioAX96,
+        uint160 sqrtRatioBX96,
+        uint128 liquidity,
+        uint256 idle0,
+        uint256 idle1,
+        uint256 amount,
+        bool isAmount0
+    ) public pure returns (uint256) {
+        (uint256 total0, uint256 total1) =
+            amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, false);
+        total0 += idle0;
+        total1 += idle1;
+
+        uint256 named = isAmount0 ? total0 : total1;
+        if (named == 0) revert IUniswapV3PositionVault.AmountSideNotUsable();
+
+        return FullMath.mulDiv(amount, isAmount0 ? total1 : total0, named);
+    }
+
     /// @notice What a deposit of the given share count costs and how much liquidity it buys.
     /// @dev    Splits the cost into the part that funds new liquidity and the part that buys into
     ///         the idle balances. The liquidity part rounds up because that is what the pool charges

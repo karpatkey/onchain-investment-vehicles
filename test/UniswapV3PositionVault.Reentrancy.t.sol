@@ -34,6 +34,9 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
     uint24 internal constant FEE = 3000;
 
+    /// @dev A relative allowance wide enough never to be the binding constraint here.
+    uint16 internal constant GENEROUS_SLIPPAGE_BPS = 20_000;
+
     /// @dev Both tokens have 18 decimals and the mock pool sits at tick 0, so its human price is
     ///      exactly 1e18 and a range of a half to double straddles it comfortably.
     uint256 internal constant PRICE_LOWER = 0.5e18;
@@ -100,17 +103,17 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         // While the vault is inside deposit and has handed control to the position manager, try to
         // start a second deposit.
         manager.armIncreaseAttack(
-            address(vault), abi.encodeCall(vault.deposit, (100e18, true, type(uint256).max, block.timestamp + 1))
+            address(vault), abi.encodeCall(vault.deposit, (100e18, true, uint16(20_000), block.timestamp + 1))
         );
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
-        vault.deposit(1000e18, true, type(uint256).max, block.timestamp);
+        vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
     }
 
     function test_reentrancy_redeemCannotReenterFromThePositionManager() public {
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(1000e18, true, type(uint256).max, block.timestamp);
+        (uint256 shares,,) = vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
 
         // Compounding runs first on a redemption, so the manager gets control before the burn.
         manager.creditFees(vault.activeTokenId(), 50e18, 50e18);
@@ -134,7 +137,7 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
     function test_reentrancy_rebalanceCannotReenterFromTheSwap() public {
         vm.prank(alice);
-        vault.deposit(1000e18, true, type(uint256).max, block.timestamp);
+        vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
 
         // Leave the vault holding only token0, so the rebalance has to swap.
         vm.prank(curator);

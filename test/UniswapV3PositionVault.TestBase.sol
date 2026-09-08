@@ -67,6 +67,10 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
     address internal stranger = makeAddr("stranger");
     address internal recoverer = makeAddr("recoverer");
 
+    /// @dev A relative allowance wide enough that these deposits are never the binding constraint.
+    ///      It is a fraction of an amount, not of a price, so values above 10000 are meaningful.
+    uint16 internal constant GENEROUS_SLIPPAGE_BPS = 20_000;
+
     uint32 internal constant TWAP_PERIOD = 300;
     uint16 internal constant MAX_DEVIATION_BPS = 500;
 

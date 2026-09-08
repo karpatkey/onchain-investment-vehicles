@@ -55,11 +55,12 @@ contract VaultHandler is Test {
     /// @notice Buys shares as one of the investors.
     function deposit(uint256 actorSeed, uint256 amount0, uint256 amount1) external {
         address actor = actors[actorSeed % actors.length];
-        amount0 = bound(amount0, 1e6, 200_000e6);
-        amount1 = bound(amount1, 1e15, 200e18);
+        // The second seed picks which side the depositor names, so sequences exercise both.
+        bool isAmount0 = amount1 % 2 == 0;
+        uint256 amount = isAmount0 ? bound(amount0, 1e6, 200_000e6) : bound(amount0, 1e15, 200e18);
 
         vm.prank(actor);
-        try vault.deposit(amount0, true, type(uint256).max, block.timestamp) {
+        try vault.deposit(amount, isAmount0, 20_000, block.timestamp) {
             deposits++;
         } catch {}
     }

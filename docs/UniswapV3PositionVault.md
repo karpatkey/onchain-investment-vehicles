@@ -113,22 +113,31 @@ supply, credited to the caller. Shares and liquidity therefore start one-to-one.
 
 ### 2. Depositing
 
-`deposit(amount, isAmount0, maxCounterAmount, deadline)` takes the same shape as `createPosition`:
-the investor names how much of **one** token to commit and the vault derives the other side from the
+`deposit(amount, isAmount0, maxSlippageBps, deadline)` takes the same shape as `createPosition`: the
+investor names how much of **one** token to commit and the vault derives the other side from the
 position's current ratio. Amounts are pulled exactly, and the wei-level remainder left by the pool's
 rounding is returned in the same call.
 
-**Both sides are bounded**, the named one by the amount itself and the other by `maxCounterAmount`.
-That second cap is the one that matters. The counter amount is whatever the ratio demands at
-execution, and near a range boundary that ratio is a steep function of price: on the mainnet
-USDC/WETH pool with a range one percent wide, a 0.4% move more than doubles it. A bound stated in
-basis points of the price cannot express that, which is why the cap is an amount. It rejects a
-manipulated price as a side effect, because a manipulated price is exactly what pushes the counter
-amount past the cap.
+**Both sides are bounded**, the named one by the amount itself and the other by how far it may run
+past what the same deposit would have cost at a fair price. That second bound is the one that
+matters, and two details make it work.
 
-Nothing else here needs a price guard. Shares are issued in proportion to the liquidity the deposit
-adds, and liquidity does not depend on price, so the split between a new depositor and the existing
-holders is fair whatever the pool is doing.
+It is measured against an **amount**, not a price. The counter amount is whatever the ratio demands
+at execution, and near a range boundary that ratio is a steep function of price: on the mainnet
+USDC/WETH pool with a range one percent wide, a 0.4% move more than doubles it. A percentage of the
+price cannot express that; a percentage of the amount can.
+
+The reference it is measured from is the counter amount at the pool's **time-weighted average
+price**, not at spot. Spot is what anyone can move, so measuring against it would be circular. The
+average is not cheap to move, and using it means the caller needs no quote of their own: the vault
+works out what fair costs, and the caller only says how far past that they will go.
+
+Because the allowance is a fraction of an amount rather than of a price, it is not capped at one
+hundred percent. A tight range can legitimately need a large one.
+
+Nothing else here needs a separate price guard. Shares are issued in proportion to the liquidity the
+deposit adds, and liquidity does not depend on price, so the split between a new depositor and the
+existing holders is fair whatever the pool is doing.
 
 ### 3. Redeeming
 
