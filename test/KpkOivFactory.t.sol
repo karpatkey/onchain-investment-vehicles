@@ -1395,6 +1395,22 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(factory.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
     }
 
+    /// @notice `onlyOwner` on this setter had NO coverage — deleting the modifier left the whole
+    ///         suite green. It is the single lever that decides which contract mints every future
+    ///         timelocked fund's governance: a hostile deployer hands each new fund a timelock whose
+    ///         proposers it controls, and that timelock receives both the exec Roles Modifier and the
+    ///         shares DEFAULT_ADMIN_ROLE.
+    function test_setTimelockDeployer_isOwnerOnly() public {
+        address stranger = makeAddr("timelockDeployerStranger");
+        address hostile = address(new KpkTimelockDeployer(address(new TimelockControllerUpgradeable())));
+
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        factory.setTimelockDeployer(hostile);
+
+        assertEq(factory.timelockDeployer(), address(timelockDeployer), "the wiring must be unchanged");
+    }
+
     function test_setTimelockDeployer_emitsEvent() public {
         address newDeployer = makeAddr("newTimelockDeployer");
         vm.expectEmit(true, true, true, true, address(factory));
@@ -1421,6 +1437,37 @@ contract KpkOivFactoryTest is OivTestConstants {
         oivConfig.execTimelock = _timelockParams(2 days);
         vm.expectRevert(KpkOivFactory.TimelockDeployerNotSet.selector);
         bare.deployOiv(oivConfig);
+    }
+
+    /// @notice The same fail-fast property on `deployStack`, which matters more than on `deployOiv`:
+    ///         this is the CCIP destination's entry point, so the gas burned before the revert is a
+    ///         cross-chain fee already spent on the source chain. Without the guard the revert comes
+    ///         from `_requireTimelockDeployer` inside `_deployAndWireStack`, after both Safes and all
+    ///         three Roles Modifiers are deployed.
+    function test_deployStack_timelockWithNoDeployerFailsBeforeDeployingAnything() public {
+        vm.prank(factoryOwner);
+        KpkOivFactory bare = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(new KpkShares()),
+            address(0)
+        );
+
+        KpkOivFactory.StackConfig memory cfg = factory.oivToStackConfig(oivConfig);
+        cfg.execTimelock = _timelockParams(2 days);
+
+        uint256 before = gasleft();
+        try bare.deployStack(cfg) {
+            revert("must have reverted");
+        } catch {}
+        uint256 spent = before - gasleft();
+
+        assertLt(spent, 400_000, "the guard must reject before the stack is deployed, not after");
     }
 
     /// @notice The guard above must fail FAST, and only a gas assertion can tell. Without the

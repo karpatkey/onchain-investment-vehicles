@@ -306,6 +306,30 @@ contract KpkTimelockDeployerTest is Test {
     ///         address, schedule and execute `revokeRole` on the instance itself to strip the veto,
     ///         and then let the factory adopt an address that still matches its prediction.
     ///         Adoption must reject it.
+    /// @notice The symmetric case to the veto-stripped test below, which a mutation sweep found had
+    ///         no coverage: `_requireLiveConfigMatches` checks the proposer set with its own loop,
+    ///         and deleting that loop failed no test. A timelock whose PROPOSERS were reduced would
+    ///         then have been adopted as matching — handing a fund to governance narrower than its
+    ///         config describes, which is the direction that concentrates power rather than
+    ///         removing a safeguard.
+    function test_adoption_rejectsAPreDeployedTimelockWithAProposerStripped() public {
+        TimelockParams memory p = _params();
+        address predicted = kit.predictExecTimelock(execMod, p);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer present at construction");
+
+        bytes memory payload = abi.encodeCall(tl.revokeRole, (tl.PROPOSER_ROLE(), superadminSafe));
+        vm.prank(governanceSafe);
+        tl.schedule(address(tl), 0, payload, bytes32(0), bytes32(0), 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(address(tl), 0, payload, bytes32(0), bytes32(0));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer stripped");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TimelockStateMismatch.selector, predicted));
+        kit.deployExecTimelock(execMod, p);
+    }
+
     function test_adoption_rejectsAPreDeployedTimelockWithTheVetoStripped() public {
         TimelockParams memory p = _params();
         address predicted = kit.predictExecTimelock(execMod, p);
