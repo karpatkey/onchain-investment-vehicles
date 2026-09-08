@@ -300,6 +300,20 @@ modelled and can end up marginally worse than not swapping, bounded by the pool 
 traded within the price-impact cap. The shortfall stays idle rather than being lost, because the
 mint runs against the balances actually held afterwards.
 
+The search may probe anywhere strictly inside the range. Uniswap's `getLiquidityForAmount0/1` end in
+a `uint128` cast that reverts with no error data once a balance would fund more liquidity than that,
+which happens for any price close enough to the edge that balance funds — exactly where the crossing
+sits when the balances are lopsided. This library's saturating counterparts return "more than a
+`uint128` holds" instead, so the only prices excluded are the two edges themselves, where the interval
+closes completely and the division has no answer. A saturated result is a boundary marker rather than
+a magnitude, so it is never allowed to win the comparison it appears in.
+
+Whatever the search picks is then checked once more at the price that amount genuinely reaches, and
+dropped if it does not beat leaving the balances alone. The amount needed to reach a price and the
+price reached by an amount are inverses only up to rounding, and on a range a tick or two wide a price
+off by one wei changes the mintable liquidity materially. That final check is what makes "a swap is
+never worse than doing nothing" true by construction rather than by argument.
+
 The model is exact while the swap stays inside the current tick interval, which is the normal case.
 If it crosses an initialized tick the realised price differs slightly, which is why step 7 re-reads
 the pool and mints against the balances actually held. The residue stays idle, is still owned
@@ -327,7 +341,15 @@ then it stays owned pro-rata by every holder, claimed in full by anyone who rede
 
 ## Safety Considerations
 
-### 0. Staleness
+### 0. A window the pool can answer
+
+`twapPeriod` is checked against the pool when it is set, at `initialize` and at `setTwapConfig`, not
+only when it is first used. Every guarded path asks the pool to average over that window, so one the
+pool has no observation history for would leave the vault unable to take a deposit or move its
+position until somebody else grew the pool's observation buffer. Checking it where it is set turns
+that into a rejected transaction instead of a vault that has to be waited out.
+
+### 0.1 Staleness
 
 Every function that takes a price as an argument also takes a deadline, and the guards below cannot
 stand in for one. Both the manipulation guard and a deposit's slippage allowance are measured against the pool's

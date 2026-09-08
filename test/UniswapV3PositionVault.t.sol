@@ -849,6 +849,40 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vault.collectFees(block.timestamp);
     }
 
+    function test_setTwapConfig_refusesAWindowThePoolCannotAnswer() public {
+        // Every guarded path asks the pool for this window, so accepting one the pool has no history
+        // for would leave the vault unable to take a deposit or move its position until somebody
+        // else grew the pool's observation buffer. The window is checked where it is set instead.
+        vm.prank(admin);
+        vm.expectPartialRevert(IUniswapV3PositionVault.TwapUnavailable.selector);
+        vault.setTwapConfig(type(uint32).max, 200);
+
+        // A window the pool can answer is still accepted.
+        vm.prank(admin);
+        vault.setTwapConfig(600, 200);
+        assertEq(vault.twapPeriod(), 600, "a window with history behind it is fine");
+    }
+
+    function test_initialize_refusesAWindowThePoolCannotAnswer() public {
+        IUniswapV3PositionVault.InitParams memory params = IUniswapV3PositionVault.InitParams({
+            name: "n",
+            symbol: "s",
+            admin: admin,
+            curator: curator,
+            assetRecoverer: recoverer,
+            positionManager: POSITION_MANAGER,
+            token0: USDC,
+            token1: WETH,
+            fee: FEE,
+            twapPeriod: type(uint32).max,
+            maxTwapDeviationBps: MAX_DEVIATION_BPS
+        });
+
+        address implementation = address(new UniswapV3PositionVault());
+        vm.expectPartialRevert(IUniswapV3PositionVault.TwapUnavailable.selector);
+        UnsafeUpgrades.deployUUPSProxy(implementation, abi.encodeCall(UniswapV3PositionVault.initialize, (params)));
+    }
+
     function test_setTwapConfig_validatesAndEmits() public {
         vm.startPrank(admin);
         vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);

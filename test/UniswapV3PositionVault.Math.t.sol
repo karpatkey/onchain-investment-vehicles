@@ -22,6 +22,14 @@ contract MathHarness {
         return UniswapV3VaultMath.ceilToSpacing(tick, spacing);
     }
 
+    function liquidityForAmount0Saturating(uint160 a, uint160 b, uint256 amount0) external pure returns (uint128) {
+        return UniswapV3VaultMath.liquidityForAmount0Saturating(a, b, amount0);
+    }
+
+    function liquidityForAmount1Saturating(uint160 a, uint160 b, uint256 amount1) external pure returns (uint128) {
+        return UniswapV3VaultMath.liquidityForAmount1Saturating(a, b, amount1);
+    }
+
     function mintableLiquidity(uint160 p, uint160 a, uint160 b, uint256 amount0, uint256 amount1)
         external
         pure
@@ -565,8 +573,8 @@ contract UniswapV3PositionVaultMathTest is Test {
         (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
 
         // The two extremes are both bad here: spending everything drives the price out of the range
-        // and mints nothing, and spending nothing mints 208. The answer is the endpoint the search is
-        // allowed to reach, and it has to beat both.
+        // and mints nothing, and spending nothing mints 208. The answer is the crossing between
+        // them, and it has to beat both.
         assertGt(
             _mintableAfter(params, sells, amountIn),
             _mintableAfter(params, sells, 0),
@@ -579,14 +587,13 @@ contract UniswapV3PositionVaultMathTest is Test {
         );
     }
 
-    function test_solveSwap_isNotOptimalWhenTheCrossingIsInsideTheMargin() public pure {
-        // A known limitation, pinned so it is not mistaken for a bug later and so the day it is
-        // fixed this test fails and says so. The search is held a sixty-fourth of the range clear of
-        // both edges, because Uniswap's getLiquidityForAmount0/1 cast to uint128 and revert with no
-        // data for a price any nearer. When the crossing falls inside that sliver the best reachable
-        // answer is the margin itself, which here is far short of the true optimum. Closing the gap
-        // means making the liquidity maths saturate instead of revert, which touches the mint path
-        // too; see the pull request's Outstanding section.
+    function test_solveSwap_reachesACrossingThatSitsNextToTheRangeEdge() public pure {
+        // The crossing here sits close enough to the lower edge that the search could not once look
+        // at it: Uniswap's getLiquidityForAmount0/1 cast to uint128 and revert with no error data
+        // for a price that near, so the search was held a sixty-fourth of the range clear of both
+        // edges and returned the margin instead. That cost six orders of magnitude — 2.07e19 minted
+        // against an achievable 2.69e25. The caps saturate now rather than revert, the exclusion is
+        // down to a single wei, and the crossing is reachable wherever it falls.
         UniswapV3VaultMath.SwapParams memory params = UniswapV3VaultMath.SwapParams({
             sqrtPriceX96: TickMath.getSqrtRatioAtTick(1),
             sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-95),
@@ -599,14 +606,63 @@ contract UniswapV3PositionVaultMathTest is Test {
 
         (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
 
-        // Reaching the margin mints about 2.07e19; a swap of 1e16, inside the excluded sliver, mints
-        // about 2.69e25. The solver's answer is a large improvement on both extremes and still short
-        // of what the model could do.
-        assertLt(
+        // 1e16 is the best a coarse sweep of the objective finds. The search has to match it or beat
+        // it, rather than stopping at a margin short of it.
+        assertGe(
             _mintableAfter(params, sells, amountIn),
             _mintableAfter(params, sells, 1e16),
-            "the excluded sliver still holds a better answer"
+            "the search must reach the crossing, not stop at a margin short of it"
         );
+        assertGt(_mintableAfter(params, sells, amountIn), 1e25, "and that is worth six orders of magnitude");
+    }
+
+    function test_liquidityForAmount_saturatesInsteadOfRevertingAtAnEdge() public view {
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(-60);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(60);
+
+        // One wei of interval and a real balance: the honest answer is more liquidity than a uint128
+        // holds. Uniswap's own helpers revert here with no error data, which is what used to make
+        // the swap search unable to look near a range edge at all.
+        assertEq(
+            harness.liquidityForAmount0Saturating(sqrtA, sqrtA + 1, 1e18), type(uint128).max, "token0 side saturates"
+        );
+        assertEq(
+            harness.liquidityForAmount1Saturating(sqrtB - 1, sqrtB, 1e18), type(uint128).max, "token1 side saturates"
+        );
+
+        // Away from the edge it is Uniswap's own number, unchanged.
+        assertEq(
+            harness.liquidityForAmount0Saturating(sqrtA, sqrtB, 1e18),
+            LiquidityAmounts.getLiquidityForAmount0(sqrtA, sqrtB, 1e18),
+            "token0 side matches upstream where upstream has an answer"
+        );
+        assertEq(
+            harness.liquidityForAmount1Saturating(sqrtA, sqrtB, 1e18),
+            LiquidityAmounts.getLiquidityForAmount1(sqrtA, sqrtB, 1e18),
+            "token1 side matches upstream where upstream has an answer"
+        );
+    }
+
+    function testFuzz_liquidityForAmount_matchesUpstreamWhereverUpstreamAnswers(
+        uint256 amountSeed,
+        uint16 widthSeed,
+        bool isAmount0
+    ) public view {
+        uint256 amount = bound(amountSeed, 1, 1e24);
+        int24 width = int24(int256(bound(uint256(widthSeed), 1, 20_000)));
+
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(-width);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(width);
+
+        // Saturation must change nothing except the ceiling. Wherever Uniswap returns a number, the
+        // saturating version returns the same one.
+        if (isAmount0) {
+            uint128 upstream = LiquidityAmounts.getLiquidityForAmount0(sqrtA, sqrtB, amount);
+            assertEq(harness.liquidityForAmount0Saturating(sqrtA, sqrtB, amount), upstream, "token0 side agrees");
+        } else {
+            uint128 upstream = LiquidityAmounts.getLiquidityForAmount1(sqrtA, sqrtB, amount);
+            assertEq(harness.liquidityForAmount1Saturating(sqrtA, sqrtB, amount), upstream, "token1 side agrees");
+        }
     }
 
     function testFuzz_solveSwap_neverPicksASwapWorseThanNotSwapping(

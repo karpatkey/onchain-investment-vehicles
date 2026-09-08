@@ -3,7 +3,9 @@ pragma solidity ^0.8.0;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
+import {IUniswapV3Pool} from "../interfaces/IUniswapV3Pool.sol";
 import {IUniswapV3PositionVault} from "../IUniswapV3PositionVault.sol";
+import {FixedPoint96} from "./uniswap/FixedPoint96.sol";
 import {FullMath} from "./uniswap/FullMath.sol";
 import {LiquidityAmounts} from "./uniswap/LiquidityAmounts.sol";
 import {SqrtPriceMath} from "./uniswap/SqrtPriceMath.sol";
@@ -212,6 +214,98 @@ library UniswapV3VaultMath {
         }
     }
 
+    /// @notice Drops a swap that would not actually beat leaving the balances alone.
+    /// @dev    The search ranks candidates at the price it is probing, having worked out what the
+    ///         amount to reach that price would be. Those two are inverses of each other only up to
+    ///         rounding, and for a range a tick or two wide a price off by a wei changes the
+    ///         mintable liquidity materially — so the price a chosen amount really reaches can mint
+    ///         a little less than the probe said. Everything the search returns is therefore checked
+    ///         once more against the price the amount genuinely reaches, and dropped if it does not
+    ///         beat not swapping. That makes "never worse than doing nothing" true by construction
+    ///         rather than by argument.
+    /// @param params      The sizing inputs.
+    /// @param zeroForOne  Whether token0 is the side being sold.
+    /// @param amountIn    The candidate amount.
+    /// @param mintNone    Mintable liquidity if nothing is swapped.
+    /// @return The amount, or zero if it does not beat leaving the balances alone.
+    function _verifyForward(SwapParams memory params, bool zeroForOne, uint256 amountIn, uint128 mintNone)
+        private
+        pure
+        returns (uint256)
+    {
+        if (amountIn == 0) return 0;
+
+        uint256 net = FullMath.mulDiv(amountIn, FEE_DENOMINATOR - params.feePips, FEE_DENOMINATOR);
+        if (net == 0) return 0;
+
+        uint160 reached =
+            SqrtPriceMath.getNextSqrtPriceFromInput(params.sqrtPriceX96, params.poolLiquidity, net, zeroForOne);
+
+        return rankable(_mintableAfterSwap(params, reached, zeroForOne, amountIn)) > mintNone ? amountIn : 0;
+    }
+
+    /// @notice The liquidity a candidate mints, or zero when that number cannot be ranked.
+    /// @dev    Saturating the caps is what lets the search look right up to a range edge, but a
+    ///         saturated result says only "more than a uint128 holds", which is a boundary marker
+    ///         rather than a magnitude. Ranking one against a candidate that has a real number would
+    ///         let the marker win on the strength of being large, and for a range only a tick or two
+    ///         wide both sides can saturate at once. A candidate the model cannot size is therefore
+    ///         dropped instead: the search only ever picks something it can measure and that beats
+    ///         leaving the balances alone.
+    /// @param liquidity The candidate's mintable liquidity.
+    /// @return The same value, or zero when it saturated.
+    function rankable(uint128 liquidity) internal pure returns (uint128) {
+        return liquidity == type(uint128).max ? 0 : liquidity;
+    }
+
+    /// @notice Liquidity a token0 balance funds over a sqrt-price interval, saturating at uint128.
+    /// @dev    Uniswap's getLiquidityForAmount0 ends in a uint128 cast that reverts, with no error
+    ///         data, whenever the balance would fund more liquidity than that. The liquidity a
+    ///         balance funds grows without bound as the interval closes, so the cast fails for any
+    ///         price close enough to the edge that balance funds — which is exactly where the swap
+    ///         search needs to look. Saturating says the honest thing instead: more than the vault
+    ///         could ever mint. The formula is Uniswap's, unchanged; only the ceiling differs, and
+    ///         the threshold is computed with the same 512-bit mulDiv so it cannot overflow.
+    /// @param sqrtRatioAX96 One end of the interval.
+    /// @param sqrtRatioBX96 The other end.
+    /// @param amount0       The token0 balance.
+    /// @return The liquidity funded, capped at uint128 max.
+    function liquidityForAmount0Saturating(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint256 amount0)
+        internal
+        pure
+        returns (uint128)
+    {
+        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+        uint256 delta = sqrtRatioBX96 - sqrtRatioAX96;
+        if (delta == 0) return type(uint128).max;
+
+        uint256 intermediate = FullMath.mulDiv(sqrtRatioAX96, sqrtRatioBX96, FixedPoint96.Q96);
+        // A price low enough that the product underflows the Q96 shift funds unbounded liquidity.
+        if (intermediate == 0) return amount0 == 0 ? 0 : type(uint128).max;
+
+        if (amount0 > FullMath.mulDiv(type(uint128).max, delta, intermediate)) return type(uint128).max;
+        return uint128(FullMath.mulDiv(amount0, intermediate, delta));
+    }
+
+    /// @notice Liquidity a token1 balance funds over a sqrt-price interval, saturating at uint128.
+    /// @dev    The token1 twin of liquidityForAmount0Saturating, for the same reason.
+    /// @param sqrtRatioAX96 One end of the interval.
+    /// @param sqrtRatioBX96 The other end.
+    /// @param amount1       The token1 balance.
+    /// @return The liquidity funded, capped at uint128 max.
+    function liquidityForAmount1Saturating(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint256 amount1)
+        internal
+        pure
+        returns (uint128)
+    {
+        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+        uint256 delta = sqrtRatioBX96 - sqrtRatioAX96;
+        if (delta == 0) return type(uint128).max;
+
+        if (amount1 > FullMath.mulDiv(type(uint128).max, delta, FixedPoint96.Q96)) return type(uint128).max;
+        return uint128(FullMath.mulDiv(amount1, FixedPoint96.Q96, delta));
+    }
+
     /// @notice Liquidity each token balance can independently support in a range at a given price.
     /// @dev    Outside the range one side is dead weight and reports zero: a range entirely above
     ///         the price is funded by token0 alone, and one entirely below it by token1 alone. The
@@ -231,12 +325,12 @@ library UniswapV3VaultMath {
         uint256 amount1
     ) internal pure returns (uint128 cap0, uint128 cap1) {
         if (sqrtPriceX96 <= sqrtRatioAX96) {
-            cap0 = LiquidityAmounts.getLiquidityForAmount0(sqrtRatioAX96, sqrtRatioBX96, amount0);
+            cap0 = liquidityForAmount0Saturating(sqrtRatioAX96, sqrtRatioBX96, amount0);
         } else if (sqrtPriceX96 >= sqrtRatioBX96) {
-            cap1 = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtRatioBX96, amount1);
+            cap1 = liquidityForAmount1Saturating(sqrtRatioAX96, sqrtRatioBX96, amount1);
         } else {
-            cap0 = LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, sqrtRatioBX96, amount0);
-            cap1 = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtPriceX96, amount1);
+            cap0 = liquidityForAmount0Saturating(sqrtPriceX96, sqrtRatioBX96, amount0);
+            cap1 = liquidityForAmount1Saturating(sqrtRatioAX96, sqrtPriceX96, amount1);
         }
     }
 
@@ -535,17 +629,12 @@ library UniswapV3VaultMath {
         // inside an edge asks for a liquidity that does not fit in the uint128 Uniswap casts to,
         // and the cast reverts with no data. That is reachable whenever the balance being sold
         // could push the price past the far edge, which is the ordinary case for a narrow range and
-        // exactly what this function exists to handle. Backing off by a sixty-fourth of the range
-        // does cost something, and it is worth naming rather than waving away: the crossing the
-        // search looks for is where the two sides fund equal liquidity, and for balances lopsided
-        // enough that the target composition is within a sixty-fourth of being one-sided, that
-        // crossing sits inside the sliver where the search can no longer place a probe. Both
-        // endpoint returns below therefore compare against not swapping instead of assuming the
-        // extreme is best.
-        uint160 margin = uint160((uint256(sqrtB) - uint256(sqrtA)) >> 6);
-        if (margin == 0) margin = 1;
-        uint160 innerLow = sqrtA + margin;
-        uint160 innerHigh = sqrtB - margin;
+        // exactly what this function exists to handle. The caps saturate rather than revert now, so
+        // the only prices still worth excluding are the two edges themselves, where the interval
+        // closes completely and the division has no answer at all. One wei of sqrt price is enough,
+        // which leaves the crossing reachable wherever it actually falls.
+        uint160 innerLow = sqrtA + 1;
+        uint160 innerHigh = sqrtB - 1;
 
         uint160 lo;
         uint160 hi;
@@ -580,12 +669,12 @@ library UniswapV3VaultMath {
         // at most the pool fee on the amount traded within the caller's price-impact cap. The caller
         // mints from the balances it actually holds afterwards, so the shortfall stays idle rather
         // than being lost.
-        uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
+        uint128 mintNone = rankable(mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1));
 
         // No interior to search at all: the only prices reachable are here and the far end.
         if (degenerate) {
-            uint128 mintEverything = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
-            return (zeroForOne, mintEverything > mintNone ? budget : 0);
+            uint128 mintEverything = rankable(_mintableAfterSwap(params, spentAll, zeroForOne, budget));
+            return (zeroForOne, _verifyForward(params, zeroForOne, mintEverything > mintNone ? budget : 0, mintNone));
         }
 
         // The sold side is still in surplus at the far endpoint, so the crossing is at or past it and
@@ -598,11 +687,13 @@ library UniswapV3VaultMath {
             uint256 inAtEndpoint = _amountInForPrice(params, hi, zeroForOne);
             if (inAtEndpoint > budget) inAtEndpoint = budget;
 
-            uint128 mintAtEndpoint = _mintableAfterSwap(params, hi, zeroForOne, inAtEndpoint);
-            uint128 mintEverything = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
+            uint128 mintAtEndpoint = rankable(_mintableAfterSwap(params, hi, zeroForOne, inAtEndpoint));
+            uint128 mintEverything = rankable(_mintableAfterSwap(params, spentAll, zeroForOne, budget));
 
-            if (mintEverything >= mintAtEndpoint) return (zeroForOne, mintEverything > mintNone ? budget : 0);
-            return (zeroForOne, mintAtEndpoint > mintNone ? inAtEndpoint : 0);
+            uint256 pick = mintEverything >= mintAtEndpoint
+                ? (mintEverything > mintNone ? budget : 0)
+                : (mintAtEndpoint > mintNone ? inAtEndpoint : 0);
+            return (zeroForOne, _verifyForward(params, zeroForOne, pick, mintNone));
         }
 
         // Bisect between the surplus endpoint and the deficit endpoint.
@@ -623,13 +714,14 @@ library UniswapV3VaultMath {
         if (inAtLo > budget) inAtLo = budget;
         if (inAtHi > budget) inAtHi = budget;
 
-        uint128 mintAtLo = _mintableAfterSwap(params, lo, zeroForOne, inAtLo);
-        uint128 mintAtHi = _mintableAfterSwap(params, hi, zeroForOne, inAtHi);
+        uint128 mintAtLo = rankable(_mintableAfterSwap(params, lo, zeroForOne, inAtLo));
+        uint128 mintAtHi = rankable(_mintableAfterSwap(params, hi, zeroForOne, inAtHi));
 
         uint128 best;
         (best, amountIn) = mintAtHi > mintAtLo ? (mintAtHi, inAtHi) : (mintAtLo, inAtLo);
 
         if (mintNone >= best) amountIn = 0;
+        amountIn = _verifyForward(params, zeroForOne, amountIn, mintNone);
     }
 
     /// @notice Whether the token being sold would still be in surplus at a candidate price.
@@ -922,6 +1014,24 @@ library UniswapV3VaultMath {
     /// @return The amount to size the purchase against.
     function _lessHeadroom(uint256 amount) private pure returns (uint256) {
         return amount > ROUNDING_HEADROOM ? amount - ROUNDING_HEADROOM : 0;
+    }
+
+    /// @notice Reverts unless the pool can answer a window this long.
+    /// @dev    Every guarded path asks the pool for this window, so one the pool has no history for
+    ///         leaves the vault unable to take a deposit or move its position until somebody else
+    ///         grows the pool's observation buffer. Asking where the window is set turns that into
+    ///         a rejected transaction rather than a vault that has to be waited out.
+    /// @param pool   The pool whose observations are being asked for.
+    /// @param period The window, in seconds.
+    function requireTwapAvailable(IUniswapV3Pool pool, uint32 period) public view {
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = period;
+
+        try pool.observe(secondsAgos) returns (int56[] memory, uint160[] memory) {}
+        catch {
+            (,,, uint16 cardinality,,,) = pool.slot0();
+            revert IUniswapV3PositionVault.TwapUnavailable(period, cardinality);
+        }
     }
 
     /// @notice Reverts unless a spot price is within the tolerance of its own recent average.

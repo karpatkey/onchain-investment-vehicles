@@ -181,6 +181,7 @@ contract UniswapV3PositionVault is
         positionManager = INonfungiblePositionManager(params.positionManager);
         fee = params.fee;
         tickSpacing = IUniswapV3Pool(poolAddress).tickSpacing();
+        UniswapV3VaultMath.requireTwapAvailable(pool, params.twapPeriod);
         twapPeriod = params.twapPeriod;
         maxTwapDeviationBps = params.maxTwapDeviationBps;
         assetRecoverer = params.assetRecoverer;
@@ -541,7 +542,11 @@ contract UniswapV3PositionVault is
         checkDeadline(deadline)
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
-        return _rebalance(priceLower, priceUpper, false, 0, twapPeriod, maxTwapDeviationBps);
+        return _rebalance(
+            priceLower,
+            priceUpper,
+            Move({withSwap: false, maxPriceImpactBps: 0, window: twapPeriod, deviationBps: maxTwapDeviationBps})
+        );
     }
 
     /// @notice Moves the vault's liquidity into a new price range, trading to fit it.
@@ -592,7 +597,11 @@ contract UniswapV3PositionVault is
         if (maxPriceImpactBps == 0 || maxPriceImpactBps > _MAX_BPS) revert InvalidArguments();
 
         (uint32 window, uint16 deviation) = _strictestGuard(twapWindow, maxDeviationBps);
-        return _rebalance(priceLower, priceUpper, true, maxPriceImpactBps, window, deviation);
+        return _rebalance(
+            priceLower,
+            priceUpper,
+            Move({withSwap: true, maxPriceImpactBps: maxPriceImpactBps, window: window, deviationBps: deviation})
+        );
     }
 
     /// @notice The stricter of a caller's manipulation-guard settings and the vault's own.
@@ -623,6 +632,7 @@ contract UniswapV3PositionVault is
     /// @param newMaxTwapDeviationBps The new tolerance, in basis points.
     function setTwapConfig(uint32 newTwapPeriod, uint16 newMaxTwapDeviationBps) external isAdmin {
         _validateTwapConfig(newTwapPeriod, newMaxTwapDeviationBps);
+        UniswapV3VaultMath.requireTwapAvailable(pool, newTwapPeriod);
         twapPeriod = newTwapPeriod;
         maxTwapDeviationBps = newMaxTwapDeviationBps;
         emit TwapConfigUpdate(newTwapPeriod, newMaxTwapDeviationBps);
@@ -911,25 +921,18 @@ contract UniswapV3PositionVault is
     ///         window and tolerance come from: the non-trading entry point passes the vault's
     ///         configuration, the trading one passes the stricter of that and the curator's. The fee
     ///         collection, the unwind, the guard itself and the mint are shared.
-    /// @param priceLower        Lower bound of the new range.
-    /// @param priceUpper        Upper bound of the new range.
-    /// @param withSwap          Whether to trade the balances into the new range's ratio.
-    /// @param maxPriceImpactBps How far that trade may move the pool's price, in basis points.
-    /// @param window            Seconds the manipulation guard averages over.
-    /// @param deviationBps      How far the price may sit from that average, in basis points.
+    /// @param priceLower Lower bound of the new range.
+    /// @param priceUpper Upper bound of the new range.
+    /// @param move       The settings this move is carried out under.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
     /// @return amount1   Token1 consumed by the mint.
-    function _rebalance(
-        uint256 priceLower,
-        uint256 priceUpper,
-        bool withSwap,
-        uint16 maxPriceImpactBps,
-        uint32 window,
-        uint16 deviationBps
-    ) internal returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
-        _checkPriceDeviation(window, deviationBps);
+    function _rebalance(uint256 priceLower, uint256 priceUpper, Move memory move)
+        internal
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        _checkPriceDeviation(move.window, move.deviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
 
@@ -940,20 +943,13 @@ contract UniswapV3PositionVault is
             revert NothingToRebalance();
         }
 
-        bool zeroForOne;
-        uint256 amountIn;
-        uint256 amountOut;
-        if (withSwap) {
-            (zeroForOne, amountIn, amountOut) = _swapIntoRange(tickLower, tickUpper, maxPriceImpactBps);
-            // The guard runs again once the trade is done, so a swap that landed outside the
-            // tolerance reverts the whole rebalance rather than leaving the position mispriced.
-            if (amountIn != 0) _checkPriceDeviation(window, deviationBps);
-        }
+        Trade memory trade;
+        if (move.withSwap) trade = _swapIntoRange(tickLower, tickUpper, move);
 
         (tokenId, liquidity, amount0, amount1) = _mintMax(tickLower, tickUpper);
         _bootstrapShares(liquidity);
 
-        _emitRebalanced(oldTokenId, tokenId, zeroForOne, amountIn, amountOut);
+        _emitRebalanced(oldTokenId, tokenId, trade);
     }
 
     /// @notice Reports a completed rebalance, including whatever it left idle.
@@ -961,18 +957,14 @@ contract UniswapV3PositionVault is
     ///         assembled alongside everything the rebalance itself is still holding.
     /// @param oldTokenId The position that was closed, or zero if there was none.
     /// @param tokenId    The position that was opened.
-    /// @param zeroForOne True when token0 was sold; always false without a swap.
-    /// @param amountIn   Amount paid into the pool; zero without a swap.
-    /// @param amountOut  Amount received from the pool; zero without a swap.
-    function _emitRebalanced(uint256 oldTokenId, uint256 tokenId, bool zeroForOne, uint256 amountIn, uint256 amountOut)
-        internal
-    {
+    /// @param trade      What the rebalance traded, all zeros when it did not trade.
+    function _emitRebalanced(uint256 oldTokenId, uint256 tokenId, Trade memory trade) internal {
         emit Rebalanced(
             oldTokenId,
             tokenId,
-            zeroForOne,
-            amountIn,
-            amountOut,
+            trade.zeroForOne,
+            trade.amountIn,
+            trade.amountOut,
             token0.balanceOf(address(this)),
             token1.balanceOf(address(this))
         );
@@ -982,20 +974,23 @@ contract UniswapV3PositionVault is
     /// @dev    Split out from the rebalance body so the swap's own working values do not have to
     ///         live alongside the mint's for the whole call. The manipulation guard runs again after
     ///         the trade, so a swap that landed outside the tolerance reverts the whole rebalance.
-    /// @param tickLower         The range's lower tick.
-    /// @param tickUpper         The range's upper tick.
-    /// @param maxPriceImpactBps How far the trade may move the pool's price, in basis points.
-    /// @return zeroForOne True when token0 was sold.
-    /// @return amountIn   Amount paid into the pool.
-    /// @return amountOut  Amount received from the pool.
-    function _swapIntoRange(int24 tickLower, int24 tickUpper, uint16 maxPriceImpactBps)
-        internal
-        returns (bool zeroForOne, uint256 amountIn, uint256 amountOut)
-    {
+    /// @param tickLower The range's lower tick.
+    /// @param tickUpper The range's upper tick.
+    /// @param move      The settings this rebalance is being carried out under.
+    /// @return trade What was traded, or zeros when the balances already fitted the range.
+    function _swapIntoRange(int24 tickLower, int24 tickUpper, Move memory move) internal returns (Trade memory trade) {
         uint160 sqrtPriceX96 = _spotSqrtPrice();
-        (zeroForOne, amountIn) = _solveSwap(sqrtPriceX96, tickLower, tickUpper);
+        (trade.zeroForOne, trade.amountIn) = _solveSwap(sqrtPriceX96, tickLower, tickUpper);
 
-        if (amountIn != 0) (amountIn, amountOut) = _swap(zeroForOne, amountIn, maxPriceImpactBps, sqrtPriceX96);
+        if (trade.amountIn != 0) {
+            (trade.amountIn, trade.amountOut) =
+                _swap(trade.zeroForOne, trade.amountIn, move.maxPriceImpactBps, sqrtPriceX96);
+            // The guard runs again once the trade is done, so a swap that landed outside the
+            // tolerance reverts the whole rebalance rather than leaving the position mispriced. It
+            // is the amount actually paid that decides, not the amount sized: a trade the impact cap
+            // clamped to nothing moved no price and has nothing to re-check.
+            if (trade.amountIn != 0) _checkPriceDeviation(move.window, move.deviationBps);
+        }
     }
 
     /// @notice Sizes the trade that leaves the vault able to mint the most liquidity in a range.
@@ -1262,6 +1257,31 @@ contract UniswapV3PositionVault is
         }
 
         sqrtTwapX96 = UniswapV3VaultMath.twapCheck(sqrtPriceX96, tickCumulatives[0], tickCumulatives[1], period, maxBps);
+    }
+
+    /// @notice How a rebalance should be carried out.
+    /// @dev    Carried as a struct rather than four arguments because the rebalance that reads them
+    ///         runs out of stack under via-IR otherwise. Grouping them costs nothing and says what
+    ///         they are: the settings a single move is carried out under.
+    ///
+    ///         withSwap says whether to trade the balances into the new range's ratio;
+    ///         maxPriceImpactBps how far that trade may move the pool's price; window how many
+    ///         seconds the manipulation guard averages over; deviationBps how far the price may sit
+    ///         from that average. All three bounds are in basis points except the window.
+    struct Move {
+        bool withSwap;
+        uint16 maxPriceImpactBps;
+        uint32 window;
+        uint16 deviationBps;
+    }
+
+    /// @notice What a rebalance's trade actually did, or zeros when it did not trade.
+    /// @dev    zeroForOne says whether token0 was the side sold, amountIn what was paid into the
+    ///         pool and amountOut what came back.
+    struct Trade {
+        bool zeroForOne;
+        uint256 amountIn;
+        uint256 amountOut;
     }
 
     /// @notice Mints the opening share supply when the vault has none.
