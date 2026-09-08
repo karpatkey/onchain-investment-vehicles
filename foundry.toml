@@ -26,9 +26,13 @@ no_match_test = "upgrade"
 # tunes for runtime gas at the cost of code size. Only this one file is compiled with a size-favouring
 # setting; every other contract keeps the default, so no existing CREATE2 address moves (guarded by
 # test/FactoryAddressSync.t.sol). Its own math already lives in a linked library.
-additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 200 }]
+#
+# The margin is a few hundred bytes, so adding an external function to the vault will need either
+# another reduction here or more of its logic moved into UniswapV3VaultMath, which has ample room.
+# `forge build --sizes` reports the current margin.
+additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 50 }]
 compilation_restrictions = [
-  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 200 },
+  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 50 },
 ]
 
 [fmt]

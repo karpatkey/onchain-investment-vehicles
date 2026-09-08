@@ -369,8 +369,6 @@ contract UniswapV3PositionVault is
 
         (tokenId, liquidity, amount0, amount1) = _mintPosition(tickLower, tickUpper, need0, need1);
         _bootstrapShares(liquidity);
-
-        emit PositionCreated(tokenId, tickLower, tickUpper, liquidity, amount0, amount1);
     }
 
     /// @notice Closes the vault's position, leaving everything it held idle in the vault.
@@ -428,7 +426,38 @@ contract UniswapV3PositionVault is
         emit LiquidityRemoved(tokenId, liquidity, amount0, amount1);
     }
 
-    /// @notice Moves the vault's liquidity into a new price range.
+    /// @notice Moves the vault's liquidity into a new price range, without trading.
+    /// @dev    Collects fees, closes the current position, and mints the largest position the
+    ///         balances then support. Because nothing is traded, whichever token the new range needs
+    ///         less of is left over: the mint consumes one side entirely and the surplus of the
+    ///         other stays idle in the vault.
+    ///
+    ///         That surplus remains owned pro-rata by shareholders, but it cannot be put back to
+    ///         work on its own. Adding liquidity to a position in range needs both tokens, so a
+    ///         one-sided surplus sits idle until the curator either trades it with
+    ///         `rebalanceWithSwap` or the price moves far enough that the position becomes
+    ///         single-sided on that same side. Use this when that is an acceptable trade for
+    ///         avoiding the swap's price impact and fee; use `rebalanceWithSwap` to put the whole
+    ///         balance to work.
+    ///
+    ///         The pool's price is still checked against its own time-weighted average, because the
+    ///         mint prices both sides at the current price even though no trade happens.
+    /// @param priceLower Lower bound of the new range, as a 1e18-scaled human price.
+    /// @param priceUpper Upper bound of the new range, as a 1e18-scaled human price.
+    /// @return tokenId   The new position NFT id.
+    /// @return liquidity Liquidity minted.
+    /// @return amount0   Token0 consumed by the mint.
+    /// @return amount1   Token1 consumed by the mint.
+    function rebalance(uint256 priceLower, uint256 priceUpper)
+        external
+        nonReentrant
+        isCurator
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        return _rebalance(priceLower, priceUpper, false, 0);
+    }
+
+    /// @notice Moves the vault's liquidity into a new price range, trading to fit it.
     /// @dev    Collects fees, closes the current position, then swaps inside the same pool so the
     ///         balances match the new range's ratio, and finally mints the largest position those
     ///         balances support. The swap is sized by UniswapV3VaultMath.solveSwap, and the mint is
@@ -439,67 +468,20 @@ contract UniswapV3PositionVault is
     ///         the swap, so a rebalance cannot execute against a manipulated price. Passing zero as
     ///         the price limit defaults it to the edge of that same tolerance band, which makes an
     ///         oversized swap stop at the edge instead of reverting.
-    /// @param priceLower       Lower bound of the new range, as a 1e18-scaled human price.
-    /// @param priceUpper       Upper bound of the new range, as a 1e18-scaled human price.
+    /// @param priceLower        Lower bound of the new range, as a 1e18-scaled human price.
+    /// @param priceUpper        Upper bound of the new range, as a 1e18-scaled human price.
     /// @param sqrtPriceLimitX96 Price limit for the swap, or zero to use the tolerance band.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
     /// @return amount1   Token1 consumed by the mint.
-    function rebalance(uint256 priceLower, uint256 priceUpper, uint160 sqrtPriceLimitX96)
+    function rebalanceWithSwap(uint256 priceLower, uint256 priceUpper, uint160 sqrtPriceLimitX96)
         external
         nonReentrant
         isCurator
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
-        (, uint160 sqrtTwapX96) = _checkPriceDeviation();
-
-        (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
-        (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
-
-        uint256 oldTokenId = activeTokenId;
-        if (oldTokenId != 0) _unwind(oldTokenId);
-
-        uint256 balance0 = token0.balanceOf(address(this));
-        uint256 balance1 = token1.balanceOf(address(this));
-        if (balance0 == 0 && balance1 == 0) revert NothingToRebalance();
-
-        bool zeroForOne;
-        uint256 amountIn;
-        uint256 amountOut;
-        {
-            (uint160 sqrtPriceX96,,,,,,) = pool.slot0();
-            (zeroForOne, amountIn) = UniswapV3VaultMath.solveSwap(
-                UniswapV3VaultMath.SwapParams({
-                    sqrtPriceX96: sqrtPriceX96,
-                    sqrtRatioAX96: sqrtRatioAX96,
-                    sqrtRatioBX96: sqrtRatioBX96,
-                    poolLiquidity: pool.liquidity(),
-                    feePips: fee,
-                    amount0: balance0,
-                    amount1: balance1
-                })
-            );
-            if (amountIn != 0) {
-                (amountIn, amountOut) = _swap(zeroForOne, amountIn, sqrtPriceLimitX96, sqrtTwapX96, sqrtPriceX96);
-            }
-        }
-
-        _checkPriceDeviation();
-
-        (tokenId, liquidity, amount0, amount1) = _mintFromBalances(tickLower, tickUpper, sqrtRatioAX96, sqrtRatioBX96);
-        _bootstrapShares(liquidity);
-
-        emit Rebalanced(
-            oldTokenId,
-            tokenId,
-            zeroForOne,
-            amountIn,
-            amountOut,
-            token0.balanceOf(address(this)),
-            token1.balanceOf(address(this))
-        );
-        emit PositionCreated(tokenId, tickLower, tickUpper, liquidity, amount0, amount1);
+        return _rebalance(priceLower, priceUpper, true, sqrtPriceLimitX96);
     }
 
     //
@@ -768,6 +750,82 @@ contract UniswapV3PositionVault is
         emit Compounded(tokenId, fees0, fees1, added, used0, used1);
     }
 
+    /// @notice Replaces the vault's position with one in a new range.
+    /// @dev    The single implementation behind both rebalance entry points. The only difference
+    ///         between them is whether the balances are traded into the new range's ratio first, so
+    ///         everything else, the fee collection, the unwind, the guard and the mint, is shared.
+    /// @param priceLower        Lower bound of the new range.
+    /// @param priceUpper        Upper bound of the new range.
+    /// @param withSwap          Whether to trade the balances into the new range's ratio.
+    /// @param sqrtPriceLimitX96 Price limit for that trade, or zero for the tolerance band.
+    /// @return tokenId   The new position NFT id.
+    /// @return liquidity Liquidity minted.
+    /// @return amount0   Token0 consumed by the mint.
+    /// @return amount1   Token1 consumed by the mint.
+    function _rebalance(uint256 priceLower, uint256 priceUpper, bool withSwap, uint160 sqrtPriceLimitX96)
+        internal
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        (, uint160 sqrtTwapX96) = _checkPriceDeviation();
+
+        (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
+        (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
+
+        uint256 oldTokenId = activeTokenId;
+        if (oldTokenId != 0) _unwind(oldTokenId);
+
+        uint256 balance0 = token0.balanceOf(address(this));
+        uint256 balance1 = token1.balanceOf(address(this));
+        if (balance0 == 0 && balance1 == 0) revert NothingToRebalance();
+
+        bool zeroForOne;
+        uint256 amountIn;
+        uint256 amountOut;
+        if (withSwap) {
+            (uint160 sqrtPriceX96,,,,,,) = pool.slot0();
+            (zeroForOne, amountIn) = UniswapV3VaultMath.solveSwap(
+                UniswapV3VaultMath.SwapParams({
+                    sqrtPriceX96: sqrtPriceX96,
+                    sqrtRatioAX96: sqrtRatioAX96,
+                    sqrtRatioBX96: sqrtRatioBX96,
+                    poolLiquidity: pool.liquidity(),
+                    feePips: fee,
+                    amount0: balance0,
+                    amount1: balance1
+                })
+            );
+            if (amountIn != 0) {
+                (amountIn, amountOut) = _swap(zeroForOne, amountIn, sqrtPriceLimitX96, sqrtTwapX96, sqrtPriceX96);
+                _checkPriceDeviation();
+            }
+        }
+
+        {
+            (uint160 sqrtNow,,,,,,) = pool.slot0();
+            balance0 = token0.balanceOf(address(this));
+            balance1 = token1.balanceOf(address(this));
+
+            uint256 need0;
+            uint256 need1;
+            (liquidity, need0, need1) =
+                UniswapV3VaultMath.positionPlan(sqrtNow, sqrtRatioAX96, sqrtRatioBX96, balance0, balance1);
+            if (liquidity == 0) revert NothingToRebalance();
+
+            (tokenId, liquidity, amount0, amount1) = _mintPosition(tickLower, tickUpper, need0, need1);
+        }
+        _bootstrapShares(liquidity);
+
+        emit Rebalanced(
+            oldTokenId,
+            tokenId,
+            zeroForOne,
+            amountIn,
+            amountOut,
+            token0.balanceOf(address(this)),
+            token1.balanceOf(address(this))
+        );
+    }
+
     /// @notice Closes a position and burns its NFT, leaving its contents idle in the vault.
     /// @param tokenId The position NFT id.
     /// @return amount0 Token0 returned to the vault.
@@ -780,30 +838,6 @@ contract UniswapV3PositionVault is
         activeTokenId = 0;
 
         emit PositionUnwound(tokenId, amount0, amount1);
-    }
-
-    /// @notice Mints the largest position the vault's current balances support in a range.
-    /// @param tickLower     Lower tick boundary.
-    /// @param tickUpper     Upper tick boundary.
-    /// @param sqrtRatioAX96 The range's lower sqrt ratio.
-    /// @param sqrtRatioBX96 The range's upper sqrt ratio.
-    /// @return tokenId   The new position NFT id.
-    /// @return liquidity Liquidity minted.
-    /// @return amount0   Token0 consumed.
-    /// @return amount1   Token1 consumed.
-    function _mintFromBalances(int24 tickLower, int24 tickUpper, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96)
-        internal
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
-        (uint160 sqrtPriceX96,,,,,,) = pool.slot0();
-        uint256 balance0 = token0.balanceOf(address(this));
-        uint256 balance1 = token1.balanceOf(address(this));
-
-        (uint128 target, uint256 need0, uint256 need1) =
-            UniswapV3VaultMath.positionPlan(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, balance0, balance1);
-        if (target == 0) revert NothingToRebalance();
-
-        (tokenId, liquidity, amount0, amount1) = _mintPosition(tickLower, tickUpper, need0, need1);
     }
 
     /// @notice Mints a position NFT to the vault and records it as the active one.
@@ -844,6 +878,8 @@ contract UniswapV3PositionVault is
         _resetApproval(token1);
 
         activeTokenId = tokenId;
+
+        emit PositionCreated(tokenId, tickLower, tickUpper, liquidity, amount0, amount1);
     }
 
     /// @notice Withdraws owed tokens from a position.

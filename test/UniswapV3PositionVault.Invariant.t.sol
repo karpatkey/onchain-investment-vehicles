@@ -78,8 +78,21 @@ contract VaultHandler is Test {
         } catch {}
     }
 
-    /// @notice Moves the position into a new range.
+    /// @notice Moves the position into a new range without trading, leaving a surplus behind.
     function rebalance(uint256 widthSeed, uint256 shiftSeed) external {
+        uint256 width = bound(widthSeed, 200, 4000);
+        uint256 shift = bound(shiftSeed, 0, 1000);
+
+        uint256 centre = _spotPrice() * (10_000 + shift) / 10_000;
+
+        vm.prank(curator);
+        try vault.rebalance(centre * (10_000 - width) / 10_000, centre * (10_000 + width) / 10_000) {
+            rebalances++;
+        } catch {}
+    }
+
+    /// @notice Moves the position into a new range, trading the balances to fit it.
+    function rebalanceWithSwap(uint256 widthSeed, uint256 shiftSeed) external {
         uint256 width = bound(widthSeed, 200, 4000);
         uint256 shift = bound(shiftSeed, 0, 1000);
 
@@ -88,7 +101,7 @@ contract VaultHandler is Test {
         uint256 upper = centre * (10_000 + width) / 10_000;
 
         vm.prank(curator);
-        try vault.rebalance(lower, upper, 0) {
+        try vault.rebalanceWithSwap(lower, upper, 0) {
             rebalances++;
         } catch {}
     }

@@ -128,7 +128,11 @@ contract UniswapV3PositionVaultMathTest is Test {
         uint160 sqrtPriceX96 = UniswapV3VaultMath.priceToSqrtPriceX96(price, scaleNum, scaleDen);
         uint256 back = UniswapV3VaultMath.sqrtPriceX96ToPrice(sqrtPriceX96, scaleNum, scaleDen);
 
-        assertApproxEqRel(back, price, 1e10, "round trip within 1e-8");
+        // Both directions floor, so the round trip loses at most one unit outright plus the
+        // relative precision of the square root. At tiny prices the single unit dominates, which a
+        // purely relative bound would call a failure.
+        assertLe(back, price, "the round trip never rounds up");
+        assertApproxEqAbs(back, price, 1 + price / 1e8, "round trip within a unit and 1e-8");
     }
 
     function test_priceToSqrtPriceX96_rejectsPricesOutsideUniswapsRange() public {

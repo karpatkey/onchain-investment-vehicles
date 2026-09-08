@@ -84,7 +84,7 @@ INVESTOR
 | `redeem` | | | ✅ | |
 | `transfer` / `transferFrom` | | | ✅ | |
 | `createPosition` | | ✅ | | |
-| `rebalance` | | ✅ | | |
+| `rebalance` / `rebalanceWithSwap` | | ✅ | | |
 | `unwindPosition` | | ✅ | | |
 | `addLiquidity` / `removeLiquidity` | | ✅ | | |
 | `collectFees` | | ✅ | | |
@@ -127,9 +127,22 @@ sweep fees belonging to the remaining holders.
 
 ### 4. Rebalancing
 
-`rebalance(priceLower, priceUpper, sqrtPriceLimitX96)` collects fees, closes the current position,
-swaps inside the same pool so the balances match the new range's ratio, and mints the largest
-position those balances support. See **Rebalance algorithm** below.
+Two variants, differing only in whether the balances are traded into the new range's ratio first.
+Both collect fees, close the current position and mint the largest position the balances then
+support, and both work whether or not a position is already open.
+
+`rebalance(priceLower, priceUpper)` does not trade. Whichever token the new range needs less of is
+left over: the mint consumes one side entirely and the surplus of the other stays idle. This avoids
+the swap's price impact and fee, at the cost of leaving part of the vault unproductive.
+
+`rebalanceWithSwap(priceLower, priceUpper, sqrtPriceLimitX96)` swaps inside the same pool so that
+almost the whole balance ends up as liquidity. See **Rebalance algorithm** below.
+
+Choosing between them is a real trade-off. Trading costs the pool fee and moves the price against
+the vault; not trading leaves capital idle. The surplus a no-swap rebalance leaves behind cannot be
+put back to work on its own, because adding to a position in range needs both tokens, so it sits
+until the curator trades it or the price moves far enough that the position becomes single-sided on
+that same side.
 
 ### 5. Maintenance
 
@@ -187,6 +200,8 @@ position always contains the requested range rather than a subset of it.
 
 ## Rebalance algorithm
 
+Steps 1 to 3 and step 7 are shared by both variants; only `rebalanceWithSwap` runs steps 4 to 6.
+
 1. Check the pool's spot price against its own time-weighted average.
 2. Snap the requested range to the pool's tick spacing.
 3. Collect fees, burn all liquidity, collect the principal and burn the NFT.
@@ -194,6 +209,9 @@ position always contains the requested range rather than a subset of it.
 5. Execute it against the pool, paying through `uniswapV3SwapCallback`.
 6. Check the price against the average again.
 7. Re-read the pool and mint the largest position the balances now support.
+
+The no-swap variant still checks the price in step 1, because step 7 prices both sides at the
+current price even though nothing is traded.
 
 ### Sizing the swap
 
@@ -284,7 +302,7 @@ Both pool tokens must report 18 decimals or fewer, which the price scaling relie
 | `PositionUnwound` | A position is closed and its NFT burned. |
 | `Compounded` | Fees are collected and idle balances folded back in. |
 | `LiquidityRemoved` | The curator trims the position. |
-| `Rebalanced` | A rebalance completes, reporting the swap and the residue. |
+| `Rebalanced` | A rebalance completes, reporting the swap, if any, and the residue. The no-swap variant reports zero amounts. |
 | `TwapConfigUpdate`, `AssetRecovererUpdate` | The admin changes configuration. |
 
 ## Deployment
@@ -297,6 +315,10 @@ The vault links `UniswapV3VaultMath`, which forge deploys and links automaticall
 `optimizer_runs` is tuned repository-wide for runtime gas rather than code size, this one file is
 compiled with a size-favouring setting declared in `foundry.toml`; no other contract is affected, so
 no existing CREATE2 address moves.
+
+The vault sits a few hundred bytes under the EIP-170 limit. Adding an external function to it will
+need either another reduction in that setting or more of its logic moved into the math library,
+which has ample room. `forge build --sizes` reports the current margin.
 
 Set `openToEveryone` to grant `INVESTOR` to the zero address at deployment, which opens deposits,
 redemptions and transfers to anyone.
