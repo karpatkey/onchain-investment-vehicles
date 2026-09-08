@@ -110,7 +110,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.startPrank(stranger);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.createPosition(lower, upper, 1e6, true);
+        vault.createPosition(lower, upper, 1e6, true, block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.unwindPosition();
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
@@ -120,7 +120,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.removeLiquidity(1);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.rebalanceWithSwap(lower, upper, 500, 0, 0);
+        vault.rebalanceWithSwap(lower, upper, 500, 0, 0, block.timestamp);
         vm.stopPrank();
 
         // The admin does not inherit the curator's powers.
@@ -199,7 +199,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         (uint256 tokenId, uint128 liquidity, uint256 used0, uint256 used1) =
-            vault.createPosition(lower, upper, amount0, true);
+            vault.createPosition(lower, upper, amount0, true, block.timestamp);
 
         assertGt(tokenId, 0, "position minted");
         assertEq(vault.activeTokenId(), tokenId, "recorded as active");
@@ -223,7 +223,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _seedVault(need0, amount1);
 
         vm.prank(curator);
-        (, uint128 liquidity,, uint256 used1) = vault.createPosition(lower, upper, amount1, false);
+        (, uint128 liquidity,, uint256 used1) = vault.createPosition(lower, upper, amount1, false, block.timestamp);
 
         assertGt(liquidity, 0, "position opened from token1");
         assertApproxEqRel(used1, amount1, 1e15, "consumes the named amount");
@@ -236,7 +236,18 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(IUniswapV3PositionVault.InsufficientIdleBalance.selector, USDC, 100_000e6, 0)
         );
-        vault.createPosition(lower, upper, 100_000e6, true);
+        vault.createPosition(lower, upper, 100_000e6, true, block.timestamp);
+    }
+
+    function test_createPosition_refusesAStaleTransaction() public {
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
+        _seedVault(100_000e6, 100e18);
+
+        // The range was chosen against a price the curator saw, so opening it late would commit to
+        // a range that may already be wrong.
+        vm.prank(curator);
+        vm.expectRevert(IUniswapV3PositionVault.DeadlineExpired.selector);
+        vault.createPosition(lower, upper, 10_000e6, true, block.timestamp - 1);
     }
 
     function test_createPosition_revertsWhenOneIsAlreadyOpen() public {
@@ -245,7 +256,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.PositionAlreadyActive.selector);
-        vault.createPosition(lower, upper, 1e6, true);
+        vault.createPosition(lower, upper, 1e6, true, block.timestamp);
     }
 
     function test_previewCounterAmount_matchesWhatTheDepositConsumes() public {
@@ -341,7 +352,8 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
     /// @notice Opens a deliberately narrow position around a given price.
     function _createNarrowPosition(uint256 spot) internal returns (uint256 tokenId) {
-        (tokenId,,,) = vault.createPosition(spot * 9900 / 10_000, spot * 10_100 / 10_000, 200_000e6, true);
+        (tokenId,,,) =
+            vault.createPosition(spot * 9900 / 10_000, spot * 10_100 / 10_000, 200_000e6, true, block.timestamp);
     }
 
     //
@@ -650,7 +662,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.rebalanceWithSwap(lower, upper, 500, 0, 0);
+        vault.rebalanceWithSwap(lower, upper, 500, 0, 0, block.timestamp);
 
         // Ordinary curator work is blocked too, not just the path that swaps.
         vm.prank(curator);

@@ -87,7 +87,7 @@ contract VaultHandler is Test {
         uint256 centre = _spotPrice() * (10_000 + shift) / 10_000;
 
         vm.prank(curator);
-        try vault.rebalance(centre * (10_000 - width) / 10_000, centre * (10_000 + width) / 10_000) {
+        try vault.rebalance(centre * (10_000 - width) / 10_000, centre * (10_000 + width) / 10_000, block.timestamp) {
             rebalances++;
         } catch {}
     }
@@ -102,7 +102,7 @@ contract VaultHandler is Test {
         uint256 upper = centre * (10_000 + width) / 10_000;
 
         vm.prank(curator);
-        try vault.rebalanceWithSwap(lower, upper, 500, 0, 0) {
+        try vault.rebalanceWithSwap(lower, upper, 500, 0, 0, block.timestamp) {
             rebalances++;
         } catch {}
     }
@@ -126,7 +126,7 @@ contract VaultHandler is Test {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1500);
 
         vm.prank(curator);
-        try vault.createPosition(lower, upper, amount0, true) {
+        try vault.createPosition(lower, upper, amount0, true, block.timestamp) {
             creations++;
         } catch {}
     }

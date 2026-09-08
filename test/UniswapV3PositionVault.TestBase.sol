@@ -243,7 +243,7 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
         _seedVault(amount0, need1 + 1e15);
 
         vm.prank(curator);
-        (tokenId,,,) = vault.createPosition(lower, upper, amount0, true);
+        (tokenId,,,) = vault.createPosition(lower, upper, amount0, true, block.timestamp);
     }
 
     /// @notice Opens a position with this fixture's default size.

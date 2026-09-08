@@ -365,14 +365,18 @@ contract UniswapV3PositionVault is
     /// @param priceUpper Upper bound of the range, as a 1e18-scaled human price.
     /// @param amount     Amount of the named token to commit.
     /// @param isAmount0  True when the amount is token0, false when it is token1.
+    /// @param deadline   Latest timestamp at which the position may be opened. The range is chosen
+    ///                   against a price the curator saw, so a transaction that sits in the mempool
+    ///                   through a real move would otherwise open a range that is already wrong.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed.
     /// @return amount1   Token1 consumed.
-    function createPosition(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0)
+    function createPosition(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0, uint256 deadline)
         external
         nonReentrant
         isCurator
+        checkDeadline(deadline)
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
         if (activeTokenId != 0) revert PositionAlreadyActive();
@@ -465,14 +469,16 @@ contract UniswapV3PositionVault is
     ///         mint prices both sides at the current price even though no trade happens.
     /// @param priceLower Lower bound of the new range, as a 1e18-scaled human price.
     /// @param priceUpper Upper bound of the new range, as a 1e18-scaled human price.
+    /// @param deadline   Latest timestamp at which the move may execute.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
     /// @return amount1   Token1 consumed by the mint.
-    function rebalance(uint256 priceLower, uint256 priceUpper)
+    function rebalance(uint256 priceLower, uint256 priceUpper, uint256 deadline)
         external
         nonReentrant
         isCurator
+        checkDeadline(deadline)
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
         return _rebalance(priceLower, priceUpper, false, 0, twapPeriod, maxTwapDeviationBps);
@@ -501,6 +507,10 @@ contract UniswapV3PositionVault is
     /// @param maxDeviationBps   How far the pool's price may sit from that average, in basis points.
     ///                          Zero means the vault's own setting, and anything looser than that
     ///                          setting is clamped to it.
+    /// @param deadline          Latest timestamp at which the move may execute. The guard alone
+    ///                          cannot stand in for this: after a genuine move the spot price and
+    ///                          the average agree with each other at the new level, so a stale
+    ///                          transaction passes the guard and still trades.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
@@ -510,8 +520,15 @@ contract UniswapV3PositionVault is
         uint256 priceUpper,
         uint16 maxPriceImpactBps,
         uint32 twapWindow,
-        uint16 maxDeviationBps
-    ) external nonReentrant isCurator returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
+        uint16 maxDeviationBps,
+        uint256 deadline
+    )
+        external
+        nonReentrant
+        isCurator
+        checkDeadline(deadline)
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
         if (maxPriceImpactBps == 0 || maxPriceImpactBps > _MAX_BPS) revert InvalidArguments();
 
         (uint32 window, uint16 deviation) = _strictestGuard(twapWindow, maxDeviationBps);

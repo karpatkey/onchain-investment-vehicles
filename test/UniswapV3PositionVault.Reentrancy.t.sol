@@ -148,7 +148,7 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
         vm.prank(curator);
         vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
-        vault.rebalanceWithSwap(PRICE_LOWER, PRICE_UPPER, 500, 0, 0);
+        vault.rebalanceWithSwap(PRICE_LOWER, PRICE_UPPER, 500, 0, 0, block.timestamp);
     }
 
     function test_swapCallback_isRefusedOutsideTheVaultsOwnSwap() public {
@@ -175,6 +175,6 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         token1.mint(address(vault), 10_000e18);
 
         vm.prank(curator);
-        vault.createPosition(PRICE_LOWER, PRICE_UPPER, 1000e18, true);
+        vault.createPosition(PRICE_LOWER, PRICE_UPPER, 1000e18, true, block.timestamp);
     }
 }

@@ -104,7 +104,7 @@ caller up front, so a rejected account is turned away before its tokens are touc
 
 ### 1. Opening a position
 
-`createPosition(priceLower, priceUpper, amount, isAmount0)` opens the vault's only position. The
+`createPosition(priceLower, priceUpper, amount, isAmount0, deadline)` opens the vault's only position. The
 curator names a price range and how much of **one** token to commit; the vault derives the other
 side from the pool's current price. Both amounts must already be sitting in the vault.
 
@@ -153,12 +153,12 @@ Two variants, differing only in whether the balances are traded into the new ran
 Both collect fees, close the current position and mint the largest position the balances then
 support, and both work whether or not a position is already open.
 
-`rebalance(priceLower, priceUpper)` does not trade. Whichever token the new range needs less of is
+`rebalance(priceLower, priceUpper, deadline)` does not trade. Whichever token the new range needs less of is
 left over: the mint consumes one side entirely and the surplus of the other stays idle. This avoids
 the swap's price impact and fee, at the cost of leaving part of the vault unproductive.
 
-`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps, twapWindow, maxDeviationBps)` swaps
-inside the same pool so that almost the whole balance ends up as liquidity.
+`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps, twapWindow, maxDeviationBps, deadline)`
+swaps inside the same pool so that almost the whole balance ends up as liquidity.
 
 The impact cap is how far the curator will let that trade move the pool's price, in basis points of
 the price it starts at, so 100 is one percent. It must be between 1 and 10000. A swap that would
@@ -276,6 +276,18 @@ the pool and mints against the balances actually held. The residue stays idle, i
 pro-rata, and is folded back in by the next compounding.
 
 ## Safety Considerations
+
+### 0. Staleness
+
+Every function that commits to a price takes a deadline, and the guards below cannot stand in for
+one. Both the manipulation guard and a deposit's slippage allowance are measured against the pool's
+own recent average, and after a genuine move the spot price and that average agree with each other
+at the new level. A transaction that sat in the mempool through the move therefore passes every
+check and executes on terms nobody intended. Only the deadline stops it.
+
+That is worth stating plainly because the more familiar pattern hides it. A minimum-output figure of
+the kind a DEX takes is fixed when the caller signs, so it protects a stale transaction on its own.
+An allowance measured against a live reference does not.
 
 ### 1. Price manipulation
 
