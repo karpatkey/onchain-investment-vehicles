@@ -697,6 +697,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return instance Addresses of the five deployed contracts.
     function deployStack(StackConfig calldata config) external nonReentrant returns (StackInstance memory instance) {
         _validateStackConfig(config);
+        // Fail fast, as `deployOiv` does. Without this the revert still comes — from
+        // `_requireTimelockDeployer` inside `_deployAndWireStack` — but only after both Safes and
+        // all three Roles Modifiers have been deployed, ~2M gas the caller has already paid. This
+        // is the CCIP destination's entry point, where that gas is a spent cross-chain fee.
+        if (config.execTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
 
         // Reserve the registry ID before any external calls (CEI) — defends against any
         // future callback path that might re-enter the factory and shift indices.
@@ -998,7 +1003,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         would produce when called by `caller`.
     /// @dev    All five contracts use CREATE2; their addresses are fully determined by
     ///         (factory address, infrastructure addresses, `caller`, `config.salt`, and the
-    ///         Manager Safe's owners/threshold). The prediction does NOT validate `config` —
+    ///         Manager Safe's owners/threshold). The prediction validates any configured timelock,
+    ///         via `predictExecTimelock`, so it reverts on e.g. an unsorted proposer array rather
+    ///         than returning an address no deployment could produce. It does NOT otherwise validate
+    ///         `config` —
     ///         pass a config that would actually succeed (see `_validateStackConfig`).
     ///         By design, `predictStackAddresses` and `predictOivAddresses` produce IDENTICAL
     ///         Avatar Safe / Manager Safe / Roles Modifier addresses for the same `(salt,

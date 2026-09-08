@@ -64,12 +64,12 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
 
     address internal constant DOCUMENTED_SHARES_MASTERCOPY = 0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC;
     address internal constant DOCUMENTED_TIMELOCK_MASTERCOPY = 0x9760280fED9e760668186334f88b6d763A7d976E;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0xBDd10E2D271A7EECb21D89B92780c0B1242672B0;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0xfbB62B4Ef6605693074A2151426c3a6A0244a175;
 
     /// @dev The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only
     ///      argument is one of them, so unlike the factory and orchestrator these three are
     ///      independent of the deployer EOA — the same on every chain for anyone.
-    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0xAe51CC602215870a75113638bd2560dfC831927B;
+    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0x1e7C1Be44eEE071945785609DD65AB77686e4AC8;
 
     function test_documentedSharesMastercopyAddressMatchesDeployPath() public pure {
         assertEq(

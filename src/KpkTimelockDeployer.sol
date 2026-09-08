@@ -139,8 +139,13 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @dev OpenZeppelin `AccessControl` default admin role.
     bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    /// @notice Lower bound on `minDelay`. A delay shorter than this cannot be reacted to by any
-    ///         realistic human process, which would make the veto decorative.
+    /// @notice Lower bound on `minDelay` AT DEPLOY TIME ONLY. A delay shorter than this cannot be
+    ///         reacted to by any realistic human process, which would make the veto decorative.
+    /// @dev    Not a permanent property: the timelock is self-administered, so one proposer can
+    ///         schedule `updateDelay(1)` and, after a single delay window, the fund's delay is one
+    ///         second. That is within the design — the change is public for the whole window and any
+    ///         canceller can veto it — but this constant bounds what a fund is BORN with, not what
+    ///         it keeps.
     uint256 public constant MIN_DELAY_FLOOR = 12 hours;
 
     /// @notice Upper bound on `minDelay`. Guards against a fat-fingered unit error (e.g. passing
@@ -223,6 +228,15 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         already-deployed address rather than reverting. Deploying does **not** adopt — the
     ///         current owner must subsequently call `IRoles(execRolesModifier).transferOwnership(timelock)`.
     ///         Verify with `isExecTimelocked` afterwards.
+    ///
+    ///         **Deploy and hand over in ONE transaction.** Between the two steps the timelock is
+    ///         live and governs nothing, and its proposers can already schedule against the target.
+    ///         A proposer can schedule `transferOwnership(attacker)`, wait out the delay, and execute
+    ///         the instant you hand over — with no post-adoption delay at all. Nothing on-chain
+    ///         detects it: `TimelockController`'s pending operations are not enumerable, so
+    ///         `_requireLiveConfigMatches` cannot see them and `isExecTimelocked` returns true
+    ///         regardless. Batching both steps (a Safe multiSend) removes the window entirely.
+    ///         Funds built by `KpkOivFactory` are never exposed, because it does both in one call.
     /// @param  execRolesModifier The fund's exec Roles Modifier, whose address is identical on every
     ///                           chain. Given the same `params` AND the same caller on each chain, the
     ///                           resulting timelock address is identical everywhere too; differing
