@@ -40,6 +40,9 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`UniswapV3PositionVault.Math.t.sol`** - Pure math for the position vault: price conversion, tick snapping, share accounting and swap sizing (`UniswapV3PositionVaultMathTest`). Needs no RPC endpoint, and holds the repository's first fuzz tests
 - **`UniswapV3PositionVault.t.sol`** - Position vault initialization, access control, the investor gate, position operations, deposits and redemptions (`UniswapV3PositionVaultTest`)
 - **`UniswapV3PositionVault.Rebalance.t.sol`** - Position vault rebalancing: swap sizing against a live pool, single-sided ranges, price limits and residue bounds (`UniswapV3PositionVaultRebalanceTest`)
+- **`UniswapV3PositionVault.Decimals.t.sol`** - The position vault's core flows against WBTC/WETH, where token0 has 8 decimals rather than 6, so the decimal-adjusted price path is exercised on a second live pool (`UniswapV3PositionVaultDecimalsTest`)
+- **`UniswapV3PositionVault.Reentrancy.t.sol`** - Genuine re-entry attempts against every guarded entry point (`UniswapV3PositionVaultReentrancyTest`). Needs no RPC endpoint: real pool tokens never call back into their sender, so the guards can only be exercised through hostile stand-ins
+- **`UniswapV3PositionVault.Invariant.t.sol`** - The repository's first invariant tests: properties that must survive any reachable sequence of vault operations, driven by `VaultHandler` (`UniswapV3PositionVaultInvariantTest`)
 
 These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones), from `OivTestConstants` (the OIV factory/deployer suites), or directly from Forge's `Test`, and are run by `forge test` independently of `kpkShares.Main.sol`.
 
@@ -51,6 +54,7 @@ These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones), from `Oiv
 - **`mocks/tokens.sol`** - `Mock_ERC20` token used across the suite
 - **`mocks/MockCcipRouter.sol`** - Mock CCIP router used by deployer/factory tests
 - **`mocks/UniswapV3SwapHelper.sol`** - Swaps against a pool so the position vault suites can move the price or accrue fees
+- **`mocks/ReentrantUniswap.sol`** - Hostile stand-ins for the Uniswap v3 factory, pool and position manager, each able to call back into the vault mid-operation
 
 ## 🚀 How to Use
 

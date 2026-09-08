@@ -417,6 +417,106 @@ contract UniswapV3PositionVaultMathTest is Test {
         }
     }
 
+    function test_solveSwap_revertsWhenThePoolHasNoLiquidityToSizeAgainst() public {
+        // A pool with no in-range liquidity gives the model nothing to project a price move
+        // against, so the rebalance stops rather than swapping blind.
+        vm.expectRevert(IUniswapV3PositionVault.PoolHasNoLiquidity.selector);
+        UniswapV3VaultMath.solveSwap(
+            UniswapV3VaultMath.SwapParams({
+                sqrtPriceX96: TickMath.getSqrtRatioAtTick(0),
+                sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-6000),
+                sqrtRatioBX96: TickMath.getSqrtRatioAtTick(6000),
+                poolLiquidity: 0,
+                feePips: 3000,
+                amount0: 1000e18,
+                amount1: 0
+            })
+        );
+    }
+
+    function test_solveSwap_doesNothingWhenTheSoldSideIsEmpty() public pure {
+        // Holding only the token the range wants leaves nothing to sell.
+        (, uint256 amountIn) = UniswapV3VaultMath.solveSwap(
+            UniswapV3VaultMath.SwapParams({
+                sqrtPriceX96: TickMath.getSqrtRatioAtTick(20000),
+                sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-6000),
+                sqrtRatioBX96: TickMath.getSqrtRatioAtTick(-3000),
+                poolLiquidity: 1e24,
+                feePips: 3000,
+                amount0: 0,
+                amount1: 500e18
+            })
+        );
+        assertEq(amountIn, 0, "nothing to sell");
+    }
+
+    //
+    // Tolerance band
+    //
+
+    function test_deviationBand_bracketsTheAverage() public pure {
+        uint160 twap = TickMath.getSqrtRatioAtTick(0);
+        (uint160 low, uint160 high) = UniswapV3VaultMath.deviationBand(twap, 500);
+
+        assertLt(low, twap, "the lower edge sits below the average");
+        assertGt(high, twap, "the upper edge sits above it");
+
+        // The band is on price, so each edge is the average scaled by the square root of one
+        // minus or plus the cap.
+        // A 500 basis point cap on price is a 2.53% move down and a 2.47% move up in sqrt space,
+        // because the square root compresses both directions.
+        assertApproxEqRel(uint256(low), uint256(twap) * 9747 / 10_000, 1e15, "lower edge");
+        assertApproxEqRel(uint256(high), uint256(twap) * 10_247 / 10_000, 1e15, "upper edge");
+    }
+
+    function test_deviationBand_clampsToWhatUniswapCanRepresent() public pure {
+        // A band that would run past either end of Uniswap's range is pinned to it, so the value
+        // is always usable as a swap price limit.
+        (uint160 low,) = UniswapV3VaultMath.deviationBand(TickMath.MIN_SQRT_RATIO + 1, 10_000);
+        assertGe(low, TickMath.MIN_SQRT_RATIO + 1, "lower edge stays inside the range");
+
+        (, uint160 high) = UniswapV3VaultMath.deviationBand(TickMath.MAX_SQRT_RATIO - 1, 10_000);
+        assertLe(high, TickMath.MAX_SQRT_RATIO - 1, "upper edge stays inside the range");
+    }
+
+    //
+    // Plans
+    //
+
+    function test_positionPlan_returnsNothingWhenThereIsNothingToMint() public pure {
+        (uint128 liquidity, uint256 need0, uint256 need1) = UniswapV3VaultMath.positionPlan(
+            TickMath.getSqrtRatioAtTick(0), TickMath.getSqrtRatioAtTick(-6000), TickMath.getSqrtRatioAtTick(6000), 0, 0
+        );
+        assertEq(liquidity, 0, "no liquidity");
+        assertEq(need0 + need1, 0, "nothing required");
+    }
+
+    function test_counterAmount_pairsEitherSide() public pure {
+        uint160 sqrtP = TickMath.getSqrtRatioAtTick(0);
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(-6000);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(6000);
+
+        uint256 need1 = UniswapV3VaultMath.counterAmount(sqrtP, sqrtA, sqrtB, 1000e18, true);
+        assertGt(need1, 0, "token0 needs token1 alongside it");
+
+        uint256 need0 = UniswapV3VaultMath.counterAmount(sqrtP, sqrtA, sqrtB, need1, false);
+
+        // Pairing one side then the other must land back where it started, give or take the
+        // rounding that always runs in the vault's favour.
+        assertApproxEqRel(need0, 1000e18, 1e12, "the pairing round trips");
+    }
+
+    function test_createPlan_revertsWhenTheAmountBuysNoLiquidity() public {
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        UniswapV3VaultMath.createPlan(
+            TickMath.getSqrtRatioAtTick(0),
+            TickMath.getSqrtRatioAtTick(-6000),
+            TickMath.getSqrtRatioAtTick(6000),
+            0,
+            true
+        );
+    }
+
     //
     // Helpers
     //

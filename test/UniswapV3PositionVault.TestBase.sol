@@ -16,8 +16,13 @@ import {UniswapV3SwapHelper} from "./mocks/UniswapV3SwapHelper.sol";
 /// @dev    Unlike the factory suites, this one pins a block. Every assertion here depends on a
 ///         pool's price, tick and observation history, so an unpinned fork would make expected
 ///         amounts drift with mainnet and turn real regressions into noise. The pinned block is
-///         recent enough that the pool has a full observation buffer, which the manipulation guard
-///         needs in order to be exercised at all.
+///         recent enough that the pools have a full observation buffer, which the manipulation
+///         guard needs in order to be exercised at all.
+///
+///         The pool is chosen by overridable getters rather than fixed, so a suite can point the
+///         same fixture at a pool with a different decimal pairing. Amounts are supplied the same
+///         way, because a sensible position size in a 6-decimal token is not one in an 8-decimal
+///         token.
 abstract contract UniswapV3PositionVaultTestBase is Test {
     //
     // Mainnet constants
@@ -31,11 +36,13 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
 
     address internal constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address internal constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
 
-    /// @dev USDC/WETH at the 0.05% fee tier: token0 has 6 decimals and token1 has 18, so the suite
-    ///      exercises the decimal-adjusted price path rather than a symmetric 18/18 pair.
-    address internal constant POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
-    uint24 internal constant FEE = 500;
+    /// @dev USDC/WETH at the 0.05% fee tier: token0 has 6 decimals, token1 has 18.
+    address internal constant POOL_USDC_WETH = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
+
+    /// @dev WBTC/WETH at the 0.3% fee tier: token0 has 8 decimals, token1 has 18.
+    address internal constant POOL_WBTC_WETH = 0xCBCdF9626bC03E24f779434178A73a0B4bad62eD;
 
     //
     // Fixture
@@ -44,8 +51,14 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
     UniswapV3PositionVault internal vault;
     UniswapV3SwapHelper internal swapHelper;
 
-    IERC20 internal token0 = IERC20(USDC);
-    IERC20 internal token1 = IERC20(WETH);
+    /// @notice The pool this fixture points at, resolved from the getters below.
+    address internal POOL;
+
+    /// @notice That pool's fee tier.
+    uint24 internal FEE;
+
+    IERC20 internal token0;
+    IERC20 internal token1;
 
     address internal admin = makeAddr("admin");
     address internal curator = makeAddr("curator");
@@ -57,8 +70,83 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
     uint32 internal constant TWAP_PERIOD = 300;
     uint16 internal constant MAX_DEVIATION_BPS = 500;
 
+    //
+    // Fixture parameters, overridable per suite
+    //
+
+    /// @notice The pool the vault under test provides liquidity to.
+    function _poolAddress() internal view virtual returns (address) {
+        return POOL_USDC_WETH;
+    }
+
+    /// @notice That pool's fee tier.
+    function _poolFee() internal view virtual returns (uint24) {
+        return 500;
+    }
+
+    /// @notice The pool's token0, which must sort below token1.
+    function _token0Address() internal view virtual returns (address) {
+        return USDC;
+    }
+
+    /// @notice The pool's token1.
+    function _token1Address() internal view virtual returns (address) {
+        return WETH;
+    }
+
+    /// @notice A working balance of token0 for each actor.
+    function _fundAmount0() internal view virtual returns (uint256) {
+        return 5_000_000e6;
+    }
+
+    /// @notice A working balance of token1 for each actor.
+    function _fundAmount1() internal view virtual returns (uint256) {
+        return 5_000e18;
+    }
+
+    /// @notice Token0 to trade when accruing fees for the active position.
+    function _feeSwapAmount0() internal view virtual returns (uint256) {
+        return 200_000e6;
+    }
+
+    /// @notice Token1 to trade when accruing fees for the active position.
+    function _feeSwapAmount1() internal view virtual returns (uint256) {
+        return 50e18;
+    }
+
+    /// @notice Token0 balance the price-moving helper needs to shift a deep pool.
+    function _whaleAmount0() internal view virtual returns (uint256) {
+        return 2_000_000_000e6;
+    }
+
+    /// @notice Token1 balance the price-moving helper needs to shift a deep pool.
+    function _whaleAmount1() internal view virtual returns (uint256) {
+        return 1_000_000e18;
+    }
+
+    /// @notice Token0 committed by the default opening position.
+    function _openAmount0() internal view virtual returns (uint256) {
+        return 100_000e6;
+    }
+
+    /// @notice Name and symbol of the share token under test.
+    function _vaultName() internal view virtual returns (string memory) {
+        return "kpk USDC/WETH Position";
+    }
+
+    /// @notice Symbol of the share token under test.
+    function _vaultSymbol() internal view virtual returns (string memory) {
+        return "kpkUW";
+    }
+
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("MAINNET_URL"), FORK_BLOCK);
+
+        POOL = _poolAddress();
+        FEE = _poolFee();
+        token0 = IERC20(_token0Address());
+        token1 = IERC20(_token1Address());
+
         _requireUniswapDeployed();
 
         address implementation = address(new UniswapV3PositionVault());
@@ -68,14 +156,14 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
                 abi.encodeCall(
                     UniswapV3PositionVault.initialize,
                     (IUniswapV3PositionVault.InitParams({
-                            name: "kpk USDC/WETH Position",
-                            symbol: "kpkUW",
+                            name: _vaultName(),
+                            symbol: _vaultSymbol(),
                             admin: admin,
                             curator: curator,
                             assetRecoverer: recoverer,
                             positionManager: POSITION_MANAGER,
-                            token0: USDC,
-                            token1: WETH,
+                            token0: _token0Address(),
+                            token1: _token1Address(),
                             fee: FEE,
                             twapPeriod: TWAP_PERIOD,
                             maxTwapDeviationBps: MAX_DEVIATION_BPS
@@ -98,9 +186,9 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
         _fund(address(swapHelper));
 
         vm.label(address(vault), "vault");
-        vm.label(POOL, "USDC/WETH-500");
-        vm.label(USDC, "USDC");
-        vm.label(WETH, "WETH");
+        vm.label(POOL, "pool");
+        vm.label(address(token0), "token0");
+        vm.label(address(token1), "token1");
     }
 
     //
@@ -116,8 +204,8 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
 
     /// @notice Gives an account a working balance of both pool tokens.
     function _fund(address account) internal {
-        deal(USDC, account, 5_000_000e6);
-        deal(WETH, account, 5_000e18);
+        deal(address(token0), account, _fundAmount0());
+        deal(address(token1), account, _fundAmount1());
         vm.startPrank(account);
         token0.approve(address(vault), type(uint256).max);
         token1.approve(address(vault), type(uint256).max);
@@ -126,8 +214,8 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
 
     /// @notice Moves tokens into the vault so the curator can open a position with them.
     function _seedVault(uint256 amount0, uint256 amount1) internal {
-        deal(USDC, address(vault), token0.balanceOf(address(vault)) + amount0);
-        deal(WETH, address(vault), token1.balanceOf(address(vault)) + amount1);
+        deal(address(token0), address(vault), token0.balanceOf(address(vault)) + amount0);
+        deal(address(token1), address(vault), token1.balanceOf(address(vault)) + amount1);
     }
 
     /// @notice The pool's current human price, in the units the vault takes.
@@ -154,10 +242,15 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
         (tokenId,,,) = vault.createPosition(lower, upper, amount0, true);
     }
 
+    /// @notice Opens a position with this fixture's default size.
+    function _openPosition() internal returns (uint256 tokenId) {
+        return _openPosition(_openAmount0());
+    }
+
     /// @notice Trades back and forth through the pool so the active position accrues fees.
     function _accrueFees() internal {
-        swapHelper.swap(POOL, true, int256(200_000e6));
-        swapHelper.swap(POOL, false, int256(50e18));
+        swapHelper.swap(POOL, true, int256(_feeSwapAmount0()));
+        swapHelper.swap(POOL, false, int256(_feeSwapAmount1()));
     }
 
     /// @notice Pushes the pool price by a fraction of itself, in basis points.
@@ -165,8 +258,8 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
     function _movePriceBps(int256 bps) internal {
         // Moving a deep pool by a visible amount costs far more than the helper's working balance,
         // so top it up first; the swap stops at the price limit and only spends what it needs.
-        deal(USDC, address(swapHelper), 2_000_000_000e6);
-        deal(WETH, address(swapHelper), 1_000_000e18);
+        deal(address(token0), address(swapHelper), _whaleAmount0());
+        deal(address(token1), address(swapHelper), _whaleAmount1());
 
         (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(POOL).slot0();
         // The deviation cap is on price, so the sqrt price moves by roughly half as much.

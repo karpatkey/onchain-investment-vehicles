@@ -305,10 +305,60 @@ redemptions and transfers to anyone.
 
 | Suite | Needs a fork | Covers |
 |---|---|---|
-| `test/UniswapV3PositionVault.Math.t.sol` | no | Price conversion, tick snapping, share math, swap sizing, including fuzz tests that sweep the solver against every alternative. |
-| `test/UniswapV3PositionVault.t.sol` | yes | Initialization, access control, the investor gate, position operations, deposits, redemptions, compounding, callbacks, recovery, upgrades. |
-| `test/UniswapV3PositionVault.Rebalance.t.sol` | yes | Rebalancing in and out of range, single-sided balances, price limits, residue bounds, holder value across a move. |
+| `UniswapV3PositionVault.Math.t.sol` | no | Price conversion, tick snapping, share accounting, the tolerance band and swap sizing, including fuzz tests that sweep the solver against every alternative. |
+| `UniswapV3PositionVault.Reentrancy.t.sol` | no | Genuine re-entry attempts against every guarded entry point, driven by hostile stand-ins for the pool and position manager. |
+| `UniswapV3PositionVault.t.sol` | yes | Initialization, access control, the investor gate, position operations, deposits, redemptions, compounding, callbacks, recovery, upgrades. |
+| `UniswapV3PositionVault.Rebalance.t.sol` | yes | Rebalancing in and out of range, single-sided balances, price limits, residue bounds, holder value across a move. |
+| `UniswapV3PositionVault.Decimals.t.sol` | yes | The same core flows against WBTC/WETH, where token0 has 8 decimals rather than 6. |
+| `UniswapV3PositionVault.Invariant.t.sol` | yes | Properties that must survive any reachable sequence of deposits, redemptions, rebalances, trims, donations and pool trades. |
 
 The fork suites pin a mainnet block, unlike the factory suites. Every assertion depends on a pool's
 price, tick and observation history, so an unpinned fork would make expected amounts drift with
 mainnet and turn real regressions into noise. They read `MAINNET_URL` from the environment.
+
+### Why reentrancy needs mocks
+
+A standard ERC-20 never calls back into its sender, so against the real USDC, WETH and WBTC there is
+no way to attempt reentrancy at all. The stand-ins in `test/mocks/ReentrantUniswap.sol` create the
+opportunity: each can be told to call back into the vault at the exact moment the vault has handed
+over control, inside the position manager while liquidity is being added and inside the pool during
+a rebalance swap. That is what turns `nonReentrant` from an assertion by inspection into a tested
+property.
+
+### Invariants
+
+Each holds after any reachable sequence the handler can produce:
+
+- The vault owns the position it reports as active.
+- Shares outstanding are never a claim on nothing.
+- No allowance is ever left standing to the position manager.
+- Every share in existence is held by an account permitted to hold shares.
+- Redeeming the entire supply never claims more than the vault owns.
+
+A run also prints how many deposits, redemptions, rebalances, unwinds and creations it actually
+reached, because an invariant suite whose calls all revert passes without testing anything.
+
+### Coverage
+
+Measured over the vault's own suites:
+
+| File | Lines | Branches | Functions |
+|---|---|---|---|
+| `src/UniswapV3PositionVault.sol` | 85.99% | 71.01% | 93.88% |
+| `src/libraries/UniswapV3VaultMath.sol` | 48.86% | 32.61% | 48.48% |
+
+Reproduce with:
+
+```bash
+forge coverage --ir-minimum --match-path 'test/UniswapV3PositionVault*' \
+  --no-match-coverage '(^script/|^test/|libraries/uniswap/)' --report summary
+```
+
+The library figure understates reality and should not be read as a gap. The vault cannot be compiled
+for coverage without `--ir-minimum`, which fails with a stack-too-deep error otherwise, and that
+mode produces degraded source maps; the library is also reached by delegatecall, which coverage
+attributes poorly. Every one of the library's external entry points is exercised, several of them by
+fuzz tests. The vault's own figures are the meaningful ones.
+
+The uncovered branches in the vault are dominated by defensive paths that a correct counterparty
+never triggers, such as the clamps applied when the pool charges less than the plan allowed for.

@@ -43,6 +43,15 @@ ignore = ["src/libraries/uniswap/*.sol"]
 # First fuzz tests in this repo: the pure-math suite for UniswapV3PositionVault.
 runs = 256
 
+[invariant]
+# The vault's invariant suite drives sequences against a pinned mainnet fork, so each call costs a
+# cached RPC lookup. These bounds keep a CI run to a few seconds while still reaching deposits,
+# redemptions, rebalances and unwinds in the same sequence; invariant_callSummary prints the counts
+# so a run that reverted its way to a vacuous pass stays visible.
+runs = 16
+depth = 20
+fail_on_revert = false
+
 [profile.coverage]
 # Exclude script folder from coverage reports (regex pattern)
 no_match_coverage = "^script/"
