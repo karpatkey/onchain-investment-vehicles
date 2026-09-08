@@ -77,8 +77,11 @@ contract UniswapV3PositionVault is
     ///         position's liquidity, which for any position worth opening is many orders of
     ///         magnitude above this; the floor exists to stop the ratio being driven the other way,
     ///         by opening with a negligible position or by redeeming down to a residue and then
-    ///         refunding the vault. Holding the supply at or above a million bounds a depositor's
-    ///         truncation loss to a millionth of what they put in.
+    ///         refunding the vault. What a deposit loses to that truncation is at most one share's
+    ///         worth, so holding the supply at or above a million holds the loss at or below a
+    ///         millionth of everything the vault holds. That is a bound on the vault, not on the
+    ///         deposit: a deposit smaller than one share is still rounded to nothing, which is why
+    ///         a deposit that would mint no shares is rejected outright rather than accepted.
     uint256 private constant _MIN_SHARES = 1e6;
 
     //

@@ -536,8 +536,12 @@ library UniswapV3VaultMath {
         // and the cast reverts with no data. That is reachable whenever the balance being sold
         // could push the price past the far edge, which is the ordinary case for a narrow range and
         // exactly what this function exists to handle. Backing off by a sixty-fourth of the range
-        // costs nothing: the crossing the search is looking for is where the two sides fund equal
-        // liquidity, which is never in that sliver.
+        // does cost something, and it is worth naming rather than waving away: the crossing the
+        // search looks for is where the two sides fund equal liquidity, and for balances lopsided
+        // enough that the target composition is within a sixty-fourth of being one-sided, that
+        // crossing sits inside the sliver where the search can no longer place a probe. Both
+        // endpoint returns below therefore compare against not swapping instead of assuming the
+        // extreme is best.
         uint160 margin = uint160((uint256(sqrtB) - uint256(sqrtA)) >> 6);
         if (margin == 0) margin = 1;
         uint160 innerLow = sqrtA + margin;
@@ -560,29 +564,31 @@ library UniswapV3VaultMath {
             degenerate = hi <= lo;
         }
 
-        // No usable interior: the optimum is an endpoint, so take whichever of the two extremes
-        // mints more, including not swapping at all. That comparison, and the one at the end of the
-        // search, are made against this model, in which the pool's liquidity is the constant the
-        // caller passed. A swap that crosses an initialized tick trades against a different
+        // The price the whole budget would reach, held clear of the edges for the same reason every
+        // other probe is: it is only safe to evaluate the model at a price outside the range, where
+        // one side funds nothing, or at one held off the boundary.
+        uint160 spentAll = sqrtLimit;
+        if (spentAll > sqrtA && spentAll < sqrtB) {
+            if (spentAll < innerLow) spentAll = innerLow;
+            if (spentAll > innerHigh) spentAll = innerHigh;
+        }
+
+        // Both of the next two returns take the whole budget or none of it, so both compare the two.
+        // That comparison is made against this model, in which the pool's liquidity is the constant
+        // the caller passed. A swap that crosses an initialized tick trades against a different
         // liquidity than was modelled and can therefore end up worse than not swapping, by at most
         // the pool fee on the amount traded within the caller's price-impact cap. The caller mints
         // from the balances it actually holds afterwards, so the shortfall stays idle rather than
         // being lost.
-        if (degenerate) {
-            // Same hazard: sqrtLimit is only safe to evaluate at when it is outside the range, where
-            // one side funds nothing, or held clear of the edges.
-            uint160 probe = sqrtLimit;
-            if (probe > sqrtA && probe < sqrtB) {
-                if (probe < innerLow) probe = innerLow;
-                if (probe > innerHigh) probe = innerHigh;
-            }
+        if (degenerate || _soldSideInSurplus(params, hi, zeroForOne)) {
+            // Either there is no interior to search, or the sold side is still in surplus at the far
+            // endpoint, which puts the crossing at or beyond it. Spending everything is the answer
+            // in both cases unless the endpoint is the margin rather than the range edge, where the
+            // crossing can sit just inside and spending everything overshoots it.
             uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
-            uint128 mintAll = _mintableAfterSwap(params, probe, zeroForOne, budget);
+            uint128 mintAll = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
             return (zeroForOne, mintAll > mintNone ? budget : 0);
         }
-
-        // If the sold token is still in surplus once the whole budget is spent, spend all of it.
-        if (_soldSideInSurplus(params, hi, zeroForOne)) return (zeroForOne, budget);
 
         // Bisect between the surplus endpoint and the deficit endpoint.
         for (uint256 i; i < MAX_SWAP_SEARCH_STEPS; ++i) {

@@ -118,7 +118,12 @@ opening liquidity makes that fraction negligible, but only if the ratio stays wh
 there are two ways to drive it: open the vault with a negligible position, or redeem down to a
 residue and then fund the vault again. Both are refused. The opening liquidity must be at least a
 million units, and a redemption must either take everything or leave at least that many shares
-outstanding, so a depositor can lose at most a millionth of what they commit to rounding.
+outstanding.
+
+What a deposit loses to the truncation is at most one share's worth, so the floor holds that loss at
+or below a millionth of everything the vault holds. Read the bound that way round: it is a bound on
+the vault, not a percentage of the deposit. A deposit worth less than one share still rounds to
+nothing, and is rejected rather than accepted for no shares.
 
 This is the same failure the virtual-offset trick addresses in vaults that price shares off a
 balance, reached from the other end. A donation into this vault cannot be turned against the next

@@ -539,6 +539,68 @@ contract UniswapV3PositionVaultMathTest is Test {
         );
     }
 
+    function test_solveSwap_neverPicksASwapWorseThanNotSwapping() public pure {
+        // A budget enormous relative to the pool's liquidity: selling it all drives the price out
+        // of the target range and leaves nothing mintable, while leaving the balances alone still
+        // funds a little. The solver reaches its endpoint return here, and the endpoint returns
+        // have to compare spending everything against spending nothing rather than assume the
+        // extreme wins. Found by sweeping the search's own objective; these are its numbers.
+        UniswapV3VaultMath.SwapParams memory params = UniswapV3VaultMath.SwapParams({
+            sqrtPriceX96: TickMath.getSqrtRatioAtTick(1),
+            sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-95),
+            sqrtRatioBX96: TickMath.getSqrtRatioAtTick(187),
+            poolLiquidity: 1_000_000_000_000_000_001,
+            feePips: 3000,
+            amount0: 378_380_548_692_128_997_450_151,
+            amount1: 1
+        });
+
+        (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
+        assertEq(amountIn, 0, "spending this budget mints nothing, so the solver must decline");
+        assertGe(
+            _mintableAfter(params, sells, amountIn),
+            _mintableAfter(params, sells, 0),
+            "never worse than leaving the balances alone"
+        );
+    }
+
+    function testFuzz_solveSwap_neverPicksASwapWorseThanNotSwapping(
+        int24 priceTick,
+        int24 lowTick,
+        uint16 widthSeed,
+        uint256 budgetSeed,
+        uint128 poolLiquiditySeed,
+        bool zeroForOne,
+        uint256 otherSeed
+    ) public pure {
+        // The same property over the whole parameter space the solver has to work in: any price,
+        // any range, any pool depth, and balances from one wei to a trillion tokens.
+        int24 lower = int24(bound(int256(lowTick), -30_000, 30_000));
+        int24 upper = lower + int24(int256(bound(uint256(widthSeed), 1, 2000)));
+
+        uint256 budget = bound(budgetSeed, 1e12, 1e24);
+        uint256 other = bound(otherSeed, 0, 1e22);
+
+        UniswapV3VaultMath.SwapParams memory params = UniswapV3VaultMath.SwapParams({
+            sqrtPriceX96: TickMath.getSqrtRatioAtTick(int24(bound(int256(priceTick), -30_000, 30_000))),
+            sqrtRatioAX96: TickMath.getSqrtRatioAtTick(lower),
+            sqrtRatioBX96: TickMath.getSqrtRatioAtTick(upper),
+            poolLiquidity: uint128(bound(uint256(poolLiquiditySeed), 1e18, 1e26)),
+            feePips: 3000,
+            amount0: zeroForOne ? budget : other,
+            amount1: zeroForOne ? other : budget
+        });
+
+        (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
+        if (amountIn == 0) return;
+
+        assertGe(
+            _mintableAfter(params, sells, amountIn),
+            _mintableAfter(params, sells, 0),
+            "the solver must never pick a swap that mints less than leaving the balances alone"
+        );
+    }
+
     //
     // Price band
     //
