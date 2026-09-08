@@ -295,31 +295,17 @@ library UniswapV3VaultMath {
     // Share accounting
     //
 
-    /// @notice The largest share count a pair of maxima can pay for.
-    /// @dev    A share is a claim on everything the vault owns, so its cost is linear in the share
-    ///         count and each token gives an independent bound; the binding one wins. A token the
-    ///         vault does not currently hold imposes no bound, which is what lets a single-sided
-    ///         position be bought into with one token.
-    /// @param amount0Desired Maximum token0 on offer.
-    /// @param amount1Desired Maximum token1 on offer.
-    /// @param total0         Token0 the vault owns in total.
-    /// @param total1         Token1 the vault owns in total.
-    /// @param supply         The current share supply.
-    /// @return shares The largest affordable share count.
-    function affordableShares(
-        uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 total0,
-        uint256 total1,
-        uint256 supply
-    ) internal pure returns (uint256 shares) {
-        shares = type(uint256).max;
-        if (total0 != 0) shares = FullMath.mulDiv(amount0Desired, supply, total0);
-        if (total1 != 0) {
-            uint256 bound = FullMath.mulDiv(amount1Desired, supply, total1);
-            if (bound < shares) shares = bound;
-        }
-        if (shares == type(uint256).max) revert IUniswapV3PositionVault.ZeroShares();
+    /// @notice The share count a given amount of one token buys.
+    /// @dev    A share is a claim on everything the vault owns, so its cost is linear and one side
+    ///         is enough to price it. The other side follows from the position's ratio, which is
+    ///         what lets a depositor name a single amount the way a curator does when opening one.
+    /// @param amount The amount of the named token.
+    /// @param total  Everything the vault owns of that token, position and idle together.
+    /// @param supply The current share supply.
+    /// @return The share count that amount buys, rounded down.
+    function sharesForSide(uint256 amount, uint256 total, uint256 supply) public pure returns (uint256) {
+        if (total == 0) revert IUniswapV3PositionVault.AmountSideNotUsable();
+        return FullMath.mulDiv(amount, supply, total);
     }
 
     /// @notice What a deposit of the given share count costs and how much liquidity it buys.
@@ -806,9 +792,9 @@ library UniswapV3VaultMath {
     /// @param idle0         Token0 sitting idle in the vault.
     /// @param idle1         Token1 sitting idle in the vault.
     /// @param supply        The current share supply.
-    /// @param amount0Desired Maximum token0 the caller will supply.
-    /// @param amount1Desired Maximum token1 the caller will supply.
-    /// @return shares  The share count the maxima can pay for.
+    /// @param amount        The amount of the named token the caller will supply.
+    /// @param isAmount0     True when that amount is token0.
+    /// @return shares  The share count that amount buys.
     /// @return charge0 Token0 that funds the new liquidity.
     /// @return charge1 Token1 that funds the new liquidity.
     /// @return pulled0 Total token0 to take from the depositor.
@@ -821,19 +807,17 @@ library UniswapV3VaultMath {
         uint256 idle0,
         uint256 idle1,
         uint256 supply,
-        uint256 amount0Desired,
-        uint256 amount1Desired
+        uint256 amount,
+        bool isAmount0
     ) public pure returns (uint256 shares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) {
         (uint256 total0, uint256 total1) =
             amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, false);
 
         // The share count is derived from a linear cost, but the cost actually charged rounds two
         // components up: the tokens the new liquidity needs, and the claim on the idle balances.
-        // Each ceiling can add a wei, so the budget is reduced by that headroom first. Without it a
+        // Each ceiling can add a wei, so the amount is reduced by that headroom first. Without it a
         // deposit could take one or two wei more than the caller authorised.
-        shares = affordableShares(
-            _lessHeadroom(amount0Desired), _lessHeadroom(amount1Desired), total0 + idle0, total1 + idle1, supply
-        );
+        shares = sharesForSide(_lessHeadroom(amount), isAmount0 ? total0 + idle0 : total1 + idle1, supply);
         (, charge0, charge1, pulled0, pulled1) =
             depositCost(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, shares);
     }

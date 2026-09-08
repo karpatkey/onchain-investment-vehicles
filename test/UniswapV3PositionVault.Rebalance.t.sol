@@ -205,7 +205,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
 
         // A deposit compounds whatever the rebalance left behind before pricing the new shares.
         vm.prank(alice);
-        vault.deposit(10_000e6, 10e18, 0, 0, block.timestamp);
+        vault.deposit(10_000e6, true, 500, block.timestamp);
 
         assertGt(_positionLiquidity(), before, "the residue went back to work");
     }
@@ -214,7 +214,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         _openPosition(200_000e6);
 
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(50_000e6, 50e18, 0, 0, block.timestamp);
+        (uint256 shares,,) = vault.deposit(50_000e6, true, 500, block.timestamp);
 
         (uint256 before0, uint256 before1) = vault.previewRedeem(shares);
         (uint256 lower, uint256 upper) = _shiftedRange(1200, 400);

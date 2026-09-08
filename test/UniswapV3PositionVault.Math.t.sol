@@ -46,14 +46,6 @@ contract MathHarness {
         return UniswapV3VaultMath.liquidityFromSingleAmount(p, a, b, amount, isAmount0);
     }
 
-    function affordableShares(uint256 d0, uint256 d1, uint256 t0, uint256 t1, uint256 supply)
-        external
-        pure
-        returns (uint256)
-    {
-        return UniswapV3VaultMath.affordableShares(d0, d1, t0, t1, supply);
-    }
-
     function meanTick(int56 start, int56 end, uint32 period) external pure returns (int24) {
         return UniswapV3VaultMath.meanTick(start, end, period);
     }
@@ -264,24 +256,21 @@ contract UniswapV3PositionVaultMathTest is Test {
     // Share accounting
     //
 
-    function test_affordableShares_takesTheBindingSide() public view {
-        // A vault holding 100 token0 and 200 token1 against 1000 shares.
-        uint256 shares = harness.affordableShares(10, 100, 100, 200, 1000);
-        assertEq(shares, 100, "token0 is the binding side");
-
-        shares = harness.affordableShares(100, 20, 100, 200, 1000);
-        assertEq(shares, 100, "token1 is the binding side");
+    function test_sharesForSide_pricesFromTheNamedSide() public pure {
+        // A vault holding 100 token0 against 1000 shares: ten token0 buys a tenth of the supply.
+        assertEq(UniswapV3VaultMath.sharesForSide(10, 100, 1000), 100, "a tenth of the supply");
+        assertEq(UniswapV3VaultMath.sharesForSide(100, 100, 1000), 1000, "all of it");
     }
 
-    function test_affordableShares_ignoresASideTheVaultDoesNotHold() public view {
-        // A single-sided position imposes no bound from the token it does not hold.
-        uint256 shares = harness.affordableShares(10, 0, 100, 0, 1000);
-        assertEq(shares, 100, "only token0 binds");
+    function test_sharesForSide_roundsDownAgainstTheDepositor() public pure {
+        // 999 * 1000 / 1000 is exact; 999 * 1000 / 1001 is not, and must not round up.
+        assertEq(UniswapV3VaultMath.sharesForSide(999, 1001, 1000), 998, "rounds down");
     }
 
-    function test_affordableShares_revertsWhenTheVaultHoldsNothing() public {
-        vm.expectRevert(IUniswapV3PositionVault.ZeroShares.selector);
-        harness.affordableShares(1e18, 1e18, 0, 0, 1000);
+    function test_sharesForSide_rejectsASideTheVaultDoesNotHold() public {
+        // An out-of-range position holds only one token, so naming the other cannot buy anything.
+        vm.expectRevert(IUniswapV3PositionVault.AmountSideNotUsable.selector);
+        UniswapV3VaultMath.sharesForSide(1e18, 0, 1000);
     }
 
     //

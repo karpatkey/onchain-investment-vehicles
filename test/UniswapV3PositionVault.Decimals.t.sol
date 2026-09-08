@@ -131,14 +131,14 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
         uint256 before1 = token1.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 shares, uint256 spent0, uint256 spent1) = vault.deposit(5e8, 200e18, 0, 0, block.timestamp);
+        (uint256 shares, uint256 spent0, uint256 spent1) = vault.deposit(5e8, true, 500, block.timestamp);
 
         assertGt(shares, 0, "shares minted");
         assertLe(spent0, 5e8, "never exceeds the token0 maximum");
         assertLe(spent1, 200e18, "never exceeds the token1 maximum");
 
         vm.prank(alice);
-        (uint256 out0, uint256 out1) = vault.redeem(shares, 0, 0, block.timestamp);
+        (uint256 out0, uint256 out1) = vault.redeem(shares, 500, block.timestamp);
 
         assertGt(out0 + out1, 0, "redemption pays out");
         assertLe(token0.balanceOf(alice), before0, "no free token0");

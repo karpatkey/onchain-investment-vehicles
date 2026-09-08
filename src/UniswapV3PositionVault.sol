@@ -213,28 +213,34 @@ contract UniswapV3PositionVault is
     // Investor Operations
     //
 
-    /// @notice Buys into the position at its current token ratio.
-    /// @dev    Mirrors NonfungiblePositionManager.increaseLiquidity: the caller names the most it
-    ///         will supply of each token, and the vault takes only what the ratio actually needs.
-    ///         The position's fees are collected and folded in first, so they belong to existing
-    ///         holders and are not shared with this deposit. Amounts are pulled exactly, and the
-    ///         wei-level remainder left by the pool's own rounding is returned in the same call.
-    /// @param amount0Desired Maximum token0 the caller will supply.
-    /// @param amount1Desired Maximum token1 the caller will supply.
-    /// @param amount0Min     Minimum token0 the deposit must consume, as a slippage bound.
-    /// @param amount1Min     Minimum token1 the deposit must consume, as a slippage bound.
-    /// @param deadline       Latest timestamp at which the deposit may execute.
+    /// @notice Buys into the position by naming one token amount.
+    /// @dev    Shaped like createPosition: the caller says how much of one token to commit and the
+    ///         vault derives the other side from the position's current ratio. The position's fees
+    ///         are collected and folded in first, so they belong to existing holders and are not
+    ///         shared with this deposit. Amounts are pulled exactly, and the wei-level remainder
+    ///         left by the pool's own rounding is returned in the same call.
+    ///
+    ///         The slippage bound is on the price, not on the amounts, because that is what the
+    ///         caller is actually exposed to: the counter amount is whatever the pool's price makes
+    ///         it at execution, so bounding how far that price may sit from the pool's own recent
+    ///         average bounds the counter amount too. It is capped by the vault's own tolerance, so
+    ///         a caller can ask for a stricter bound but never a looser one.
+    /// @param amount          Amount of the named token to commit.
+    /// @param isAmount0       True when the amount is token0, false when it is token1.
+    /// @param maxSlippageBps  How far the pool's price may sit from its recent average, in basis
+    ///                        points. Must be between 1 and 10000.
+    /// @param deadline        Latest timestamp at which the deposit may execute.
     /// @return shares  Shares minted to the caller.
     /// @return amount0 Token0 taken from the caller.
     /// @return amount1 Token1 taken from the caller.
-    function deposit(
-        uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 amount0Min,
-        uint256 amount1Min,
-        uint256 deadline
-    ) external nonReentrant checkDeadline(deadline) returns (uint256 shares, uint256 amount0, uint256 amount1) {
+    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
+        external
+        nonReentrant
+        checkDeadline(deadline)
+        returns (uint256 shares, uint256 amount0, uint256 amount1)
+    {
         if (!isInvestor(msg.sender)) revert NotInvestor(msg.sender);
+        _checkSlippage(maxSlippageBps);
 
         uint256 tokenId = activeTokenId;
         if (tokenId == 0) revert NoActivePosition();
@@ -252,12 +258,12 @@ contract UniswapV3PositionVault is
         uint256 idle1 = token1.balanceOf(address(this));
 
         (uint256 targetShares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) = UniswapV3VaultMath.depositPlan(
-            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount0Desired, amount1Desired
+            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount, isAmount0
         );
 
         // The plan already leaves headroom for its own rounding; this is the hard guarantee that a
-        // deposit can never take more of either token than the caller put on offer.
-        if (pulled0 > amount0Desired || pulled1 > amount1Desired) revert SlippageExceeded(pulled0, pulled1);
+        // deposit never takes more of the named token than the caller asked to commit.
+        if ((isAmount0 ? pulled0 : pulled1) > amount) revert SlippageExceeded(pulled0, pulled1);
 
         if (pulled0 != 0) token0.safeTransferFrom(msg.sender, address(this), pulled0);
         if (pulled1 != 0) token1.safeTransferFrom(msg.sender, address(this), pulled1);
@@ -273,7 +279,6 @@ contract UniswapV3PositionVault is
 
         amount0 += UniswapV3VaultMath.idleShare(idle0, shares, supply);
         amount1 += UniswapV3VaultMath.idleShare(idle1, shares, supply);
-        if (amount0 < amount0Min || amount1 < amount1Min) revert SlippageExceeded(amount0, amount1);
 
         _mint(msg.sender, shares);
 
@@ -287,13 +292,15 @@ contract UniswapV3PositionVault is
     /// @dev    Withdraws the caller's share of the position's liquidity and of any idle balance.
     ///         Only the principal released by this redemption is collected from the position, so a
     ///         redemption can never sweep fees that belong to the remaining holders.
-    /// @param shares     Shares to burn.
-    /// @param amount0Min Minimum token0 the caller will accept.
-    /// @param amount1Min Minimum token1 the caller will accept.
-    /// @param deadline   Latest timestamp at which the redemption may execute.
+    /// @param shares          Shares to burn.
+    /// @param maxSlippageBps  How far the pool's price may sit from its recent average, in basis
+    ///                        points. The split between the two tokens depends on that price, so
+    ///                        bounding it is what protects the redeemer. Must be between 1 and
+    ///                        10000, and it is capped by the vault's own tolerance.
+    /// @param deadline        Latest timestamp at which the redemption may execute.
     /// @return amount0 Token0 paid to the caller.
     /// @return amount1 Token1 paid to the caller.
-    function redeem(uint256 shares, uint256 amount0Min, uint256 amount1Min, uint256 deadline)
+    function redeem(uint256 shares, uint16 maxSlippageBps, uint256 deadline)
         external
         nonReentrant
         checkDeadline(deadline)
@@ -301,6 +308,7 @@ contract UniswapV3PositionVault is
     {
         if (shares == 0) revert ZeroShares();
         if (!isInvestor(msg.sender)) revert NotInvestor(msg.sender);
+        _checkSlippage(maxSlippageBps);
 
         _compound();
 
@@ -319,7 +327,6 @@ contract UniswapV3PositionVault is
         amount0 += UniswapV3VaultMath.idleShareDown(idle0, shares, supply);
         amount1 += UniswapV3VaultMath.idleShareDown(idle1, shares, supply);
         if (amount0 == 0 && amount1 == 0) revert ZeroShares();
-        if (amount0 < amount0Min || amount1 < amount1Min) revert SlippageExceeded(amount0, amount1);
 
         _burn(msg.sender, shares);
 
@@ -355,7 +362,7 @@ contract UniswapV3PositionVault is
     {
         if (activeTokenId != 0) revert PositionAlreadyActive();
         if (amount == 0) revert InvalidArguments();
-        _checkPriceDeviation();
+        _checkPriceDeviation(maxTwapDeviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
         (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
@@ -388,7 +395,7 @@ contract UniswapV3PositionVault is
     /// @return liquidity Liquidity added back into the position.
     function collectFees() external nonReentrant isCurator returns (uint128 liquidity) {
         if (activeTokenId == 0) revert NoActivePosition();
-        _checkPriceDeviation();
+        _checkPriceDeviation(maxTwapDeviationBps);
         liquidity = _compound();
     }
 
@@ -398,7 +405,7 @@ contract UniswapV3PositionVault is
     /// @return liquidity Liquidity added.
     function addLiquidity() external nonReentrant isCurator returns (uint128 liquidity) {
         if (activeTokenId == 0) revert NoActivePosition();
-        _checkPriceDeviation();
+        _checkPriceDeviation(maxTwapDeviationBps);
         liquidity = _compound();
         if (liquidity == 0) revert NothingToAdd();
     }
@@ -633,12 +640,12 @@ contract UniswapV3PositionVault is
 
     /// @notice What a deposit of the given maxima would mint and cost.
     /// @dev    Indicative, on the same terms as previewRedeem.
-    /// @param amount0Desired Maximum token0 the caller would supply.
-    /// @param amount1Desired Maximum token1 the caller would supply.
+    /// @param amount    Amount of the named token the caller would commit.
+    /// @param isAmount0 True when that amount is token0.
     /// @return shares  Shares the deposit would mint.
     /// @return amount0 Token0 the deposit would take.
     /// @return amount1 Token1 the deposit would take.
-    function previewDeposit(uint256 amount0Desired, uint256 amount1Desired)
+    function previewDeposit(uint256 amount, bool isAmount0)
         external
         view
         returns (uint256 shares, uint256 amount0, uint256 amount1)
@@ -647,7 +654,7 @@ contract UniswapV3PositionVault is
         if (supply == 0) return (0, 0, 0);
 
         (uint256 total0, uint256 total1) = totalAssets();
-        shares = UniswapV3VaultMath.affordableShares(amount0Desired, amount1Desired, total0, total1, supply);
+        shares = UniswapV3VaultMath.sharesForSide(amount, isAmount0 ? total0 : total1, supply);
         if (shares == 0) return (0, 0, 0);
 
         amount0 = UniswapV3VaultMath.idleShare(total0, shares, supply);
@@ -797,7 +804,7 @@ contract UniswapV3PositionVault is
         internal
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
-        _checkPriceDeviation();
+        _checkPriceDeviation(maxTwapDeviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
 
@@ -862,7 +869,7 @@ contract UniswapV3PositionVault is
 
         if (amountIn != 0) {
             (amountIn, amountOut) = _swap(zeroForOne, amountIn, maxPriceImpactBps, sqrtPriceX96);
-            _checkPriceDeviation();
+            _checkPriceDeviation(maxTwapDeviationBps);
         }
     }
 
@@ -1087,13 +1094,24 @@ contract UniswapV3PositionVault is
         received = uint256(-(zeroForOne ? amount1Delta : amount0Delta));
     }
 
+    /// @notice Reverts unless the pool's price is fair enough for a caller's own tolerance.
+    /// @dev    An investor's bound and the vault's own both apply, and the tighter one wins, so a
+    ///         caller can ask for more protection than the admin configured but never less.
+    /// @param maxSlippageBps The caller's tolerance, in basis points.
+    function _checkSlippage(uint16 maxSlippageBps) internal view {
+        if (maxSlippageBps == 0 || maxSlippageBps > _MAX_BPS) revert InvalidArguments();
+
+        uint16 cap = maxTwapDeviationBps;
+        _checkPriceDeviation(maxSlippageBps < cap ? maxSlippageBps : cap);
+    }
+
     /// @notice Reverts unless the pool's spot price is close enough to its own recent average.
     /// @dev    The vault's only defence against acting on a manipulated price. A pool whose
     ///         observation history is too short to answer the window cannot be checked at all, so
     ///         that case reverts rather than proceeding unguarded.
     /// @return sqrtPriceX96 The pool's current sqrt price.
     /// @return sqrtTwapX96  The sqrt price implied by the average tick over the window.
-    function _checkPriceDeviation() internal view returns (uint160 sqrtPriceX96, uint160 sqrtTwapX96) {
+    function _checkPriceDeviation(uint16 maxBps) internal view returns (uint160 sqrtPriceX96, uint160 sqrtTwapX96) {
         uint16 cardinality;
         (sqrtPriceX96,,, cardinality,,,) = pool.slot0();
 
@@ -1109,9 +1127,7 @@ contract UniswapV3PositionVault is
             revert TwapUnavailable(period, cardinality);
         }
 
-        sqrtTwapX96 = UniswapV3VaultMath.twapCheck(
-            sqrtPriceX96, tickCumulatives[0], tickCumulatives[1], period, maxTwapDeviationBps
-        );
+        sqrtTwapX96 = UniswapV3VaultMath.twapCheck(sqrtPriceX96, tickCumulatives[0], tickCumulatives[1], period, maxBps);
     }
 
     /// @notice Mints the opening share supply when the vault has none.

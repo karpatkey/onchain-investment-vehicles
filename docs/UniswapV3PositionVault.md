@@ -113,15 +113,22 @@ supply, credited to the caller. Shares and liquidity therefore start one-to-one.
 
 ### 2. Depositing
 
-`deposit(amount0Desired, amount1Desired, amount0Min, amount1Min, deadline)` mirrors
-`NonfungiblePositionManager.increaseLiquidity`. The investor names the most they will supply of each
-token, and the vault takes only what the position's current ratio needs. Amounts are pulled exactly,
-and the wei-level remainder left by the pool's rounding is returned in the same call.
+`deposit(amount, isAmount0, maxSlippageBps, deadline)` takes the same shape as `createPosition`: the
+investor names how much of **one** token to commit and the vault derives the other side from the
+position's current ratio. Amounts are pulled exactly, and the wei-level remainder left by the pool's
+rounding is returned in the same call.
+
+The slippage bound is on the **price**, not on the amounts, because that is what the caller is
+actually exposed to. The counter amount is whatever the pool's price makes it at execution, so
+bounding how far that price may sit from the pool's own recent average bounds the counter amount
+too, with no need for the caller to supply a reference quote. It is capped by the vault's own
+tolerance, so a caller can ask for a stricter bound but never a looser one.
 
 ### 3. Redeeming
 
-`redeem(shares, amount0Min, amount1Min, deadline)` burns shares and withdraws the caller's share of
-the position's liquidity plus their share of any idle balance, paying out in both tokens. Only the
+`redeem(shares, maxSlippageBps, deadline)` burns shares and withdraws the caller's share of the
+position's liquidity plus their share of any idle balance, paying out in both tokens. The split
+between the two depends on the pool's price, so the same price bound protects the redeemer. Only the
 principal released by this redemption is collected from the position, so a redemption can never
 sweep fees belonging to the remaining holders.
 
@@ -330,7 +337,8 @@ The vault links `UniswapV3VaultMath`, which forge deploys and links automaticall
 compiled with a size-favouring setting declared in `foundry.toml`; no other contract is affected, so
 no existing CREATE2 address moves.
 
-The vault is effectively full: it sits about a hundred bytes under the EIP-170 limit, and the
+Simplifying the investor functions to one named amount and one slippage bound also made the vault
+smaller, which bought back some room. It still sits only a few hundred bytes under the EIP-170 limit, and the
 optimizer setting has been lowered as far as it usefully goes. **Before any further external
 function is added, the read surface should move to a separate lens contract** that reads the vault's
 public state, which is why Uniswap ships its own quoting and position-valuation helpers separately.

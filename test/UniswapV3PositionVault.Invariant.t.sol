@@ -59,7 +59,7 @@ contract VaultHandler is Test {
         amount1 = bound(amount1, 1e15, 200e18);
 
         vm.prank(actor);
-        try vault.deposit(amount0, amount1, 0, 0, block.timestamp) {
+        try vault.deposit(amount0, true, 500, block.timestamp) {
             deposits++;
         } catch {}
     }
@@ -73,7 +73,7 @@ contract VaultHandler is Test {
         uint256 shares = bound(sharesSeed, 1, held);
 
         vm.prank(actor);
-        try vault.redeem(shares, 0, 0, block.timestamp) {
+        try vault.redeem(shares, 500, block.timestamp) {
             redemptions++;
         } catch {}
     }
