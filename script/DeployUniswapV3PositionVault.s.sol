@@ -7,6 +7,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {IUniswapV3PositionVault} from "../src/IUniswapV3PositionVault.sol";
+import {IUniswapV3Pool} from "../src/interfaces/IUniswapV3Pool.sol";
 import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 
 /// @title  DeployUniswapV3PositionVault
@@ -47,6 +48,15 @@ contract DeployUniswapV3PositionVault is Script {
         address finalAdmin = params.admin;
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
+
+        // The vault's own zero-address check never sees this value, because the line below swaps in
+        // the deployer before initialize runs. Without this the shipped template's placeholder admin
+        // would be granted the role and the deployer would then renounce, leaving a vault nobody can
+        // administer, upgrade or configure. The post-flight assertion would pass, because the zero
+        // address really does hold the role.
+        require(finalAdmin != address(0), "admin must be set in the config");
+        require(params.curator != address(0), "curator must be set in the config");
+        require(params.assetRecoverer != address(0), "assetRecoverer must be set in the config");
 
         // The deployer holds the admin role only for as long as it takes to grant the real one.
         params.admin = deployer;
@@ -129,5 +139,14 @@ contract DeployUniswapV3PositionVault is Script {
         require(vault.isInvestor(address(1)) == openToEveryone, "investor gate misconfigured");
         require(address(vault.pool()) != address(0), "pool not resolved");
         require(vault.activeTokenId() == 0, "vault should start with no position");
+
+        // A pool whose observation buffer is too short to answer the configured window reverts every
+        // price-sensitive call, which would brick the vault until a third party grows the pool's
+        // cardinality. Ask the pool now, so a bad pairing fails the deployment rather than the first
+        // operation.
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = vault.twapPeriod();
+        secondsAgos[1] = 0;
+        IUniswapV3Pool(address(vault.pool())).observe(secondsAgos);
     }
 }

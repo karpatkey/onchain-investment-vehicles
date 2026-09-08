@@ -739,8 +739,11 @@ contract UniswapV3PositionVault is
     }
 
     /// @inheritdoc IERC721Receiver
-    /// @dev The vault only ever holds a position it minted itself, so any other incoming NFT, and
-    ///      any arriving outside a mint, is rejected rather than silently custodied.
+    /// @dev The vault only ever holds a position it minted itself, so a token offered through
+    ///      safeTransferFrom outside a mint is refused. This is not a guarantee that nothing else
+    ///      can arrive: a plain transferFrom invokes no hook, so any ERC-721 can still be parked on
+    ///      the vault, and RecoverFunds sweeps ERC-20s only, which leaves such a token stranded. It
+    ///      is inert rather than dangerous, since only activeTokenId is ever acted on.
     function onERC721Received(address, address, uint256, bytes calldata) external view override returns (bytes4) {
         if (!_minting || msg.sender != address(positionManager)) revert UnexpectedNft();
         return IERC721Receiver.onERC721Received.selector;

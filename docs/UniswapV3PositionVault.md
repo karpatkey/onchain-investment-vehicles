@@ -279,8 +279,8 @@ pro-rata, and is folded back in by the next compounding.
 
 ### 0. Staleness
 
-Every function that commits to a price takes a deadline, and the guards below cannot stand in for
-one. Both the manipulation guard and a deposit's slippage allowance are measured against the pool's
+Every function that takes a price as an argument also takes a deadline, and the guards below cannot
+stand in for one. Both the manipulation guard and a deposit's slippage allowance are measured against the pool's
 own recent average, and after a genuine move the spot price and that average agree with each other
 at the new level. A transaction that sat in the mempool through the move therefore passes every
 check and executes on terms nobody intended. Only the deadline stops it.
@@ -291,8 +291,18 @@ An allowance measured against a live reference does not.
 
 ### 1. Price manipulation
 
-Every price-sensitive operation compares the pool's spot price against its own time-weighted average
-over an admin-configured window and refuses to proceed beyond an admin-configured tolerance. A
+Every operation that takes or derives a price compares the pool's spot price against its own
+time-weighted average over an admin-configured window and refuses to proceed beyond an
+admin-configured tolerance. That is `createPosition`, both rebalances, `collectFees`, `addLiquidity`,
+`deposit` and `redeem`.
+
+**`unwindPosition` and `removeLiquidity` are deliberately outside it**, and the trade-off is worth
+stating rather than leaving implicit. Neither trades: the vault receives exactly its share of the
+pool's reserves at no spread. What the spot price does set is the token *split* it receives, so
+exiting while the price is dislocated crystallises the position's side of any arbitrage instead of
+letting a round trip net out. Guarding them would bound that, at the cost of blocking the curator
+from exiting during exactly the volatility that most warrants exiting. The exit path is deliberately
+always open. See the Outstanding section of the pull request for the open question. A
 rebalance checks before **and** after its swap. A pool whose observation history is too short to
 answer the window reverts rather than proceeding unguarded.
 
