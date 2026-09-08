@@ -93,9 +93,6 @@ interface IUniswapV3PositionVault {
     /// @notice The pool holds no in-range liquidity, so a swap cannot be sized against it.
     error PoolHasNoLiquidity();
 
-    /// @notice The supplied swap price limit is not on the far side of the current price.
-    error InvalidSqrtPriceLimit();
-
     /// @notice A Uniswap callback arrived from an unexpected caller or outside an expected operation.
     error UnexpectedCallback();
 

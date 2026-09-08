@@ -20,6 +20,9 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
     ///      both second-order next to the position itself.
     uint256 internal constant MAX_LEFTOVER_BPS = 100;
 
+    /// @dev A price-impact cap generous enough that these swaps are never the binding constraint.
+    uint16 internal constant MAX_IMPACT_BPS = 500;
+
     function test_rebalanceWithSwap_movesThePositionAndConsumesAlmostEverything() public {
         _openPosition(200_000e6);
         uint256 oldTokenId = vault.activeTokenId();
@@ -28,7 +31,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _shiftedRange(2000, 500);
 
         vm.prank(curator);
-        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, 0);
+        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         assertGt(tokenId, 0, "a new position was minted");
         assertTrue(tokenId != oldTokenId, "the position was replaced");
@@ -55,7 +58,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         uint256 upper = spot * 7000 / 10_000;
 
         vm.prank(curator);
-        (,, uint256 amount0, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, 0);
+        (,, uint256 amount0, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         assertEq(amount0, 0, "a range below the price takes no token0");
         assertGt(amount1, 0, "it is funded entirely by token1");
@@ -70,7 +73,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         uint256 upper = spot * 18_000 / 10_000;
 
         vm.prank(curator);
-        (,, uint256 amount0, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, 0);
+        (,, uint256 amount0, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         assertGt(amount0, 0, "it is funded entirely by token0");
         assertEq(amount1, 0, "a range above the price takes no token1");
@@ -83,7 +86,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
 
         vm.prank(curator);
-        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, 0);
+        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         assertGt(tokenId, 0, "a position was opened");
         assertGt(liquidity, 0, "it holds liquidity");
@@ -95,7 +98,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1500);
 
         vm.prank(curator);
-        (, uint128 liquidity,, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, 0);
+        (, uint128 liquidity,, uint256 amount1) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         assertGt(liquidity, 0, "a two-sided position was funded from one token");
         assertGt(amount1, 0, "the swap produced the other side");
@@ -106,7 +109,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.NothingToRebalance.selector);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
     }
 
     function test_rebalanceWithSwap_collectsFeesBeforeMovingTheRange() public {
@@ -121,7 +124,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _shiftedRange(1500, 400);
 
         vm.prank(curator);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         (uint256 after0, uint256 after1) = vault.totalAssets();
 
@@ -133,38 +136,62 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         assertEq(vault.activeTokenId() == 0, false, "a new position is open");
     }
 
-    function test_rebalanceWithSwap_rejectsAPriceLimitOnTheWrongSide() public {
-        _openPosition(200_000e6);
+    function test_rebalanceWithSwap_rejectsAnImpactCapOutsideItsRange() public {
+        _openPosition();
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
 
-        (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(POOL).slot0();
+        vm.startPrank(curator);
 
-        // Moving into a range below the price sells token0, which pushes the price down, so a limit
-        // above the current price could never be reached and is rejected rather than ignored.
-        uint256 spot = _spotPrice();
-        uint256 lower = spot * 5000 / 10_000;
-        uint256 upper = spot * 7000 / 10_000;
+        // Zero would forbid the swap from moving the price at all, which is never what a curator
+        // means; the cap has to be a real allowance.
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        vault.rebalanceWithSwap(lower, upper, 0);
 
-        vm.prank(curator);
-        vm.expectRevert(IUniswapV3PositionVault.InvalidSqrtPriceLimit.selector);
-        vault.rebalanceWithSwap(lower, upper, uint160(uint256(sqrtPriceX96) * 11 / 10));
+        // And it is a fraction of the price, so it cannot exceed the whole of it.
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        vault.rebalanceWithSwap(lower, upper, 10_001);
+
+        vm.stopPrank();
     }
 
-    function test_rebalanceWithSwap_honoursATighterPriceLimit() public {
-        _openPosition(200_000e6);
+    function test_rebalanceWithSwap_stopsAtTheImpactCapInsteadOfReverting() public {
+        _openPosition();
 
-        (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(POOL).slot0();
-
+        // A range wholly below the price needs every unit of token0 sold, which would move this
+        // pool well past a single basis point. The swap must stop at the cap and fill partially.
         uint256 spot = _spotPrice();
         uint256 lower = spot * 5000 / 10_000;
         uint256 upper = spot * 7000 / 10_000;
 
-        // A limit just below the current price stops the swap almost immediately, so most of the
-        // token0 cannot be sold and stays idle. The mint must still succeed.
         vm.prank(curator);
-        (, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, uint160(uint256(sqrtPriceX96) * 9999 / 10_000));
+        (, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, 1);
 
         assertGt(liquidity, 0, "a partially filled swap still mints");
         assertGt(token0.balanceOf(address(vault)), 0, "the unsold token0 stays idle");
+    }
+
+    function test_rebalanceWithSwap_aTighterCapConvertsLessOfTheBalance() public {
+        uint256 spot = _spotPrice();
+        uint256 lower = spot * 5000 / 10_000;
+        uint256 upper = spot * 7000 / 10_000;
+
+        uint256 snapshot = vm.snapshotState();
+
+        _openPosition();
+        vm.prank(curator);
+        vault.rebalanceWithSwap(lower, upper, 1);
+        uint256 leftoverUnderTightCap = token0.balanceOf(address(vault));
+
+        vm.revertToState(snapshot);
+
+        _openPosition();
+        vm.prank(curator);
+        vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
+        uint256 leftoverUnderLooseCap = token0.balanceOf(address(vault));
+
+        // The cap is the only difference between the two runs, so it has to be what decides how
+        // much of the balance the swap was able to convert.
+        assertGt(leftoverUnderTightCap, leftoverUnderLooseCap, "a tighter cap converts less");
     }
 
     function test_rebalanceWithSwap_leavesResidueThatTheNextDepositCompoundsAway() public {
@@ -172,7 +199,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _shiftedRange(2000, 500);
 
         vm.prank(curator);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         uint128 before = _positionLiquidity();
 
@@ -193,7 +220,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _shiftedRange(1200, 400);
 
         vm.prank(curator);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         (uint256 after0, uint256 after1) = vault.previewRedeem(shares);
 
@@ -354,7 +381,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
 
         _openPosition();
         vm.prank(curator);
-        (, uint128 withSwap,,) = vault.rebalanceWithSwap(lower, upper, 0);
+        (, uint128 withSwap,,) = vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS);
 
         // Trading the surplus into the side the range actually wants is the whole point of the
         // swapping variant, so it must mint strictly more from the same starting balances.

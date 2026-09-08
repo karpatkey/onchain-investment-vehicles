@@ -30,9 +30,17 @@ no_match_test = "upgrade"
 # The margin is a few hundred bytes, so adding an external function to the vault will need either
 # another reduction here or more of its logic moved into UniswapV3VaultMath, which has ample room.
 # `forge build --sizes` reports the current margin.
-additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 50 }]
+#
+# This setting also interacts with via-IR's stack allocation: the rebalance path has hit
+# stack-too-deep here before, and the fix was splitting it into smaller frames rather than tuning
+# this number.
+#
+# This setting also interacts with via-IR's stack allocation: raising it has produced stack-too-deep
+# in the rebalance path before, which was fixed by splitting that path into smaller frames rather
+# than by tuning the number.
+additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 120 }]
 compilation_restrictions = [
-  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 50 },
+  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 120 },
 ]
 
 [fmt]

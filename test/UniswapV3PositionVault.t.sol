@@ -120,7 +120,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.removeLiquidity(1);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, 500);
         vm.stopPrank();
 
         // The admin does not inherit the curator's powers.
@@ -497,7 +497,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.rebalanceWithSwap(lower, upper, 0);
+        vault.rebalanceWithSwap(lower, upper, 500);
 
         // Ordinary curator work is blocked too, not just the path that swaps.
         vm.prank(curator);

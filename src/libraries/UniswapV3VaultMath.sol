@@ -662,18 +662,22 @@ library UniswapV3VaultMath {
         return FullMath.mulDiv(difference, BPS_DENOMINATOR, twap);
     }
 
-    /// @notice The sqrt-price band within which a spot price is inside the deviation cap.
-    /// @dev    The cap is a bound on the price, so the band edges are the average price scaled by
-    ///         one minus and one plus the cap, then square-rooted back into sqrt-price space. The
-    ///         square root of the scaling factor is taken at Q96 and applied with a single mulDiv,
-    ///         which keeps full precision without ever squaring a sqrt price. Used as the default
-    ///         swap price limit, so a rebalance whose swap would leave the band stops at the edge
-    ///         instead of reverting.
-    /// @param sqrtTwapX96 The sqrt price implied by the average tick.
-    /// @param maxBps      The deviation cap, in basis points.
+    /// @notice The sqrt-price band a price may move within, given a tolerance in basis points.
+    /// @dev    The tolerance is a bound on the price, not on its square root, so the edges are the
+    ///         price scaled by one minus and one plus the tolerance and then square-rooted back into
+    ///         sqrt-price space. The square root of the scaling factor is taken at Q96 and applied
+    ///         with a single mulDiv, which keeps full precision without ever squaring a sqrt price.
+    ///
+    ///         Used to turn a curator's price-impact cap into the swap price limit the pool takes,
+    ///         so a swap that would move the price further simply stops at the edge and fills
+    ///         partially instead of reverting. A tolerance of 10000 basis points collapses the lower
+    ///         edge to the bottom of Uniswap's range, which is as close to unbounded as the pool
+    ///         allows.
+    /// @param sqrtPriceX96 The sqrt price the band is centred on.
+    /// @param maxBps       The tolerance, in basis points, at most 10000.
     /// @return sqrtLowX96  Lower edge of the band.
     /// @return sqrtHighX96 Upper edge of the band.
-    function deviationBand(uint160 sqrtTwapX96, uint16 maxBps)
+    function priceBand(uint160 sqrtPriceX96, uint16 maxBps)
         public
         pure
         returns (uint160 sqrtLowX96, uint160 sqrtHighX96)
@@ -681,8 +685,8 @@ library UniswapV3VaultMath {
         uint256 lowFactor = Math.sqrt(FullMath.mulDiv(BPS_DENOMINATOR - maxBps, 1 << 96, BPS_DENOMINATOR));
         uint256 highFactor = Math.sqrt(FullMath.mulDiv(BPS_DENOMINATOR + maxBps, 1 << 96, BPS_DENOMINATOR));
 
-        uint256 low = FullMath.mulDiv(sqrtTwapX96, lowFactor, 1 << 48);
-        uint256 high = FullMath.mulDiv(sqrtTwapX96, highFactor, 1 << 48);
+        uint256 low = FullMath.mulDiv(sqrtPriceX96, lowFactor, 1 << 48);
+        uint256 high = FullMath.mulDiv(sqrtPriceX96, highFactor, 1 << 48);
 
         uint256 floor_ = uint256(TickMath.MIN_SQRT_RATIO) + 1;
         uint256 ceiling = uint256(TickMath.MAX_SQRT_RATIO) - 1;

@@ -455,31 +455,40 @@ contract UniswapV3PositionVaultMathTest is Test {
     }
 
     //
-    // Tolerance band
+    // Price band
     //
 
-    function test_deviationBand_bracketsTheAverage() public pure {
-        uint160 twap = TickMath.getSqrtRatioAtTick(0);
-        (uint160 low, uint160 high) = UniswapV3VaultMath.deviationBand(twap, 500);
+    function test_priceBand_bracketsThePriceItIsCentredOn() public pure {
+        uint160 centre = TickMath.getSqrtRatioAtTick(0);
+        (uint160 low, uint160 high) = UniswapV3VaultMath.priceBand(centre, 500);
 
-        assertLt(low, twap, "the lower edge sits below the average");
-        assertGt(high, twap, "the upper edge sits above it");
+        assertLt(low, centre, "the lower edge sits below the centre");
+        assertGt(high, centre, "the upper edge sits above it");
 
-        // The band is on price, so each edge is the average scaled by the square root of one
-        // minus or plus the cap.
-        // A 500 basis point cap on price is a 2.53% move down and a 2.47% move up in sqrt space,
-        // because the square root compresses both directions.
-        assertApproxEqRel(uint256(low), uint256(twap) * 9747 / 10_000, 1e15, "lower edge");
-        assertApproxEqRel(uint256(high), uint256(twap) * 10_247 / 10_000, 1e15, "upper edge");
+        // The tolerance is on price, so each edge is the centre scaled by the square root of one
+        // minus or plus it. A 500 basis point tolerance is a 2.53% move down and a 2.47% move up in
+        // sqrt space, because the square root compresses both directions.
+        assertApproxEqRel(uint256(low), uint256(centre) * 9747 / 10_000, 1e15, "lower edge");
+        assertApproxEqRel(uint256(high), uint256(centre) * 10_247 / 10_000, 1e15, "upper edge");
     }
 
-    function test_deviationBand_clampsToWhatUniswapCanRepresent() public pure {
+    function test_priceBand_isTighterForASmallerTolerance() public pure {
+        uint160 centre = TickMath.getSqrtRatioAtTick(0);
+
+        (uint160 tightLow, uint160 tightHigh) = UniswapV3VaultMath.priceBand(centre, 10);
+        (uint160 wideLow, uint160 wideHigh) = UniswapV3VaultMath.priceBand(centre, 1000);
+
+        assertGt(tightLow, wideLow, "a smaller tolerance stops the price falling as far");
+        assertLt(tightHigh, wideHigh, "and stops it rising as far");
+    }
+
+    function test_priceBand_clampsToWhatUniswapCanRepresent() public pure {
         // A band that would run past either end of Uniswap's range is pinned to it, so the value
         // is always usable as a swap price limit.
-        (uint160 low,) = UniswapV3VaultMath.deviationBand(TickMath.MIN_SQRT_RATIO + 1, 10_000);
+        (uint160 low,) = UniswapV3VaultMath.priceBand(TickMath.MIN_SQRT_RATIO + 1, 10_000);
         assertGe(low, TickMath.MIN_SQRT_RATIO + 1, "lower edge stays inside the range");
 
-        (, uint160 high) = UniswapV3VaultMath.deviationBand(TickMath.MAX_SQRT_RATIO - 1, 10_000);
+        (, uint160 high) = UniswapV3VaultMath.priceBand(TickMath.MAX_SQRT_RATIO - 1, 10_000);
         assertLe(high, TickMath.MAX_SQRT_RATIO - 1, "upper edge stays inside the range");
     }
 

@@ -135,8 +135,11 @@ support, and both work whether or not a position is already open.
 left over: the mint consumes one side entirely and the surplus of the other stays idle. This avoids
 the swap's price impact and fee, at the cost of leaving part of the vault unproductive.
 
-`rebalanceWithSwap(priceLower, priceUpper, sqrtPriceLimitX96)` swaps inside the same pool so that
-almost the whole balance ends up as liquidity. See **Rebalance algorithm** below.
+`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps)` swaps inside the same pool so that
+almost the whole balance ends up as liquidity. The cap is how far the curator will let that trade
+move the pool's price, in basis points of the price it starts at, so 100 is one percent. It must be
+between 1 and 10000. A swap that would move the price further stops at the cap and fills partially,
+leaving the rest idle, rather than reverting. See **Rebalance algorithm** below.
 
 Choosing between them is a real trade-off. Trading costs the pool fee and moves the price against
 the vault; not trading leaves capital idle. The surplus a no-swap rebalance leaves behind cannot be
@@ -241,9 +244,12 @@ over an admin-configured window and refuses to proceed beyond an admin-configure
 rebalance checks before **and** after its swap. A pool whose observation history is too short to
 answer the window reverts rather than proceeding unguarded.
 
-The swap also takes a price limit. Passing zero defaults it to the edge of the same tolerance band,
-so an oversized swap fills partially instead of reverting. A caller-supplied limit must lie on the
-far side of the current price, so it can only ever tighten the swap.
+The swap carries a second, separate bound: the curator's price-impact cap. The two do different
+jobs. The impact cap is the curator's own limit on how far this particular trade may move the pool,
+measured from the price the swap starts at, and a swap that would move further simply stops there
+and fills partially. The manipulation guard is the vault's limit, measured against the pool's own
+recent average, and it reverts outright. One is slippage control, the other is a defence against
+acting on a price someone else has moved.
 
 ### 2. Callbacks
 
@@ -327,10 +333,10 @@ redemptions and transfers to anyone.
 
 | Suite | Needs a fork | Covers |
 |---|---|---|
-| `UniswapV3PositionVault.Math.t.sol` | no | Price conversion, tick snapping, share accounting, the tolerance band and swap sizing, including fuzz tests that sweep the solver against every alternative. |
+| `UniswapV3PositionVault.Math.t.sol` | no | Price conversion, tick snapping, share accounting, the price band and swap sizing, including fuzz tests that sweep the solver against every alternative. |
 | `UniswapV3PositionVault.Reentrancy.t.sol` | no | Genuine re-entry attempts against every guarded entry point, driven by hostile stand-ins for the pool and position manager. |
 | `UniswapV3PositionVault.t.sol` | yes | Initialization, access control, the investor gate, position operations, deposits, redemptions, compounding, callbacks, recovery, upgrades. |
-| `UniswapV3PositionVault.Rebalance.t.sol` | yes | Rebalancing in and out of range, single-sided balances, price limits, residue bounds, holder value across a move. |
+| `UniswapV3PositionVault.Rebalance.t.sol` | yes | Both rebalance variants: in and out of range, single-sided balances, the surplus the non-trading one leaves, price-impact caps, residue bounds, holder value across a move. |
 | `UniswapV3PositionVault.Decimals.t.sol` | yes | The same core flows against WBTC/WETH, where token0 has 8 decimals rather than 6. |
 | `UniswapV3PositionVault.Invariant.t.sol` | yes | Properties that must survive any reachable sequence of deposits, redemptions, rebalances, trims, donations and pool trades. |
 
