@@ -9,10 +9,9 @@ pragma solidity ^0.8.0;
 ///         live in src/interfaces. Every error the vault and its math library can revert with is
 ///         declared here, so callers have one stable selector surface to decode against.
 ///
-///         Unlike IkpkShares this declares no function signatures, so it cannot be used to CALL the
-///         vault: integrators bind to the concrete UniswapV3PositionVault type, or write their own
-///         minimal interface. Adding the call surface here is tracked as an open item on the pull
-///         request rather than assumed.
+///         It also declares the vault's own call surface, so an integrator can bind to this type
+///         rather than to the implementation. The ERC-20, access-control and UUPS surfaces are not
+///         repeated here; they come from the standard interfaces the vault already implements.
 interface IUniswapV3PositionVault {
     //
     // Errors
@@ -224,4 +223,121 @@ interface IUniswapV3PositionVault {
     /// @notice Emitted when the admin changes the recipient of recovered tokens.
     /// @param assetRecoverer The new recipient.
     event AssetRecovererUpdate(address indexed assetRecoverer);
+
+    //
+    // Investor operations
+    //
+
+    /// @notice Buys into the position by naming one token amount.
+    /// @param amount          Amount of the named token to commit.
+    /// @param isAmount0       True when the amount is token0, false when it is token1.
+    /// @param maxSlippageBps  How far the un-named side may run past what the deposit would cost at
+    ///                        the pool's time-weighted average price, in basis points.
+    /// @param deadline        Latest timestamp at which the call may execute.
+    /// @return shares  Shares minted to the caller.
+    /// @return amount0 Token0 taken from the caller.
+    /// @return amount1 Token1 taken from the caller.
+    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
+        external
+        returns (uint256 shares, uint256 amount0, uint256 amount1);
+
+    /// @notice Sells shares back to the vault for a pro-rata slice of everything it owns.
+    /// @param shares          Shares to burn.
+    /// @param maxSlippageBps  Bounds how far the price may sit from its recent average, which sets
+    ///                        the split between the two tokens. Pass 10000 to waive it.
+    /// @param deadline        Latest timestamp at which the call may execute.
+    /// @return amount0 Token0 paid to the caller.
+    /// @return amount1 Token1 paid to the caller.
+    function redeem(uint256 shares, uint16 maxSlippageBps, uint256 deadline)
+        external
+        returns (uint256 amount0, uint256 amount1);
+
+    //
+    // Curator operations
+    //
+
+    /// @notice Opens the vault's only position.
+    function createPosition(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0, uint256 deadline)
+        external
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    /// @notice Closes the position, leaving everything it held idle in the vault.
+    function unwindPosition() external returns (uint256 amount0, uint256 amount1);
+
+    /// @notice Collects the position's fees and folds every idle balance back into it.
+    function collectFees(uint256 deadline) external returns (uint128 liquidity);
+
+    /// @notice Folds the vault's idle balances into the active position.
+    function addLiquidity(uint256 deadline) external returns (uint128 liquidity);
+
+    /// @notice Trims liquidity out of the position, leaving the tokens idle in the vault.
+    function removeLiquidity(uint128 liquidity) external returns (uint256 amount0, uint256 amount1);
+
+    /// @notice Moves the position into a new range without trading.
+    function rebalance(uint256 priceLower, uint256 priceUpper, uint256 deadline)
+        external
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    /// @notice Moves the position into a new range, trading the balances to fit it.
+    function rebalanceWithSwap(
+        uint256 priceLower,
+        uint256 priceUpper,
+        uint16 maxPriceImpactBps,
+        uint32 twapWindow,
+        uint16 maxDeviationBps,
+        uint256 deadline
+    ) external returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    //
+    // Administration
+    //
+
+    /// @notice Sets the window and tolerance the manipulation guard uses.
+    function setTwapConfig(uint32 newTwapPeriod, uint16 newMaxTwapDeviationBps) external;
+
+    /// @notice Sets the address stray tokens can be recovered to.
+    function setAssetRecoverer(address newAssetRecoverer) external;
+
+    //
+    // Views
+    //
+
+    /// @notice Whether an account may hold, buy or sell shares.
+    function isInvestor(address account) external view returns (bool);
+
+    /// @notice The active position's range, liquidity and uncollected fees.
+    function activePosition()
+        external
+        view
+        returns (int24 tickLower, int24 tickUpper, uint128 liquidity, uint128 owed0, uint128 owed1);
+
+    /// @notice Everything the vault owns, in both tokens.
+    function totalAssets() external view returns (uint256 amount0, uint256 amount1);
+
+    /// @notice The counter amount a position of the given range needs alongside a named amount.
+    function previewCounterAmount(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint256);
+
+    /// @notice The same, for a range that does not exist yet.
+    function previewCounterAmountForRange(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0)
+        external
+        view
+        returns (uint256);
+
+    /// @notice The token amounts a quantity of liquidity occupies in a position's range.
+    function liquidityToAmounts(uint256 tokenId, uint128 liquidity)
+        external
+        view
+        returns (uint256 amount0, uint256 amount1);
+
+    /// @notice The liquidity a pair of token amounts funds in a position's range.
+    function amountsToLiquidity(uint256 tokenId, uint256 amount0, uint256 amount1) external view returns (uint128);
+
+    /// @notice What a redemption of the given shares would pay out.
+    function previewRedeem(uint256 shares) external view returns (uint256 amount0, uint256 amount1);
+
+    /// @notice The tick boundaries a human price range snaps to.
+    function priceRangeToTicks(uint256 priceLower, uint256 priceUpper)
+        external
+        view
+        returns (int24 tickLower, int24 tickUpper);
 }
