@@ -5,10 +5,18 @@ pragma solidity ^0.8.0;
 /// @dev    Declared in its own file so `KpkOivFactory` can reference the struct without importing
 ///         `KpkTimelockDeployer` (which imports `TimelockController` and would pull its creation
 ///         bytecode into the factory's runtime, exceeding EIP-170). Same rationale as the local
-///         `IKpkSharesDeployer` interface in `KpkOivFactory.sol`.
+///         `IRoles` / `ISafe` interfaces the factory declares rather than importing Zodiac and Safe.
 ///
 ///         `executors` and `admin` are absent by design: the deployer forces open execution and
 ///         self-administration respectively, and neither is caller-controllable.
+///
+///         Both member arrays are validated, and a caller following only the field names will hit
+///         reverts this contract does not otherwise advertise. Each must be **strictly ascending by
+///         address value** (`MembersNotAscending`) — which also rules out duplicates and gives each
+///         effective member set exactly one encoding, so the same governance cannot land at two
+///         addresses. Neither may contain the zero address, no canceller may also be a proposer
+///         (`DuplicateRoleMember`), and neither may exceed `MAX_ROLE_MEMBERS`
+///         (`TooManyRoleMembers`). Both may legitimately be EMPTY: there is no floor.
 struct TimelockParams {
     /// @notice Minimum delay, in seconds, between scheduling and executing an operation.
     ///

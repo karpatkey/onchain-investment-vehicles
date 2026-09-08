@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the OIV cross-chain infra (Empty preflight -> KpkOivFactory + KpkSharesDeployer ->
+# Deploy the OIV cross-chain infra (Empty preflight -> KpkOivFactory + mastercopies + KpkTimelockDeployer ->
 # CcipOivDeployer + configure) to a single chain, driven by script/ccip-networks.json.
 #
 # Usage:

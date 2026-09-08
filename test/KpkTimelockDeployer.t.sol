@@ -306,6 +306,30 @@ contract KpkTimelockDeployerTest is Test {
     ///         address, schedule and execute `revokeRole` on the instance itself to strip the veto,
     ///         and then let the factory adopt an address that still matches its prediction.
     ///         Adoption must reject it.
+    /// @notice The symmetric case to the veto-stripped test below, which a mutation sweep found had
+    ///         no coverage: `_requireLiveConfigMatches` checks the proposer set with its own loop,
+    ///         and deleting that loop failed no test. A timelock whose PROPOSERS were reduced would
+    ///         then have been adopted as matching — handing a fund to governance narrower than its
+    ///         config describes, which is the direction that concentrates power rather than
+    ///         removing a safeguard.
+    function test_adoption_rejectsAPreDeployedTimelockWithAProposerStripped() public {
+        TimelockParams memory p = _params();
+        address predicted = kit.predictExecTimelock(execMod, p);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer present at construction");
+
+        bytes memory payload = abi.encodeCall(tl.revokeRole, (tl.PROPOSER_ROLE(), superadminSafe));
+        vm.prank(governanceSafe);
+        tl.schedule(address(tl), 0, payload, bytes32(0), bytes32(0), 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(address(tl), 0, payload, bytes32(0), bytes32(0));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer stripped");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TimelockStateMismatch.selector, predicted));
+        kit.deployExecTimelock(execMod, p);
+    }
+
     function test_adoption_rejectsAPreDeployedTimelockWithTheVetoStripped() public {
         TimelockParams memory p = _params();
         address predicted = kit.predictExecTimelock(execMod, p);
@@ -504,5 +528,42 @@ contract KpkTimelockDeployerTest is Test {
 
         vm.prank(governanceSafe);
         tl.schedule(address(counter), 0, payload, bytes32(0), bytes32(0), 2 days);
+    }
+
+    // ── The mastercopy itself ───────────────────────────────────────────────────
+
+    /// @notice `TimelockControllerUpgradeable` has no constructor, so nothing calls
+    ///         `_disableInitializers()` and a raw deployment of it leaves `initialize` open —
+    ///         at an address this repo publishes as kpk infrastructure. Clones are unaffected
+    ///         (own storage), so this is not a fund compromise, but it would hand a stranger
+    ///         `DEFAULT_ADMIN_ROLE` over a fully functional `TimelockController` bearing our name.
+    ///
+    ///         `OivChainDeploy` therefore claims the initializer immediately after CREATE2, with
+    ///         empty member arrays and `admin == address(0)`. This pins both halves: that the
+    ///         hazard is real, and that the claim closes it.
+    function test_timelockMastercopy_unclaimedIsTakeableByAnyone() public {
+        TimelockControllerUpgradeable fresh = new TimelockControllerUpgradeable();
+        address[] memory none = new address[](0);
+        address squatter = makeAddr("mastercopySquatter");
+
+        vm.prank(squatter);
+        fresh.initialize(1 days, none, none, squatter);
+
+        assertTrue(fresh.hasRole(bytes32(0), squatter), "an unclaimed mastercopy is takeable by anyone");
+    }
+
+    function test_timelockMastercopy_claimingItWithNoRolesLeavesItInert() public {
+        TimelockControllerUpgradeable mc = new TimelockControllerUpgradeable();
+        address[] memory none = new address[](0);
+
+        // Exactly what the deploy script does.
+        mc.initialize(0, none, none, address(0));
+
+        assertFalse(mc.hasRole(bytes32(0), address(this)), "claiming it must grant no admin to us either");
+
+        address squatter = makeAddr("lateSquatter");
+        vm.prank(squatter);
+        vm.expectRevert();
+        mc.initialize(1 days, none, none, squatter);
     }
 }

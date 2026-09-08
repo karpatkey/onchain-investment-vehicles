@@ -39,6 +39,14 @@ interface ISafe {
     /// @notice Returns the current signature threshold.
     function getThreshold() external view returns (uint256);
 
+    /// @notice Walks the module linked list from `start`, returning up to `pageSize` modules.
+    /// @dev    Used to assert an ADOPTED Safe carries exactly the modules its initializer enabled
+    ///         and no others — `isModuleEnabled` alone cannot detect an EXTRA module.
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
+
     /// @notice Executes a call or delegatecall on behalf of this Safe without collecting signatures.
     /// @dev    Callable only by an enabled module.
     ///         `operation` 0 = CALL, 1 = DELEGATECALL.

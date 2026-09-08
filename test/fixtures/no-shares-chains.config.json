@@ -1,7 +1,9 @@
 {
-  "fundName": "TEST DUMMY FUND",
+  "fundName": "TEST FIXTURE - DO NOT DEPLOY",
   "managerSafe": {
-    "owners": ["0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"],
+    "owners": [
+      "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+    ],
     "threshold": 1
   },
   "salt": "1",
@@ -22,5 +24,8 @@
     },
     "additionalAssets": []
   },
-  "sidechains": ["base"]
+  "sidechains": [
+    "base"
+  ],
+  "_comment": "TEST FIXTURE, NOT A DEPLOYABLE CONFIG. Deliberately omits `sharesChains` so test/OivConfigReader.t.sol can assert that deploy(configPath) refuses a config that does not say which chains carry shares. Lived under script/ until a review pointed out that an operator could run a real cross-chain deploy off it."
 }

@@ -7,6 +7,8 @@ Two entry points:
 - **`deployStack`** — deploys the five-contract operational stack (two Safes + three Roles Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
 - **`deployOiv`** — deploys the operational stack **and** a `KpkShares` UUPS proxy. Additionally grants infinite asset allowances from the Avatar Safe to the shares proxy and configures additional assets. Callable on any chain: there is no chain-id restriction, and a fund's shares proxy lands at the **same address on every chain** even when each chain uses a different base asset (see below). Use `deployOiv` on the chains that should carry shares and `deployStack` on the ones that should carry the operational stack only.
 
+> **Only for funds deployed by calling the factory directly.** The same-address property holds for the same `(caller, salt)`. A fund rolled out through `CcipOivDeployer` has neither: the caller is the **orchestrator**, and the salt is the topology-bound one `_effectiveConfig` derives, not your raw `config.salt`. Calling `deployOiv` yourself on another chain to "add shares" to such a fund therefore deploys a **fresh, disconnected fund** — different Avatar Safe, different shares proxy — rather than extending the existing one. For an orchestrator-deployed fund use `deployLocal` (for a chain the topology already declares) or `promoteShares` (for one it does not); both re-derive the same caller and salt the rollout used.
+
 **Cross-flow address invariant.** For the same `(caller, salt)`, `deployStack` and `deployOiv` produce **identical** Avatar Safe / Manager Safe / Roles Modifier addresses. This is the load-bearing property that lets you call `deployOiv` on mainnet and `deployStack` on every sidechain and end up with a fund whose Avatar Safe has the same address everywhere — so bridges and cross-chain configs can hard-code a single address.
 
 The factory address is mixed into the salt derivation alongside the caller, so cross-chain determinism requires:
@@ -21,9 +23,9 @@ The factory address is mixed into the salt derivation alongside the caller, so c
 Two read-only helpers return the addresses a deployment would produce, without sending a transaction:
 
 - **`predictStackAddresses(StackConfig, address caller)`** → predicted `StackInstance` (5 addresses).
-- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` and `kpkSharesProxy` are also predicted via CREATE2: the implementation from `KpkSharesDeployer.predictImpl` (salt derived from `(caller, salt, 5)`) and the ERC-1967 proxy from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`).
+- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` is simply `kpkSharesMastercopy` — the chain's single shared `KpkShares` implementation, wired into the factory by the deploy script — and `kpkSharesProxy` is predicted from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`). Salt index 5 belonged to the retired per-fund implementation and is deliberately left unused. Reverts `KpkSharesMastercopyNotSet` if no mastercopy is wired, so prediction never answers where deployment would refuse.
 
-  The proxy's address is a function of `(factory, proxySalt, implementation)` **only**. It is deployed with empty constructor data and initialized in the next statement of the same call, so the initializer calldata — which necessarily carries the chain's base asset — never enters the CREATE2 init code. Combined with an implementation that is itself chain-independent (`KpkShares` has no constructor arguments and `KpkSharesDeployer` sits at one address everywhere), this is what lets one fund present a single shares address across chains that hold different assets. `additionalAssets` are applied after initialization via `updateAsset` and have never affected the address.
+  The proxy's address is a function of `(factory, proxySalt, implementation)` **only**. It is deployed with empty constructor data and initialized in the next statement of the same call, so the initializer calldata — which necessarily carries the chain's base asset — never enters the CREATE2 init code. Combined with an implementation that is itself chain-independent (`KpkShares` has no constructor arguments, so the mastercopy CREATE2s to one address on every chain), this is what lets one fund present a single shares address across chains that hold different assets. Note where that now rests: on `kpkSharesMastercopy` being wired to the same address on every chain, which the deploy script's post-flight `require` enforces — there is no on-chain binding. `additionalAssets` are applied after initialization via `updateAsset` and have never affected the address.
 
 Use them to look up the address of a fund's Avatar Safe ahead of deployment, e.g. when seeding a governance proposal or pre-configuring a frontend.
 
@@ -44,8 +46,18 @@ Deploys the five-contract operational stack. All five addresses are deterministi
 | `execRolesMod.finalOwner` | Receives ownership of the exec Roles Modifier — typically the Security Council multisig. Must not be zero |
 | `salt` | Controls all five deployment addresses |
 | `execTimelock.minDelay` | Seconds of delay on the exec Roles Modifier's timelock. **`0` means no timelock** and `execRolesMod.finalOwner` receives ownership as before. Any non-zero value must be within the deployer's `[12 hours, 30 days]` band |
-| `execTimelock.proposers` | Addresses receiving `PROPOSER_ROLE` (and, from OpenZeppelin, `CANCELLER_ROLE`). Non-zero and distinct |
-| `execTimelock.cancellers` | Addresses receiving `CANCELLER_ROLE` — the veto — without proposal rights. Non-zero and distinct |
+| `execTimelock.proposers` | Addresses receiving `PROPOSER_ROLE` (and, from OpenZeppelin, `CANCELLER_ROLE`). Non-zero, and **strictly ascending by address value** — sort numerically, not by role or priority. At most `MAX_ROLE_MEMBERS`. May be empty |
+| `execTimelock.cancellers` | Addresses receiving `CANCELLER_ROLE` — the veto — without proposal rights. Same rules, and no canceller may also be a proposer. May be empty |
+
+> **Both arrays must be strictly ascending by address value.** Distinct non-zero entries in a
+> "natural" order — governance first, then superadmin — still revert `MembersNotAscending`, so a
+> config that looks valid against the rows above can fail to deploy. Ascending order is not
+> cosmetic: it gives each effective member set exactly one encoding, so the same governance cannot
+> land at two different timelock addresses. The arrays are hashed into the timelock's salt, which is
+> why order is load-bearing at all. `MAX_ROLE_MEMBERS` is a ceiling set by the CCIP destination gas
+> cap, not a governance opinion — see `KpkTimelockDeployer` for the measurements. There is
+> deliberately **no floor**: an empty `cancellers` means no veto, and an empty `proposers` means a
+> timelock that can never schedule anything, which is permitted but freezes what it governs.
 
 `subRolesMod.finalOwner` and `managerRolesMod.finalOwner` are ignored — ownership of those modifiers always transfers to the deployed Manager Safe.
 
@@ -178,7 +190,7 @@ Each of the three wiring steps registers the Zodiac `MultiSendUnwrapper` (`0xB4C
 
 ── deployStack: remove factory as module from Avatar Safe and stop ────────
 
-9.  Deploy fresh KpkShares implementation via KpkSharesDeployer (one per fund)
+9.  Point the fund's proxy at the chain's shared KpkShares mastercopy (no per-fund implementation)
 10. Deploy KpkShares UUPS proxy (factory temporarily holds DEFAULT_ADMIN_ROLE)
                                → register additional assets (factory temporarily holds OPERATOR)
                                → grant OPERATOR to the Manager Safe
@@ -227,7 +239,7 @@ Fixed at factory deployment and apply to every stack deployed through it.
 | `safeFallbackHandler`      | Safe fallback handler set on every deployed Safe         |
 | `moduleProxyFactory`       | Zodiac `ModuleProxyFactory` — deploys Roles Modifier proxies |
 | `rolesModifierMastercopy`  | Zodiac Roles Modifier mastercopy all modifiers point to  |
-| `kpkSharesDeployer`        | `KpkSharesDeployer` contract — called once per `deployOiv` to produce a fresh, isolated `KpkShares` implementation |
+| `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set via `setKpkSharesMastercopy`, which rejects zero and codeless values |
 
 All infrastructure addresses are owner-updatable after deployment via the corresponding `setXxx` setter functions.
 
@@ -376,7 +388,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 | Property                    | Value                                                                  |
 |-----------------------------|------------------------------------------------------------------------|
-| Implementation              | Fresh `KpkShares` instance deployed by `KpkSharesDeployer` (one per fund — upgrades are isolated per fund) |
+| Implementation              | The chain's shared `KpkShares` mastercopy (upgrades stay isolated per fund: `upgradeToAndCall` writes the calling proxy's own ERC-1967 slot) |
 | `portfolioSafe`             | `avatarSafe`                                                           |
 | `DEFAULT_ADMIN_ROLE`        | `admin` (OivConfig.admin)                                              |
 | `OPERATOR`                  | `managerSafe` (automatically wired — no separate input required)       |
@@ -414,7 +426,7 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 - Any `additionalAssets[i].asset` is `address(0)` (`ZeroAddress`)
 - Any `additionalAssets[i].asset` equals `sharesParams.asset`, or two entries share the same asset (`DuplicateAsset`)
 
-`KpkSharesDeployer` is factory-locked (`L-01`): deploy it with `factory = predicted KpkOivFactory address` (e.g. via `vm.computeCreateAddress`), then deploy the factory at the predicted address. Any direct call to `KpkSharesDeployer.deploy(salt)` from a non-factory caller reverts with `UnauthorizedCaller`.
+**`L-01` no longer applies.** It described `KpkSharesDeployer` being factory-locked so no one else could mint implementations from it. That contract is gone: the factory now points every proxy at a shared, immutable mastercopy, so there is nothing to lock — and nothing per-fund to deploy, which is what brought a timelocked `deployStack` under the 3M CCIP destination cap. The mastercopy itself is safe to share because `KpkShares` calls `_disableInitializers()`, so it cannot be initialized directly, and `upgradeToAndCall` reverts on `onlyProxy`.
 
 ## Trust assumptions
 

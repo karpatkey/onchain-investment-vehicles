@@ -42,7 +42,7 @@ library OivInfraConstants {
     // NOTE: keep the comments below free of dated operational history (which chain got what, when).
     // `foundry.toml` leaves `bytecode_hash` at its solc default, so this file's text is hashed into
     // the metadata of every contract that imports it — editing a comment here moves the CREATE2
-    // addresses of KpkOivFactory, KpkSharesDeployer and CcipOivDeployer, forcing a salt bump and a
+    // addresses of KpkOivFactory, its mastercopies and CcipOivDeployer, forcing a salt bump and a
     // 19-chain re-rollout. Per-chain status and deployment history belong in
     // docs/DEPLOYED_ADDRESSES.md and script/deployed-infra.json, which cost nothing to update.
 

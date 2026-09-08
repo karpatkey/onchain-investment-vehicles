@@ -41,6 +41,20 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("Final owner (post-deploy):  ", finalOwner);
         console.log("==========================================");
 
+        // PRE-flight, deliberately: this script wires the shares mastercopy but NOT
+        // `timelockDeployer`, which only the per-chain `script/chains/Deploy_<Chain>.s.sol` scripts
+        // (via OivChainDeploy) deploy and set. The equivalent post-flight `require` below sits after
+        // `transferOwnership(finalOwner)` and `vm.stopBroadcast()`, so on a fresh chain it can only
+        // fail once the factory is already live and owned by the Safe — and a run resumed with
+        // `--resume` replays the saved transactions WITHOUT re-running this body, so the abort never
+        // happens at all and recovery needs a Safe transaction to call the `onlyOwner` setter.
+        // Refusing here costs nothing and cannot half-land.
+        if (predictedFactory.code.length == 0) {
+            revert(
+                "pre-flight: this script cannot wire timelockDeployer on a fresh chain - use script/chains/Deploy_<Chain>.s.sol"
+            );
+        }
+
         vm.startBroadcast();
 
         // Same preflight `_runChain` performs. This standalone path is documented in README.md as a
@@ -69,11 +83,11 @@ contract DeployKpkOivFactory is OivChainDeploy {
         KpkOivFactory factory = KpkOivFactory(predictedFactory);
         if (factory.kpkSharesMastercopy() == address(0)) {
             factory.setKpkSharesMastercopy(predictedDeployer);
-            console.log("[OK]   factory.kpkSharesDeployer set");
+            console.log("[OK]   factory.kpkSharesMastercopy set");
         } else if (factory.kpkSharesMastercopy() == predictedDeployer) {
-            console.log("[SKIP] factory.kpkSharesDeployer already wired");
+            console.log("[SKIP] factory.kpkSharesMastercopy already wired");
         } else {
-            revert("factory.kpkSharesDeployer is set to an unexpected address");
+            revert("factory.kpkSharesMastercopy is set to an unexpected address");
         }
 
         if (factory.owner() == eoaOwner && eoaOwner != finalOwner) {
@@ -107,7 +121,7 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("==========================================");
         console.log("[OK] Deployment verified");
         console.log("KpkOivFactory:     ", predictedFactory);
-        console.log("KpkSharesDeployer: ", predictedDeployer);
+        console.log("KpkShares mastercopy: ", predictedDeployer);
         console.log("Owner:             ", finalOwner);
         console.log("==========================================");
     }
