@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import {IUniswapV3PositionVault} from "../src/IUniswapV3PositionVault.sol";
 import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 import {INonfungiblePositionManager} from "../src/interfaces/INonfungiblePositionManager.sol";
 import {IUniswapV3Pool} from "../src/interfaces/IUniswapV3Pool.sol";
@@ -243,23 +244,35 @@ contract UniswapV3PositionVaultInvariantTest is UniswapV3PositionVaultTestBase {
         assertEq(held, vault.totalSupply(), "shares exist outside the known holders");
     }
 
-    /// @notice Redeeming everything never claims more than the vault owns.
-    function invariant_totalClaimNeverExceedsTotalAssets() public view {
+    /// @notice Every holder can actually be paid out of what the vault holds.
+    /// @dev    Asked by cashing all three holders out for real, on a snapshot that is thrown away
+    ///         afterwards. Asking preview functions instead cannot answer it: previewRedeem divides
+    ///         the holdings by the supply and multiplies straight back, and the balances sum to the
+    ///         supply, so any assertion built from it is true by arithmetic whatever the vault has
+    ///         done. Running the redemptions puts the accounting against the vault's real token
+    ///         balances, where an overpayment has nowhere to hide — the transfer simply fails.
+    function invariant_everyHolderCanBeCashedOut() public {
         uint256 supply = vault.totalSupply();
         if (supply == 0) return;
 
-        // Summed over the holders rather than asked for in one call. Pricing the whole supply at
-        // once divides the holdings by the supply and multiplies them straight back, so it returns
-        // the holdings by construction and could not fail whatever the vault had done. Each
-        // holder's claim is rounded down separately, so the sum is a real question: it asks whether
-        // the parts the vault would actually pay out still fit inside what it holds.
-        (uint256 alice0, uint256 alice1) = vault.previewRedeem(vault.balanceOf(alice));
-        (uint256 bob0, uint256 bob1) = vault.previewRedeem(vault.balanceOf(bob));
-        (uint256 curator0, uint256 curator1) = vault.previewRedeem(vault.balanceOf(curator));
-        (uint256 total0, uint256 total1) = vault.totalAssets();
+        uint256 snapshot = vm.snapshotState();
 
-        assertLe(alice0 + bob0 + curator0, total0, "token0 claims exceed holdings");
-        assertLe(alice1 + bob1 + curator1, total1, "token1 claims exceed holdings");
+        address[3] memory holders = [alice, bob, curator];
+        for (uint256 i; i < holders.length; ++i) {
+            uint256 held = vault.balanceOf(holders[i]);
+            if (held == 0) continue;
+
+            // The bound is waived because a redemption's payout does not depend on the price, and a
+            // ZeroShares revert is a holder whose share of the vault rounds to nothing rather than a
+            // solvency failure. Anything else failing here is the vault unable to pay what it owes.
+            vm.prank(holders[i]);
+            try vault.redeem(held, 10_000, block.timestamp) {}
+            catch (bytes memory err) {
+                assertEq(bytes4(err), IUniswapV3PositionVault.ZeroShares.selector, "a holder could not be paid out");
+            }
+        }
+
+        vm.revertToState(snapshot);
     }
 
     /// @notice Reports how much of the state space a run actually reached.

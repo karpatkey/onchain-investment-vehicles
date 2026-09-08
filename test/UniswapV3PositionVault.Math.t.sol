@@ -616,6 +616,37 @@ contract UniswapV3PositionVaultMathTest is Test {
         assertGt(_mintableAfter(params, sells, amountIn), 1e25, "and that is worth six orders of magnitude");
     }
 
+    function test_solveSwap_declinesWhenTheBalancesAlreadyFundTheCeiling() public pure {
+        // The balances already fund more liquidity than a position can hold, so no trade could do
+        // better and paying a pool fee to find that out would be a straight loss.
+        //
+        // Measured: removing the explicit check for this leaves the answer unchanged, because the
+        // same rule that turns the saturated baseline into a zero turns every saturated candidate
+        // into one too, and nothing then beats nothing. The check is kept because relying on two
+        // zeros cancelling is not the same as saying what is meant, and because that reasoning
+        // stops holding the moment either rule changes.
+        UniswapV3VaultMath.SwapParams memory params = UniswapV3VaultMath.SwapParams({
+            sqrtPriceX96: TickMath.getSqrtRatioAtTick(0),
+            sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-1),
+            sqrtRatioBX96: TickMath.getSqrtRatioAtTick(0),
+            poolLiquidity: 1e21,
+            feePips: 3000,
+            amount0: 1e24,
+            amount1: 1e35
+        });
+
+        assertEq(
+            UniswapV3VaultMath.mintableLiquidity(
+                params.sqrtPriceX96, params.sqrtRatioAX96, params.sqrtRatioBX96, params.amount0, params.amount1
+            ),
+            type(uint128).max,
+            "the balances really do fund the ceiling"
+        );
+
+        (, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
+        assertEq(amountIn, 0, "no swap can improve on the ceiling");
+    }
+
     function test_liquidityForAmount_saturatesInsteadOfRevertingAtAnEdge() public view {
         uint160 sqrtA = TickMath.getSqrtRatioAtTick(-60);
         uint160 sqrtB = TickMath.getSqrtRatioAtTick(60);

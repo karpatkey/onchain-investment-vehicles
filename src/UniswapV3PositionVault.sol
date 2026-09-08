@@ -31,9 +31,10 @@ import {RecoverFunds} from "./utils/RecoverFunds.sol";
 ///         A share is a pro-rata claim on the whole vault, meaning the position's liquidity and any
 ///         idle token balances together. Deposits and redemptions move both, so tokens that are
 ///         waiting to be folded back into the position are never given away to, or taken from, a
-///         single investor. Every deposit and redemption first collects the position's fees and
-///         folds the idle balances back in, which is what makes fees accrue to existing holders
-///         before a new one is priced.
+///         single investor. Every deposit and redemption first collects the position's fees, which
+///         is what makes fees accrue to existing holders before a new one is priced. Folding those
+///         balances back into the position is a curator action, behind the manipulation guard,
+///         because buying liquidity at a price the caller picked is a way to take value out.
 ///
 ///         All Uniswap arithmetic comes from Uniswap's own libraries, vendored under
 ///         src/libraries/uniswap and composed in UniswapV3VaultMath. Amounts the vault pays are
@@ -70,14 +71,18 @@ contract UniswapV3PositionVault is
     /// @dev Largest deviation cap that can be configured, in basis points.
     uint256 private constant _MAX_BPS = 10_000;
 
-    /// @notice The smallest share supply the vault will ever carry while it carries any.
+    /// @notice The smallest supply a vault may open with, and the smallest a deposit may be priced
+    ///         against.
     /// @dev    A deposit's share count is a floor division by the supply, so a supply small
     ///         relative to the assets behind it makes that truncation a real fraction of the
     ///         deposit, which existing holders keep. The supply starts equal to the opening
     ///         position's liquidity, which for any position worth opening is many orders of
     ///         magnitude above this; the floor exists to stop the ratio being driven the other way,
     ///         by opening with a negligible position or by redeeming down to a residue and then
-    ///         refunding the vault. What a deposit loses to that truncation is at most one share's
+    ///         refunding the vault. It is not a floor on the supply itself: a redemption may leave
+    ///         whatever it leaves, because refusing one would strand holders who between them hold
+    ///         the supply but individually hold less than all of it. What a deposit loses to that
+    ///         truncation is at most one share's
     ///         worth, so holding the supply at or above a million holds the loss at or below a
     ///         millionth of everything the vault holds. That is a bound on the vault, not on the
     ///         deposit: a deposit smaller than one share is still rounded to nothing, which is why
@@ -231,8 +236,10 @@ contract UniswapV3PositionVault is
     /// @notice Buys into the position by naming one token amount.
     /// @dev    Shaped like createPosition: the caller says how much of one token to commit and the
     ///         vault derives the other side from the position's current ratio. The position's fees
-    ///         are collected and folded in first, so they belong to existing holders and are not
-    ///         shared with this deposit. Amounts are pulled exactly, and the wei-level remainder
+    ///         are collected into the idle balance first, so they belong to existing holders and are
+    ///         charged to this deposit rather than shared with it. They are not folded back into the
+    ///         position: that is a curator action, for the reason given on _compound. Amounts are
+    ///         pulled exactly, and the wei-level remainder
     ///         left by the pool's own rounding is returned in the same call.
     ///
     ///         Both sides are bounded: the named one by the amount itself, and the other by how far
@@ -272,12 +279,12 @@ contract UniswapV3PositionVault is
 
         uint256 supply = totalSupply();
         if (supply == 0) revert ZeroShares();
-        // Pricing a deposit against a supply this small is what the floor exists to prevent, so
-        // this is where it is enforced. Enforcing it on redemptions instead would trap holders:
-        // two holders of six hundred thousand shares each could get the supply to the floor and
-        // then neither could redeem, because neither holds all of it and any partial exit would
-        // break the floor. Nobody is ever kept from leaving; a vault whose supply has been drawn
-        // down that far simply takes no new money until it is emptied and opened again.
+        // Pricing a deposit against a supply this small is the harm the floor exists to prevent, so
+        // this is where it is enforced rather than on the way out. Enforcing it on redemptions would
+        // trap holders: two holders of six hundred thousand shares each could bring the supply to
+        // the floor, and then neither could leave, because neither holds all of it and any partial
+        // exit would break the floor. Redemptions are never refused for what they leave behind; a
+        // vault drawn down that far simply takes no new money until it is emptied and opened again.
         if (supply < _MIN_SHARES) revert SupplyTooSmall(supply, _MIN_SHARES);
 
         // Collect, but do not fold. Collecting is price-independent: the fees land in the idle
@@ -452,9 +459,9 @@ contract UniswapV3PositionVault is
     }
 
     /// @notice Collects the position's fees and folds every idle balance back into it.
-    /// @dev    With fees compounded rather than distributed, collecting and reinvesting are the
-    ///         same action, so this is the curator's on-demand version of what deposits and
-    ///         redemptions already do.
+    /// @dev    Fees are compounded rather than distributed, and this is where that happens. The
+    ///         investor paths collect but never fold, so the idle balance a trim or a non-trading
+    ///         rebalance leaves behind waits for this call, addLiquidity, or a rebalance.
     /// @param deadline Latest timestamp at which the call may execute. It folds the idle balance
     ///                 into the position at the pool's current price, so a stale one compounds at a
     ///                 ratio the curator never chose.
@@ -674,7 +681,7 @@ contract UniswapV3PositionVault is
     ///         position's collectable balance when the position is touched, so fees earned since
     ///         the last deposit, redemption or curator action are not counted here even though they
     ///         belong to the vault. The understatement is always in shareholders' favour: a
-    ///         redemption compounds those fees before pricing itself, so it pays at least what
+    ///         redemption collects those fees before pricing itself, so it pays at least what
     ///         previewRedeem quoted.
     /// @return amount0 Total token0.
     /// @return amount1 Total token1.
@@ -758,7 +765,7 @@ contract UniswapV3PositionVault is
 
     /// @notice What a redemption of the given shares would pay out.
     /// @dev    Indicative. Prices the caller's pro-rata slice of everything the vault owns, which
-    ///         is what a redemption pays once fees have been compounded. The executed amounts can
+    ///         is what a redemption pays once fees have been collected. The executed amounts can
     ///         differ by rounding and by fees that accrue between the call and the transaction.
     /// @param shares Shares to price.
     /// @return amount0 Token0 the redemption would pay.

@@ -75,11 +75,13 @@ interface IUniswapV3PositionVault {
     /// @notice The operation would mint or burn zero shares.
     error ZeroShares();
 
-    /// @notice Thrown when an action would leave a share supply too small to price a deposit
-    ///         against, whether by opening the vault with a negligible position or by redeeming
-    ///         down to a residue.
-    /// @param supply  The share supply the action would leave outstanding.
-    /// @param minimum The smallest supply the vault will carry.
+    /// @notice Thrown when a share supply is too small to price a deposit against: either the vault
+    ///         is being opened with a negligible position, or a deposit is being made into a vault
+    ///         whose supply has been redeemed down to a residue. Redemptions themselves are never
+    ///         refused for what they would leave behind.
+    /// @param supply  The supply in question: the opening supply, or the one a deposit would be
+    ///                priced against.
+    /// @param minimum The smallest supply either may be.
     error SupplyTooSmall(uint256 supply, uint256 minimum);
 
     /// @notice The amounts moved fell short of the caller's minimums.
@@ -178,7 +180,7 @@ interface IUniswapV3PositionVault {
     /// @param amount1 Token1 returned to the vault, principal and fees combined.
     event PositionUnwound(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
 
-    /// @notice Emitted whenever fees are collected and idle balances are folded into the position.
+    /// @notice Emitted whenever a curator call collects fees and folds idle balances back in.
     /// @param tokenId   The position NFT id.
     /// @param fees0     Token0 collected from the position, fees and stray owed balances combined.
     /// @param fees1     Token1 collected from the position.

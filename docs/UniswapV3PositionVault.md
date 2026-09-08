@@ -90,15 +90,15 @@ INVESTOR
 | `collectFees` | | ✅ | | |
 | `setTwapConfig` | ✅ | | | |
 | `setAssetRecoverer` | ✅ | | | |
+| `upgradeToAndCall` | ✅ | | | |
+| `grantRole` / `revokeRole` | ✅ | | | |
+| `recoverAssets` | | | | ✅ |
+| all view functions | | | | ✅ |
 
 `createPosition` needs both roles when it opens the vault's first position, because the opening share
 supply is minted to the caller and a mint is a transfer the investor gate checks. The deploy script
 grants the curator `INVESTOR` for that reason. On any later position the vault already has a supply,
 nothing is minted, and CURATOR alone is enough.
-| `upgradeToAndCall` | ✅ | | | |
-| `grantRole` / `revokeRole` | ✅ | | | |
-| `recoverAssets` | | | | ✅ |
-| all view functions | | | | ✅ |
 
 The admin does not inherit the curator's powers, and the curator has no admin powers. The investor
 gate is enforced in a single place, the ERC-20 `_update` hook, so minting checks the recipient,
@@ -121,9 +121,15 @@ supply, so the truncation is a fraction of the deposit set by how many shares ex
 stands behind them, and existing holders keep whatever is truncated away. Starting the supply at the
 opening liquidity makes that fraction negligible, but only if the ratio stays where it started, and
 there are two ways to drive it: open the vault with a negligible position, or redeem down to a
-residue and then fund the vault again. Both are refused. The opening liquidity must be at least a
-million units, and a redemption must either take everything or leave at least that many shares
-outstanding.
+residue and then fund the vault again. The opening liquidity must therefore be at least a million
+units, and a deposit into a vault whose supply has fallen below that is refused.
+
+**The floor sits on deposits, not on redemptions.** Leaving is never blocked by what it leaves
+behind. Putting the floor on the way out instead reads as the tighter rule and is in fact a trap:
+two holders of six hundred thousand shares each could bring the supply to the floor, and then
+neither could leave, because neither holds the whole supply and any partial exit would break the
+floor. Refusing the deposit puts the check where the harm would actually land — nobody can be
+diluted by a dust supply if nobody can buy into one.
 
 What a deposit loses to the truncation is at most one share's worth, so the floor holds that loss at
 or below a millionth of everything the vault holds. Read the bound that way round: it is a bound on
@@ -233,9 +239,11 @@ A share is a pro-rata claim on **everything the vault owns**: the position's liq
 idle token balances. Both move together on every deposit and redemption, so tokens waiting to be
 folded back into the position are never given to, or taken from, a single investor.
 
-Every deposit and redemption begins by collecting the position's fees and folding all idle balances
-back in. That is what makes fees accrue to the holders who were present when they were earned,
-before a new holder is priced.
+Every deposit and redemption begins by collecting the position's fees into the idle balance. That is
+what makes fees accrue to the holders who were present when they were earned: a new holder is priced
+against a vault that already owns them, and pays for a share of them. Folding those balances back
+into the position is a separate, curator-only step, for the reason in "Who folds, and why it is not
+the investor" below.
 
 ### Rounding
 
@@ -317,7 +325,7 @@ never worse than doing nothing" true by construction rather than by argument.
 The model is exact while the swap stays inside the current tick interval, which is the normal case.
 If it crosses an initialized tick the realised price differs slightly, which is why step 7 re-reads
 the pool and mints against the balances actually held. The residue stays idle, is still owned
-pro-rata, and is folded back in by the next compounding.
+pro-rata, and is folded back in by the next curator compounding.
 
 ### Who folds, and why it is not the investor
 

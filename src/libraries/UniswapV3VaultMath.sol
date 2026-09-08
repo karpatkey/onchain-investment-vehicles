@@ -669,7 +669,12 @@ library UniswapV3VaultMath {
         // at most the pool fee on the amount traded within the caller's price-impact cap. The caller
         // mints from the balances it actually holds afterwards, so the shortfall stays idle rather
         // than being lost.
-        uint128 mintNone = rankable(mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1));
+        uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
+        // The balances already fund more liquidity than a position can hold, so no trade could do
+        // better and paying a pool fee to find that out would be a straight loss. This has to be
+        // caught before the value is ranked, because ranking turns the ceiling into a zero and any
+        // measurable candidate would then beat it.
+        if (mintNone == type(uint128).max) return (zeroForOne, 0);
 
         // No interior to search at all: the only prices reachable are here and the far end.
         if (degenerate) {

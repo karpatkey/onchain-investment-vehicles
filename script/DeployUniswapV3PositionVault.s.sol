@@ -106,10 +106,30 @@ contract DeployUniswapV3PositionVault is Script {
             positionManager: json.readAddress(string.concat(key, ".positionManager")),
             token0: json.readAddress(string.concat(key, ".token0")),
             token1: json.readAddress(string.concat(key, ".token1")),
-            fee: uint24(json.readUint(string.concat(key, ".fee"))),
-            twapPeriod: uint32(json.readUint(string.concat(key, ".twapPeriod"))),
-            maxTwapDeviationBps: uint16(json.readUint(string.concat(key, ".maxTwapDeviationBps")))
+            fee: uint24(_readBounded(json, key, ".fee", type(uint24).max)),
+            twapPeriod: uint32(_readBounded(json, key, ".twapPeriod", type(uint32).max)),
+            maxTwapDeviationBps: uint16(_readBounded(json, key, ".maxTwapDeviationBps", type(uint16).max))
         });
+    }
+
+    /// @notice Reads a numeric field and refuses one too large for the type it is destined for.
+    /// @dev    A narrowing cast keeps the low bits, so a mistyped configuration does not fail, it
+    ///         quietly becomes a different valid one: a fee of 2**24 + 500 reads as 500 and deploys
+    ///         against a real pool that nobody chose. The initializer cannot catch it, because by
+    ///         then the value it validates is the truncated one.
+    /// @param json  The configuration document.
+    /// @param key   The vault's key within it.
+    /// @param field The dot-prefixed field name.
+    /// @param max   The largest value the destination type holds.
+    /// @return The field's value, guaranteed to survive the cast.
+    function _readBounded(string memory json, string memory key, string memory field, uint256 max)
+        internal
+        pure
+        returns (uint256)
+    {
+        uint256 value = json.readUint(string.concat(key, field));
+        require(value <= max, string.concat("config value out of range:", field));
+        return value;
     }
 
     /// @notice Reads a boolean field for a vault entry.
