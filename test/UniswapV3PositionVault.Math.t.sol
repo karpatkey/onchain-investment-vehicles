@@ -563,11 +563,49 @@ contract UniswapV3PositionVaultMathTest is Test {
         });
 
         (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
-        assertEq(amountIn, 0, "spending this budget mints nothing, so the solver must decline");
-        assertGe(
+
+        // The two extremes are both bad here: spending everything drives the price out of the range
+        // and mints nothing, and spending nothing mints 208. The answer is the endpoint the search is
+        // allowed to reach, and it has to beat both.
+        assertGt(
             _mintableAfter(params, sells, amountIn),
             _mintableAfter(params, sells, 0),
-            "never worse than leaving the balances alone"
+            "must beat leaving the balances alone"
+        );
+        assertGt(
+            _mintableAfter(params, sells, amountIn),
+            _mintableAfter(params, sells, params.amount0),
+            "must beat spending the whole budget"
+        );
+    }
+
+    function test_solveSwap_isNotOptimalWhenTheCrossingIsInsideTheMargin() public pure {
+        // A known limitation, pinned so it is not mistaken for a bug later and so the day it is
+        // fixed this test fails and says so. The search is held a sixty-fourth of the range clear of
+        // both edges, because Uniswap's getLiquidityForAmount0/1 cast to uint128 and revert with no
+        // data for a price any nearer. When the crossing falls inside that sliver the best reachable
+        // answer is the margin itself, which here is far short of the true optimum. Closing the gap
+        // means making the liquidity maths saturate instead of revert, which touches the mint path
+        // too; see the pull request's Outstanding section.
+        UniswapV3VaultMath.SwapParams memory params = UniswapV3VaultMath.SwapParams({
+            sqrtPriceX96: TickMath.getSqrtRatioAtTick(1),
+            sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-95),
+            sqrtRatioBX96: TickMath.getSqrtRatioAtTick(187),
+            poolLiquidity: 1_000_000_000_000_000_001,
+            feePips: 3000,
+            amount0: 378_380_548_692_128_997_450_151,
+            amount1: 1
+        });
+
+        (bool sells, uint256 amountIn) = UniswapV3VaultMath.solveSwap(params);
+
+        // Reaching the margin mints about 2.07e19; a swap of 1e16, inside the excluded sliver, mints
+        // about 2.69e25. The solver's answer is a large improvement on both extremes and still short
+        // of what the model could do.
+        assertLt(
+            _mintableAfter(params, sells, amountIn),
+            _mintableAfter(params, sells, 1e16),
+            "the excluded sliver still holds a better answer"
         );
     }
 

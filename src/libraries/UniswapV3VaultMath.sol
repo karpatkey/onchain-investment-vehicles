@@ -573,21 +573,36 @@ library UniswapV3VaultMath {
             if (spentAll > innerHigh) spentAll = innerHigh;
         }
 
-        // Both of the next two returns take the whole budget or none of it, so both compare the two.
-        // That comparison is made against this model, in which the pool's liquidity is the constant
-        // the caller passed. A swap that crosses an initialized tick trades against a different
-        // liquidity than was modelled and can therefore end up worse than not swapping, by at most
-        // the pool fee on the amount traded within the caller's price-impact cap. The caller mints
-        // from the balances it actually holds afterwards, so the shortfall stays idle rather than
-        // being lost.
-        if (degenerate || _soldSideInSurplus(params, hi, zeroForOne)) {
-            // Either there is no interior to search, or the sold side is still in surplus at the far
-            // endpoint, which puts the crossing at or beyond it. Spending everything is the answer
-            // in both cases unless the endpoint is the margin rather than the range edge, where the
-            // crossing can sit just inside and spending everything overshoots it.
-            uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
-            uint128 mintAll = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
-            return (zeroForOne, mintAll > mintNone ? budget : 0);
+        // Every early return below picks between named candidates rather than assuming an extreme,
+        // and the comparison is made against this model, in which the pool's liquidity is the
+        // constant the caller passed. A swap that crosses an initialized tick trades against a
+        // different liquidity than was modelled and can therefore end up worse than not swapping, by
+        // at most the pool fee on the amount traded within the caller's price-impact cap. The caller
+        // mints from the balances it actually holds afterwards, so the shortfall stays idle rather
+        // than being lost.
+        uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
+
+        // No interior to search at all: the only prices reachable are here and the far end.
+        if (degenerate) {
+            uint128 mintEverything = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
+            return (zeroForOne, mintEverything > mintNone ? budget : 0);
+        }
+
+        // The sold side is still in surplus at the far endpoint, so the crossing is at or past it and
+        // the search has nothing to bisect. The endpoint is not the range edge but the margin held
+        // clear of it, so it is a reachable price in its own right and usually the best one: pushing
+        // on to the edge and beyond abandons the range, while stopping short leaves the sold side
+        // over-supplied. Spending everything is only better when it lands outside the range, where
+        // the position is single-sided and what remains still funds it. All three are compared.
+        if (_soldSideInSurplus(params, hi, zeroForOne)) {
+            uint256 inAtEndpoint = _amountInForPrice(params, hi, zeroForOne);
+            if (inAtEndpoint > budget) inAtEndpoint = budget;
+
+            uint128 mintAtEndpoint = _mintableAfterSwap(params, hi, zeroForOne, inAtEndpoint);
+            uint128 mintEverything = _mintableAfterSwap(params, spentAll, zeroForOne, budget);
+
+            if (mintEverything >= mintAtEndpoint) return (zeroForOne, mintEverything > mintNone ? budget : 0);
+            return (zeroForOne, mintAtEndpoint > mintNone ? inAtEndpoint : 0);
         }
 
         // Bisect between the surplus endpoint and the deficit endpoint.
@@ -614,7 +629,7 @@ library UniswapV3VaultMath {
         uint128 best;
         (best, amountIn) = mintAtHi > mintAtLo ? (mintAtHi, inAtHi) : (mintAtLo, inAtLo);
 
-        if (mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1) >= best) amountIn = 0;
+        if (mintNone >= best) amountIn = 0;
     }
 
     /// @notice Whether the token being sold would still be in surplus at a candidate price.
