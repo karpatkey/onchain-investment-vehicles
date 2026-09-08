@@ -288,6 +288,14 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         return IRoles(execRolesModifier).owner() == timelock;
     }
 
+    /// @dev    Checks exactly two accounts and no more. `AccessControl` is non-enumerable, so this
+    ///         CANNOT establish that the timelock is the only admin — it answers "did this specific
+    ///         handover happen", not "is this fund delay-governed". A third holder granted before or
+    ///         after would keep a delay-free path to `upgradeToAndCall` and every fee setter while
+    ///         this still returned true. Funds built by `KpkOivFactory` are not exposed to that: the
+    ///         proxy is freshly initialized with the factory as sole admin, and the factory grants
+    ///         the timelock INSTEAD of `finalAdmin` before renouncing its own role. The caveat is
+    ///         for callers using this deployer standalone against a proxy with a history.
     /// @notice True once `timelock` holds `DEFAULT_ADMIN_ROLE` on `sharesProxy` and `previousAdmin`
     ///         no longer does.
     /// @dev    Both halves matter: granting the timelock while the old admin retains the role leaves a

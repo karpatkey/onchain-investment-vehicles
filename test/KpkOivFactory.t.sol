@@ -1423,6 +1423,38 @@ contract KpkOivFactoryTest is OivTestConstants {
         bare.deployOiv(oivConfig);
     }
 
+    /// @notice The guard above must fail FAST, and only a gas assertion can tell. Without the
+    ///         entry-point check the call still reverts with the same error — just from
+    ///         `_deployAndWireStack`, after deterministically deploying all five stack contracts.
+    ///         The transaction reverts either way, so nothing observable differs except the gas the
+    ///         caller has already paid: ~1.5M against ~100k. An exec-ONLY timelock was the case that
+    ///         slipped through, because the entry-point guard tested `sharesTimelock` alone.
+    function test_deployOiv_execOnlyTimelockWithNoDeployerFailsBeforeDeployingAnything() public {
+        vm.prank(factoryOwner);
+        KpkOivFactory bare = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(new KpkShares()),
+            address(0)
+        );
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.execTimelock = _timelockParams(2 days); // exec only; sharesTimelock stays zero
+
+        uint256 before = gasleft();
+        try bare.deployOiv(cfg) {
+            revert("must have reverted");
+        } catch {}
+        uint256 spent = before - gasleft();
+
+        assertLt(spent, 400_000, "the guard must reject before the stack is deployed, not after");
+    }
+
     // ── Premise pinning: what a third-party squat can and cannot produce ─────────
     //
     // The five operational-stack addresses come from the PERMISSIONLESS third-party

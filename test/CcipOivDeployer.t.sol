@@ -10,6 +10,7 @@ import {
 } from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
+import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {MockCcipRouter} from "test/mocks/MockCcipRouter.sol";
@@ -731,6 +732,37 @@ contract CcipOivDeployerTest is OivTestConstants {
 
         vm.expectRevert();
         orchestrator.effectiveSalt(oivConfig, unordered);
+    }
+
+    /// @notice A timelocked fund must arrive timelocked. `oivToStackConfig` forwards `execTimelock`
+    ///         to every destination, and the timelock's address derives from the exec modifier's, so
+    ///         the sidechain's modifier must end up owned by a timelock at the SAME address as
+    ///         everywhere else. A fund timelocked on one chain and not another is mixed governance
+    ///         with nothing on-chain to flag it.
+    ///
+    ///         Every other delivery test used a zero-delay config, so the destination side of the
+    ///         timelock work — the whole point of carrying it through CCIP — had no coverage at all.
+    function test_ccipReceive_deliversATimelockedStack() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        address[] memory cancellers = new address[](1);
+        cancellers[0] = address(0x2222);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: cancellers});
+
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+        assertTrue(pred.execTimelock != address(0), "a timelocked config must predict a timelock");
+
+        _deliver(_messageFor(remote));
+
+        assertGt(pred.execTimelock.code.length, 0, "the timelock was deployed on the destination");
+        assertEq(
+            IRoles(pred.execRolesModifier).owner(),
+            pred.execTimelock,
+            "the sidechain exec modifier must be owned by the timelock, not by finalOwner"
+        );
     }
 
     function test_ccipReceive_revertsForWrongRouter() public {
