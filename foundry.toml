@@ -42,9 +42,9 @@ no_match_test = "upgrade"
 # Edit the two numbers below by hand. A global search and replace on `optimizer_runs` will also
 # rewrite the repository-wide value above, which changes every contract's bytecode and moves the
 # pinned CREATE2 addresses; test/FactoryAddressSync.t.sol is what catches that.
-additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 120 }]
+additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 60 }]
 compilation_restrictions = [
-  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 120 },
+  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 60 },
 ]
 
 [fmt]

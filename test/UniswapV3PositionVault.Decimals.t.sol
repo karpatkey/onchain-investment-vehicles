@@ -156,7 +156,7 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
         uint256 upper = centre * 12_000 / 10_000;
 
         vm.prank(curator);
-        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, 500);
+        (uint256 tokenId, uint128 liquidity,,) = vault.rebalanceWithSwap(lower, upper, 500, 0, 0);
 
         assertTrue(tokenId != oldTokenId, "the position was replaced");
         assertGt(liquidity, 0, "the new position holds liquidity");
@@ -186,6 +186,6 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.rebalanceWithSwap(lower, upper, 500);
+        vault.rebalanceWithSwap(lower, upper, 500, 0, 0);
     }
 }

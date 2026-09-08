@@ -101,7 +101,7 @@ contract VaultHandler is Test {
         uint256 upper = centre * (10_000 + width) / 10_000;
 
         vm.prank(curator);
-        try vault.rebalanceWithSwap(lower, upper, 500) {
+        try vault.rebalanceWithSwap(lower, upper, 500, 0, 0) {
             rebalances++;
         } catch {}
     }

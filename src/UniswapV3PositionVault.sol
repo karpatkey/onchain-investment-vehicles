@@ -362,7 +362,7 @@ contract UniswapV3PositionVault is
     {
         if (activeTokenId != 0) revert PositionAlreadyActive();
         if (amount == 0) revert InvalidArguments();
-        _checkPriceDeviation(maxTwapDeviationBps);
+        _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
         (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
@@ -395,7 +395,7 @@ contract UniswapV3PositionVault is
     /// @return liquidity Liquidity added back into the position.
     function collectFees() external nonReentrant isCurator returns (uint128 liquidity) {
         if (activeTokenId == 0) revert NoActivePosition();
-        _checkPriceDeviation(maxTwapDeviationBps);
+        _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
         liquidity = _compound();
     }
 
@@ -405,7 +405,7 @@ contract UniswapV3PositionVault is
     /// @return liquidity Liquidity added.
     function addLiquidity() external nonReentrant isCurator returns (uint128 liquidity) {
         if (activeTokenId == 0) revert NoActivePosition();
-        _checkPriceDeviation(maxTwapDeviationBps);
+        _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
         liquidity = _compound();
         if (liquidity == 0) revert NothingToAdd();
     }
@@ -460,7 +460,7 @@ contract UniswapV3PositionVault is
         isCurator
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
-        return _rebalance(priceLower, priceUpper, false, 0);
+        return _rebalance(priceLower, priceUpper, false, 0, twapPeriod, maxTwapDeviationBps);
     }
 
     /// @notice Moves the vault's liquidity into a new price range, trading to fit it.
@@ -480,18 +480,46 @@ contract UniswapV3PositionVault is
     /// @param priceUpper        Upper bound of the new range, as a 1e18-scaled human price.
     /// @param maxPriceImpactBps How far the swap may move the pool's price, in basis points. 100 is
     ///                          one percent. Must be between 1 and 10000.
+    /// @param twapWindow        Seconds of price history the manipulation guard averages over for
+    ///                          this call. A longer window is harder to manipulate; anything shorter
+    ///                          than the vault's own setting is raised to it.
+    /// @param maxDeviationBps   How far the pool's price may sit from that average, in basis points.
+    ///                          Zero means the vault's own setting, and anything looser than that
+    ///                          setting is clamped to it.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
     /// @return amount1   Token1 consumed by the mint.
-    function rebalanceWithSwap(uint256 priceLower, uint256 priceUpper, uint16 maxPriceImpactBps)
-        external
-        nonReentrant
-        isCurator
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
+    function rebalanceWithSwap(
+        uint256 priceLower,
+        uint256 priceUpper,
+        uint16 maxPriceImpactBps,
+        uint32 twapWindow,
+        uint16 maxDeviationBps
+    ) external nonReentrant isCurator returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
         if (maxPriceImpactBps == 0 || maxPriceImpactBps > _MAX_BPS) revert InvalidArguments();
-        return _rebalance(priceLower, priceUpper, true, maxPriceImpactBps);
+
+        (uint32 window, uint16 deviation) = _strictestGuard(twapWindow, maxDeviationBps);
+        return _rebalance(priceLower, priceUpper, true, maxPriceImpactBps, window, deviation);
+    }
+
+    /// @notice The stricter of a caller's manipulation-guard settings and the vault's own.
+    /// @dev    A longer window and a tighter tolerance are both harder to fool, so each side of the
+    ///         guard takes whichever value is stricter. That lets the curator ask for more
+    ///         protection on a particular rebalance without letting anyone ask for less than the
+    ///         admin configured, which matters because the swapping path is the one that trades
+    ///         shareholder assets against the pool.
+    ///         Zero on either side means "whatever the vault is configured with", and a value
+    ///         looser than that configuration is simply clamped to it, so neither argument needs
+    ///         range checking of its own.
+    /// @param window       The caller's window, in seconds.
+    /// @param deviationBps The caller's tolerance, in basis points.
+    /// @return The window and tolerance the guard will actually use.
+    function _strictestGuard(uint32 window, uint16 deviationBps) internal view returns (uint32, uint16) {
+        uint32 configuredWindow = twapPeriod;
+        uint16 configuredBps = maxTwapDeviationBps;
+        if (deviationBps == 0 || deviationBps > configuredBps) deviationBps = configuredBps;
+        return (window > configuredWindow ? window : configuredWindow, deviationBps);
     }
 
     //
@@ -796,15 +824,21 @@ contract UniswapV3PositionVault is
     /// @param priceUpper        Upper bound of the new range.
     /// @param withSwap          Whether to trade the balances into the new range's ratio.
     /// @param maxPriceImpactBps How far that trade may move the pool's price, in basis points.
+    /// @param window            Seconds the manipulation guard averages over.
+    /// @param deviationBps      How far the price may sit from that average, in basis points.
     /// @return tokenId   The new position NFT id.
     /// @return liquidity Liquidity minted.
     /// @return amount0   Token0 consumed by the mint.
     /// @return amount1   Token1 consumed by the mint.
-    function _rebalance(uint256 priceLower, uint256 priceUpper, bool withSwap, uint16 maxPriceImpactBps)
-        internal
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
-        _checkPriceDeviation(maxTwapDeviationBps);
+    function _rebalance(
+        uint256 priceLower,
+        uint256 priceUpper,
+        bool withSwap,
+        uint16 maxPriceImpactBps,
+        uint32 window,
+        uint16 deviationBps
+    ) internal returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
+        _checkPriceDeviation(window, deviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
 
@@ -820,6 +854,9 @@ contract UniswapV3PositionVault is
         uint256 amountOut;
         if (withSwap) {
             (zeroForOne, amountIn, amountOut) = _swapIntoRange(tickLower, tickUpper, maxPriceImpactBps);
+            // The guard runs again once the trade is done, so a swap that landed outside the
+            // tolerance reverts the whole rebalance rather than leaving the position mispriced.
+            if (amountIn != 0) _checkPriceDeviation(window, deviationBps);
         }
 
         (tokenId, liquidity, amount0, amount1) = _mintMax(tickLower, tickUpper);
@@ -867,10 +904,7 @@ contract UniswapV3PositionVault is
         uint160 sqrtPriceX96 = _spotSqrtPrice();
         (zeroForOne, amountIn) = _solveSwap(sqrtPriceX96, tickLower, tickUpper);
 
-        if (amountIn != 0) {
-            (amountIn, amountOut) = _swap(zeroForOne, amountIn, maxPriceImpactBps, sqrtPriceX96);
-            _checkPriceDeviation(maxTwapDeviationBps);
-        }
+        if (amountIn != 0) (amountIn, amountOut) = _swap(zeroForOne, amountIn, maxPriceImpactBps, sqrtPriceX96);
     }
 
     /// @notice Sizes the trade that leaves the vault able to mint the most liquidity in a range.
@@ -1102,7 +1136,7 @@ contract UniswapV3PositionVault is
         if (maxSlippageBps == 0 || maxSlippageBps > _MAX_BPS) revert InvalidArguments();
 
         uint16 cap = maxTwapDeviationBps;
-        _checkPriceDeviation(maxSlippageBps < cap ? maxSlippageBps : cap);
+        _checkPriceDeviation(twapPeriod, maxSlippageBps < cap ? maxSlippageBps : cap);
     }
 
     /// @notice Reverts unless the pool's spot price is close enough to its own recent average.
@@ -1111,11 +1145,14 @@ contract UniswapV3PositionVault is
     ///         that case reverts rather than proceeding unguarded.
     /// @return sqrtPriceX96 The pool's current sqrt price.
     /// @return sqrtTwapX96  The sqrt price implied by the average tick over the window.
-    function _checkPriceDeviation(uint16 maxBps) internal view returns (uint160 sqrtPriceX96, uint160 sqrtTwapX96) {
+    function _checkPriceDeviation(uint32 period, uint16 maxBps)
+        internal
+        view
+        returns (uint160 sqrtPriceX96, uint160 sqrtTwapX96)
+    {
         uint16 cardinality;
         (sqrtPriceX96,,, cardinality,,,) = pool.slot0();
 
-        uint32 period = twapPeriod;
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = period;
         secondsAgos[1] = 0;

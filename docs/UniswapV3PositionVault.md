@@ -142,11 +142,21 @@ support, and both work whether or not a position is already open.
 left over: the mint consumes one side entirely and the surplus of the other stays idle. This avoids
 the swap's price impact and fee, at the cost of leaving part of the vault unproductive.
 
-`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps)` swaps inside the same pool so that
-almost the whole balance ends up as liquidity. The cap is how far the curator will let that trade
-move the pool's price, in basis points of the price it starts at, so 100 is one percent. It must be
-between 1 and 10000. A swap that would move the price further stops at the cap and fills partially,
-leaving the rest idle, rather than reverting. See **Rebalance algorithm** below.
+`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps, twapWindow, maxDeviationBps)` swaps
+inside the same pool so that almost the whole balance ends up as liquidity.
+
+The impact cap is how far the curator will let that trade move the pool's price, in basis points of
+the price it starts at, so 100 is one percent. It must be between 1 and 10000. A swap that would
+move the price further stops at the cap and fills partially, leaving the rest idle, rather than
+reverting.
+
+The last two arguments set the manipulation guard for this call: the seconds of history it averages
+over, and how far the price may sit from that average. **Neither can weaken the vault's own
+configuration.** A longer window and a tighter tolerance are both harder to fool, so each side takes
+whichever value is stricter, and zero on either means the vault's own setting. This lets a curator
+demand more protection on a particular rebalance without letting anyone demand less than the admin
+configured, which matters because this is the one path that trades shareholder assets against the
+pool. See **Rebalance algorithm** below.
 
 Choosing between them is a real trade-off. Trading costs the pool fee and moves the price against
 the vault; not trading leaves capital idle. The surplus a no-swap rebalance leaves behind cannot be
@@ -307,8 +317,8 @@ position manager call revert rather than silently mis-accounting.
 | Parameter | Set at | Notes |
 |---|---|---|
 | `token0`, `token1`, `fee` | initialization | Immutable in practice; the pool is resolved from them. |
-| `twapPeriod` | initialization, admin | Manipulation-guard window in seconds. Must be non-zero. |
-| `maxTwapDeviationBps` | initialization, admin | Tolerance in basis points. Must be in (0, 10000]. |
+| `twapPeriod` | initialization, admin | Manipulation-guard window in seconds. Must be non-zero. A floor: a caller may ask for a longer one. |
+| `maxTwapDeviationBps` | initialization, admin | Tolerance in basis points. Must be in (0, 10000]. A ceiling: a caller may ask for a tighter one. |
 | `assetRecoverer` | initialization, admin | Recipient of swept tokens. |
 
 Both pool tokens must report 18 decimals or fewer, which the price scaling relies on.
