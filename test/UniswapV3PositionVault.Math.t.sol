@@ -273,6 +273,51 @@ contract UniswapV3PositionVaultMathTest is Test {
         UniswapV3VaultMath.sharesForSide(1e18, 0, 1000);
     }
 
+    function test_depositPlan_neverChargesMoreThanTheNamedAmount() public pure {
+        uint160 sqrtP = TickMath.getSqrtRatioAtTick(0);
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(-600);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(600);
+        uint128 liquidity = 1e18;
+        uint256 supply = liquidity;
+
+        (uint256 total0,) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
+
+        // A deposit many times the size of the vault is the case that used to break. The share
+        // count comes from the vault's own totals and the charge is then recomputed from the
+        // liquidity those shares buy, so truncation in that denominator reappears in the charge
+        // multiplied by the ratio of the deposit to the vault. It has to hold at every size.
+        uint256[7] memory multiples = [uint256(1), 2, 3, 5, 10, 1000, 100_000];
+        for (uint256 i; i < multiples.length; ++i) {
+            uint256 amount = total0 * multiples[i];
+            (,,, uint256 pulled0,) =
+                UniswapV3VaultMath.depositPlan(sqrtP, sqrtA, sqrtB, liquidity, 0, 0, supply, amount, true);
+
+            assertLe(pulled0, amount, "charged more than the caller named");
+        }
+    }
+
+    function testFuzz_depositPlan_neverChargesMoreThanTheNamedAmount(
+        uint256 amountSeed,
+        uint128 liquiditySeed,
+        int24 currentTick
+    ) public pure {
+        uint128 liquidity = uint128(bound(liquiditySeed, 1e12, 1e30));
+        currentTick = int24(bound(currentTick, -500, 500));
+
+        uint160 sqrtP = TickMath.getSqrtRatioAtTick(currentTick);
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(-600);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(600);
+
+        (uint256 total0,) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
+        vm.assume(total0 > 1e6);
+
+        uint256 amount = bound(amountSeed, 1e6, total0 * 100_000);
+        (,,, uint256 pulled0,) =
+            UniswapV3VaultMath.depositPlan(sqrtP, sqrtA, sqrtB, liquidity, 0, 0, liquidity, amount, true);
+
+        assertLe(pulled0, amount, "charged more than the caller named");
+    }
+
     //
     // Oracle helpers
     //

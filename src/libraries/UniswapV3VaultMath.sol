@@ -849,13 +849,20 @@ library UniswapV3VaultMath {
         uint256 amount,
         bool isAmount0
     ) public pure returns (uint256 shares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) {
+        // The denominator rounds UP, and that direction is load-bearing rather than cosmetic. What
+        // the deposit is finally charged is recomputed from the liquidity the share count buys, so
+        // any truncation left in this denominator reappears in the charge multiplied by the ratio of
+        // the deposit to the vault. Flooring it therefore over-charges by roughly that ratio: a
+        // deposit three times the size of the vault exceeded the caller's amount by a wei, and one a
+        // thousand times its size by several hundred, each reverting as SlippageExceeded. Rounding
+        // up makes the share count slightly conservative instead, which errs toward the vault at
+        // every size.
         (uint256 total0, uint256 total1) =
-            amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, false);
+            amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, true);
 
-        // The share count is derived from a linear cost, but the cost actually charged rounds two
-        // components up: the tokens the new liquidity needs, and the claim on the idle balances.
-        // Each ceiling can add a wei, so the amount is reduced by that headroom first. Without it a
-        // deposit could take one or two wei more than the caller authorised.
+        // The charge also rounds two components up: the tokens the new liquidity needs, and the
+        // claim on the idle balances. Each ceiling can add a wei, so the amount is reduced by that
+        // fixed headroom as well.
         shares = sharesForSide(_lessHeadroom(amount), isAmount0 ? total0 + idle0 : total1 + idle1, supply);
         (, charge0, charge1, pulled0, pulled1) =
             depositCost(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, shares);
