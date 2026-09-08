@@ -68,6 +68,10 @@ contract DeployUniswapV3PositionVault is Script {
 
         UniswapV3PositionVault vault = UniswapV3PositionVault(proxy);
         if (openToEveryone) vault.grantRole(vault.INVESTOR(), address(0));
+        // The first position mints the opening share supply to whoever opened it, and a mint is a
+        // transfer the investor gate checks. Without this a closed vault deploys unable to open a
+        // position at all, and the admin has to notice and grant the role before anything works.
+        vault.grantRole(vault.INVESTOR(), params.curator);
         vault.grantRole(vault.DEFAULT_ADMIN_ROLE(), finalAdmin);
         vault.renounceRole(vault.DEFAULT_ADMIN_ROLE(), deployer);
 
@@ -136,6 +140,7 @@ contract DeployUniswapV3PositionVault is Script {
         require(vault.hasRole(adminRole, finalAdmin), "admin role not granted");
         require(!vault.hasRole(adminRole, deployer), "deployer still admin");
         require(vault.hasRole(vault.CURATOR(), curator), "curator role not granted");
+        require(vault.isInvestor(curator), "curator cannot receive the opening shares");
         require(vault.isInvestor(address(1)) == openToEveryone, "investor gate misconfigured");
         require(address(vault.pool()) != address(0), "pool not resolved");
         require(vault.activeTokenId() == 0, "vault should start with no position");

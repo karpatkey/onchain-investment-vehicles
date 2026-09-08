@@ -29,6 +29,9 @@ contract VaultHandler is Test {
 
     address[3] public actors;
 
+    /// @notice The smallest share supply any accepted deposit was priced against.
+    uint256 public smallestSupplyADepositWasPricedAgainst = type(uint256).max;
+
     /// @notice Counts of calls that actually executed, reported at the end of a run.
     uint256 public deposits;
     uint256 public redemptions;
@@ -59,9 +62,14 @@ contract VaultHandler is Test {
         bool isAmount0 = amount1 % 2 == 0;
         uint256 amount = isAmount0 ? bound(amount0, 1e6, 200_000e6) : bound(amount0, 1e15, 200e18);
 
+        uint256 supplyPricedAgainst = vault.totalSupply();
+
         vm.prank(actor);
         try vault.deposit(amount, isAmount0, 20_000, block.timestamp) {
             deposits++;
+            if (supplyPricedAgainst < smallestSupplyADepositWasPricedAgainst) {
+                smallestSupplyADepositWasPricedAgainst = supplyPricedAgainst;
+            }
         } catch {}
     }
 
@@ -212,16 +220,12 @@ contract UniswapV3PositionVaultInvariantTest is UniswapV3PositionVaultTestBase {
         );
     }
 
-    /// @notice Shares outstanding are never a claim on nothing.
-    function invariant_sharesAreAlwaysBackedBySomething() public view {
-        if (vault.totalSupply() == 0) return;
+    /// @notice No deposit is ever priced against a supply too small to price against.
+    function invariant_noDepositIsPricedAgainstADustSupply() public view {
+        uint256 smallest = handler.smallestSupplyADepositWasPricedAgainst();
+        if (smallest == type(uint256).max) return;
 
-        uint256 backing = token0.balanceOf(address(vault)) + token1.balanceOf(address(vault));
-        if (vault.activeTokenId() != 0) {
-            (,, uint128 liquidity,,) = vault.activePosition();
-            backing += liquidity;
-        }
-        assertGt(backing, 0, "shares outstanding with nothing behind them");
+        assertGe(smallest, 1e6, "a deposit was priced against a supply below the floor");
     }
 
     /// @notice No allowance is ever left standing to the position manager.
@@ -244,11 +248,18 @@ contract UniswapV3PositionVaultInvariantTest is UniswapV3PositionVaultTestBase {
         uint256 supply = vault.totalSupply();
         if (supply == 0) return;
 
-        (uint256 claim0, uint256 claim1) = vault.previewRedeem(supply);
+        // Summed over the holders rather than asked for in one call. Pricing the whole supply at
+        // once divides the holdings by the supply and multiplies them straight back, so it returns
+        // the holdings by construction and could not fail whatever the vault had done. Each
+        // holder's claim is rounded down separately, so the sum is a real question: it asks whether
+        // the parts the vault would actually pay out still fit inside what it holds.
+        (uint256 alice0, uint256 alice1) = vault.previewRedeem(vault.balanceOf(alice));
+        (uint256 bob0, uint256 bob1) = vault.previewRedeem(vault.balanceOf(bob));
+        (uint256 curator0, uint256 curator1) = vault.previewRedeem(vault.balanceOf(curator));
         (uint256 total0, uint256 total1) = vault.totalAssets();
 
-        assertLe(claim0, total0, "token0 claim exceeds holdings");
-        assertLe(claim1, total1, "token1 claim exceeds holdings");
+        assertLe(alice0 + bob0 + curator0, total0, "token0 claims exceed holdings");
+        assertLe(alice1 + bob1 + curator1, total1, "token1 claims exceed holdings");
     }
 
     /// @notice Reports how much of the state space a run actually reached.

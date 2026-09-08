@@ -239,8 +239,14 @@ contract UniswapV3PositionVault is
     ///         is whatever the position's ratio demands at execution, and near a range boundary that
     ///         ratio is a steep function of price, so a sub-one-percent move can more than double
     ///         it. The allowance is therefore measured against the amount rather than against the
-    ///         price, and the reference it is measured from is the pool's own time-weighted average,
-    ///         which nobody can move cheaply. A caller needs no quote of their own to use it.
+    ///         price, and the reference it is measured from is priced at the pool's own time-weighted
+    ///         average, which nobody can move cheaply. A caller needs no quote of their own to use it.
+    ///
+    ///         One part of that reference is movable, and it is worth naming: it is computed from the
+    ///         vault's live idle balances, so a donation into the vault raises both the charge and
+    ///         the allowance that bounds it. The depositor receives a proportional claim on the
+    ///         donation and the donor pays for it, so this is unexpected spend against a standing
+    ///         approval rather than a loss. Approve what you mean to spend.
     ///
     ///         Because the allowance is on an amount, it is not a fraction of a price and is not
     ///         capped at one hundred percent. A tight range can legitimately need a large one.
@@ -265,8 +271,19 @@ contract UniswapV3PositionVault is
 
         uint256 supply = totalSupply();
         if (supply == 0) revert ZeroShares();
+        // Pricing a deposit against a supply this small is what the floor exists to prevent, so
+        // this is where it is enforced. Enforcing it on redemptions instead would trap holders:
+        // two holders of six hundred thousand shares each could get the supply to the floor and
+        // then neither could redeem, because neither holds all of it and any partial exit would
+        // break the floor. Nobody is ever kept from leaving; a vault whose supply has been drawn
+        // down that far simply takes no new money until it is emptied and opened again.
+        if (supply < _MIN_SHARES) revert SupplyTooSmall(supply, _MIN_SHARES);
 
-        _compound();
+        // Collect, but do not fold. Collecting is price-independent: the fees land in the idle
+        // balance, which is read below and charged to this depositor pro-rata, so the fees a
+        // position earned before they arrived still belong to the holders who were here for them.
+        // Folding is not price-independent, and it is not this caller's to trigger. See _compound.
+        _collect(tokenId, type(uint128).max, type(uint128).max);
 
         (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity) =
             _positionState(tokenId);
@@ -347,14 +364,13 @@ contract UniswapV3PositionVault is
         if (maxSlippageBps < _MAX_BPS && activeTokenId != 0) _checkSlippage(maxSlippageBps);
         else if (maxSlippageBps == 0 || maxSlippageBps > _MAX_BPS) revert InvalidArguments();
 
-        _compound();
+        // Collected, not folded, for the reason given on _compound: a redemption's payout does not
+        // depend on the price, but folding at the pool's current price does, and this path can be
+        // reached with the price guard waived.
+        uint256 openTokenId = activeTokenId;
+        if (openTokenId != 0) _collect(openTokenId, type(uint128).max, type(uint128).max);
 
         uint256 supply = totalSupply();
-        // Redeem everything or leave a supply that can still price a deposit. A residue below the
-        // floor is worth nothing to the holder and, once the vault is refunded, would make every
-        // later deposit round a visible fraction of itself away to whoever holds it.
-        if (shares < supply && supply - shares < _MIN_SHARES) revert SupplyTooSmall(supply - shares, _MIN_SHARES);
-
         uint256 idle0 = token0.balanceOf(address(this));
         uint256 idle1 = token1.balanceOf(address(this));
 
@@ -672,7 +688,10 @@ contract UniswapV3PositionVault is
     /// @notice The counter amount a position of the given range needs alongside a named amount.
     /// @dev    Answers "if I put in this much token0, how much token1 does the position take?" at
     ///         the pool's current price. Rounds the counter amount up, so supplying it is always
-    ///         enough. Works for any position id, not only the vault's own.
+    ///         enough. The range comes from the id, but the price comes from this vault's own pool,
+    ///         so an id belonging to a position on any other pool returns a number computed at the
+    ///         wrong price rather than reverting. Pass this vault's own position, or one on the
+    ///         same pool.
     /// @param tokenId   The position NFT id whose range should be used.
     /// @param amount    Amount of the named token.
     /// @param isAmount0 True when the amount is token0, false when it is token1.
@@ -848,6 +867,20 @@ contract UniswapV3PositionVault is
     ///         moment an investor transacts. A one-sided remainder cannot be added at the pool's
     ///         ratio and stays idle, still owned pro-rata, until a rebalance swaps it.
     /// @return added Liquidity added back into the position.
+    /// @dev Only the curator's own entry points reach this, and only behind the price guard.
+    ///
+    ///      Folding buys liquidity at whatever price the pool is at, and buying is the direction
+    ///      that punishes a wrong price: liquidity acquired at P' and valued at the true price P
+    ///      costs an excess of (sqrt(P') - sqrt(P))^2 / sqrt(P') per unit, which is positive for
+    ///      every P' other than P. That is the opposite of releasing a position, which is concave
+    ///      in price and therefore safe to do at any price — which is why unwinding needs no guard
+    ///      and this does.
+    ///
+    ///      It folds the whole idle balance, not dust. removeLiquidity and the non-trading
+    ///      rebalance both leave a large one-sided balance behind on purpose, so an investor path
+    ///      that folded would let anyone holding a single share pick the price at which the vault
+    ///      bought back in. Both investor paths therefore collect without folding, and the balance
+    ///      waits for a curator call that is guarded and deliberately timed.
     function _compound() internal returns (uint128 added) {
         uint256 tokenId = activeTokenId;
         if (tokenId == 0) return 0;
@@ -1122,6 +1155,12 @@ contract UniswapV3PositionVault is
         returns (uint256 amount0, uint256 amount1)
     {
         (uint256 principal0, uint256 principal1) = _decreaseLiquidity(tokenId, liquidity);
+        // The position manager rejects a collect for nothing, with no error data, so a decrease
+        // whose principal rounded away has to stop here. It is reachable: a position sitting
+        // wholly on one side of the price releases zero of the other token by construction, and
+        // the side it does hold truncates to zero for a small enough amount of liquidity. Letting
+        // it through would take an investor's redemption down with it.
+        if (principal0 == 0 && principal1 == 0) return (0, 0);
         return _collect(tokenId, SafeCast.toUint128(principal0), SafeCast.toUint128(principal1));
     }
 

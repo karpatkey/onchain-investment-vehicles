@@ -521,11 +521,18 @@ contract UniswapV3PositionVaultMathTest is Test {
         assertGt(sellingToken0, 0, "and in the other direction too");
     }
 
-    function testFuzz_solveSwap_neverRevertsOnAnOversizedBudget(uint256 budgetSeed, bool zeroForOne) public pure {
+    function testFuzz_solveSwap_answersABudgetUpToAThousandTimesThePool(uint256 budgetSeed, bool zeroForOne)
+        public
+        pure
+    {
         uint256 budget = bound(budgetSeed, 1e15, 1e24);
 
-        // Whatever the balance, sizing a swap into a one-tick-wide range must produce an answer
-        // rather than an undecodable revert.
+        // Sizing a swap into a one-tick-wide range must produce an answer rather than an undecodable
+        // revert. The bound is named in the test's own name because the claim is not unconditional:
+        // Uniswap's getNextSqrtPriceFromInput casts to uint160 and panics once the amount exceeds
+        // the pool's liquidity by 2**64, sixty-one orders of magnitude past what this covers and far
+        // past any pool a vault could be pointed at. Reaching it would be a curator-facing failure
+        // of rebalanceWithSwap, with the non-trading rebalance still working.
         UniswapV3VaultMath.solveSwap(
             UniswapV3VaultMath.SwapParams({
                 sqrtPriceX96: TickMath.getSqrtRatioAtTick(zeroForOne ? int24(60) : int24(-60)),

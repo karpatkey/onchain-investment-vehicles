@@ -83,13 +83,18 @@ INVESTOR
 | `deposit` | | | ✅ | |
 | `redeem` | | | ✅ | |
 | `transfer` / `transferFrom` | | | ✅ | |
-| `createPosition` | | ✅ | | |
+| `createPosition` | | ✅ | ✅ | |
 | `rebalance` / `rebalanceWithSwap` | | ✅ | | |
 | `unwindPosition` | | ✅ | | |
 | `addLiquidity` / `removeLiquidity` | | ✅ | | |
 | `collectFees` | | ✅ | | |
 | `setTwapConfig` | ✅ | | | |
 | `setAssetRecoverer` | ✅ | | | |
+
+`createPosition` needs both roles when it opens the vault's first position, because the opening share
+supply is minted to the caller and a mint is a transfer the investor gate checks. The deploy script
+grants the curator `INVESTOR` for that reason. On any later position the vault already has a supply,
+nothing is minted, and CURATOR alone is enough.
 | `upgradeToAndCall` | ✅ | | | |
 | `grantRole` / `revokeRole` | ✅ | | | |
 | `recoverAssets` | | | | ✅ |
@@ -300,6 +305,26 @@ If it crosses an initialized tick the realised price differs slightly, which is 
 the pool and mints against the balances actually held. The residue stays idle, is still owned
 pro-rata, and is folded back in by the next compounding.
 
+### Who folds, and why it is not the investor
+
+Fees are collected on every path, including the two investor ones, so a depositor never buys a claim
+on fees earned before they arrived and a redeemer always takes their share of fees earned up to the
+moment they leave. Collecting is price-independent, so it is safe to do on a call anyone can make.
+
+**Folding the idle balance into the position is a curator action only**, reachable through
+`collectFees`, `addLiquidity` and either `rebalance`, all of which run behind the manipulation guard.
+The asymmetry is not arbitrary. Releasing a position is concave in price, which is why
+`unwindPosition` and `removeLiquidity` need no guard at all: a composition released at a moved price
+is worth at least as much at the true price as the position itself would have been. Acquiring one is
+the convex direction, and liquidity bought at `P'` and valued at the true price `P` costs an excess of
+`(sqrt(P') - sqrt(P))^2 / sqrt(P')` per unit. Since `removeLiquidity` and the non-trading `rebalance`
+both leave a large one-sided balance idle on purpose, an investor path that folded would let anyone
+holding a single share choose the price at which the vault bought back in — and a redemption can be
+made with the price bound waived, because a redemption's payout does not depend on the price.
+
+So the idle balance waits for a curator call that is both guarded and deliberately timed, and until
+then it stays owned pro-rata by every holder, claimed in full by anyone who redeems.
+
 ## Safety Considerations
 
 ### 0. Staleness
@@ -393,7 +418,7 @@ Both pool tokens must report 18 decimals or fewer, which the price scaling relie
 | `Redeem` | An investor burns shares. |
 | `PositionCreated` | A position is opened, by `createPosition` or `rebalance`. |
 | `PositionUnwound` | A position is closed and its NFT burned. |
-| `Compounded` | Fees are collected and idle balances folded back in. |
+| `Compounded` | Fees are collected and idle balances folded back in. Curator paths only; the investor paths collect without folding. |
 | `LiquidityRemoved` | The curator trims the position. |
 | `Rebalanced` | A rebalance completes, reporting the swap, if any, and the residue. The no-swap variant reports zero amounts. |
 | `TwapConfigUpdate`, `AssetRecovererUpdate` | The admin changes configuration. |

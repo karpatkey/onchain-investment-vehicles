@@ -115,9 +115,10 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         vm.prank(alice);
         (uint256 shares,,) = vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
 
-        // Compounding runs first on a redemption, so the manager gets control before the burn.
+        // A redemption collects fees before it burns, so the manager gets control while the vault's
+        // supply and balances still say the caller owns what they are about to give up.
         manager.creditFees(vault.activeTokenId(), 50e18, 50e18);
-        manager.armIncreaseAttack(
+        manager.armCollectAttack(
             address(vault), abi.encodeCall(vault.redeem, (uint256(1), uint16(500), block.timestamp + 1))
         );
 

@@ -159,6 +159,9 @@ contract MockPositionManager {
 
     Attack private _attack;
 
+    /// @dev Armed separately from _attack so a test can choose which hook hands over control.
+    Attack private _collectAttack;
+
     constructor(address factory_) {
         factory = factory_;
     }
@@ -174,6 +177,16 @@ contract MockPositionManager {
     /// @param payload Calldata to send it.
     function armIncreaseAttack(address target, bytes calldata payload) external {
         _attack = Attack({target: target, payload: payload, armed: true});
+    }
+
+    /// @notice Arms a call to make from inside the next collect, before any accounting.
+    /// @dev    The investor paths collect rather than fold, so this is the hook a redemption and a
+    ///         deposit actually hand control to. A real position manager would not call back, which
+    ///         is exactly why the guard has to be tested against one that does.
+    /// @param target  Contract to call.
+    /// @param payload Calldata to send it.
+    function armCollectAttack(address target, bytes calldata payload) external {
+        _collectAttack = Attack({target: target, payload: payload, armed: true});
     }
 
     /// @notice The stored state of a position, in the position manager's own return shape.
@@ -260,6 +273,16 @@ contract MockPositionManager {
         external
         returns (uint256 amount0, uint256 amount1)
     {
+        if (_collectAttack.armed) {
+            _collectAttack.armed = false;
+            (bool ok, bytes memory err) = _collectAttack.target.call(_collectAttack.payload);
+            if (!ok) {
+                assembly {
+                    revert(add(err, 0x20), mload(err))
+                }
+            }
+        }
+
         Position storage p = _positions[params.tokenId];
 
         amount0 = params.amount0Max < p.owed0 ? params.amount0Max : p.owed0;

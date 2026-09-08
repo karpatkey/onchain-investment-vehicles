@@ -583,27 +583,67 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.stopPrank();
     }
 
-    function test_redeem_refusesToLeaveASupplyTooSmallToPriceAgainst() public {
+    function test_deposit_refusesASupplyTooSmallToPriceAgainst() public {
         _openPosition(100_000e6);
         uint256 supply = vault.totalSupply();
 
-        // Redeeming down to a handful of shares used to be allowed. The residue is worth nothing to
-        // whoever holds it, but it survives an unwind, and once the vault is funded again those few
-        // shares stand behind everything in it. The next depositor's share count is a floor division
-        // by that supply, so a third of what they put in rounds away to the residue holder. The
-        // vault now refuses the redemption that sets it up.
+        // A supply drawn down to a handful of shares is worth nothing to whoever holds it, but it
+        // survives an unwind, and once the vault is funded again those few shares stand behind
+        // everything in it. A depositor's share count is a floor division by that supply, so a
+        // third of what they put in would round away to the residue holder. The deposit is refused
+        // instead, which is where the harm would land.
         vm.prank(curator);
-        vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
         vault.redeem(supply - 3, 10_000, block.timestamp);
+        assertEq(vault.totalSupply(), 3, "the redemption itself is never blocked");
 
-        // Leaving the floor intact is fine, and so is leaving nothing at all.
+        _seedVault(50_000e6, 15e18);
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
         vm.prank(curator);
-        vault.redeem(supply - 1e6, 10_000, block.timestamp);
-        assertEq(vault.totalSupply(), 1e6, "the floor itself is allowed");
+        vault.rebalance(lower, upper, block.timestamp);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
+        vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+    }
+
+    function test_redeem_neverTrapsTheLastHolders() public {
+        // The floor sat on redemptions once, and two holders could strand each other with it. Drive
+        // the supply down to just above the floor and split it in two: neither holds the whole
+        // supply, so neither can exit fully, and any partial exit leaves less than the floor. Both
+        // were stuck, with only a share transfer between them as a way out. Leaving is now always
+        // allowed, whatever it leaves behind.
+        _openPosition(100_000e6);
+
+        uint256 supply = vault.totalSupply();
+        vm.prank(curator);
+        vault.redeem(supply - 1_200_000, 10_000, block.timestamp);
+        assertEq(vault.totalSupply(), 1_200_000, "supply is now just above the floor");
 
         vm.prank(curator);
-        vault.redeem(1e6, 10_000, block.timestamp);
-        assertEq(vault.totalSupply(), 0, "a full exit is always allowed");
+        vault.transfer(alice, 600_000);
+
+        vm.prank(curator);
+        vault.redeem(600_000, 10_000, block.timestamp);
+        vm.prank(alice);
+        vault.redeem(600_000, 10_000, block.timestamp);
+
+        assertEq(vault.totalSupply(), 0, "both holders got out");
+    }
+
+    function test_removeLiquidity_survivesAPrincipalThatRoundsAway() public {
+        // A position sitting wholly on one side of the price releases zero of the other token by
+        // construction, and the side it does hold rounds away for a small enough amount of
+        // liquidity. The position manager rejects a collect for nothing with no error data, so a
+        // trim of that size used to revert undecodably, and so did any redemption whose share of
+        // the liquidity landed in the same band.
+        _openPosition(100_000e6);
+        _movePriceBps(-3000);
+
+        vm.prank(curator);
+        vault.removeLiquidity(1);
+
+        vm.prank(curator);
+        vault.removeLiquidity(100_000);
     }
 
     function test_createPosition_refusesToOpenWithANegligibleSupply() public {
@@ -615,6 +655,61 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
         vault.createPosition(lower, upper, 1, true, block.timestamp);
+    }
+
+    function test_redeem_neverBuysLiquidityAtAPriceTheCallerChose() public {
+        // A trim leaves a large one-sided balance idle on purpose. Folding that balance back into
+        // the position buys liquidity, and buying at a wrong price costs real value, unlike
+        // releasing a position, which is concave in price and safe anywhere. A redemption used to
+        // fold on the way through, and it can be reached with the price guard waived, so anyone
+        // holding a single share could pick the price at which the vault bought back in.
+        _openPosition(100_000e6);
+
+        vm.prank(alice);
+        vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+
+        (,, uint128 trimmed,,) = vault.activePosition();
+        vm.prank(curator);
+        vault.removeLiquidity(trimmed / 2);
+
+        // Push the pool past the range's edge, where the fold would be wholly one-sided.
+        _movePriceBps(1500);
+
+        (,, uint128 before,,) = vault.activePosition();
+        uint256 idleBefore = token1.balanceOf(address(vault));
+
+        vm.prank(alice);
+        vault.redeem(1e6, 10_000, block.timestamp);
+
+        (,, uint128 afterwards,,) = vault.activePosition();
+        assertLe(afterwards, before, "a redemption must never grow the position");
+        assertApproxEqRel(token1.balanceOf(address(vault)), idleBefore, 1e15, "the idle balance stays idle");
+    }
+
+    function test_deposit_neverBuysLiquidityAtAPriceTheCallerChose() public {
+        // The same on the other investor path, where the guard bounds the price but does not stop
+        // the fold: a range narrower than the guard's band sits outside it well within tolerance.
+        _openPosition(100_000e6);
+
+        (,, uint128 trimmed,,) = vault.activePosition();
+        vm.prank(curator);
+        vault.removeLiquidity(trimmed / 2);
+
+        (,, uint128 before,,) = vault.activePosition();
+        uint256 idleBefore = token1.balanceOf(address(vault));
+
+        vm.prank(alice);
+        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+
+        (,, uint128 afterwards,,) = vault.activePosition();
+        uint256 grew = afterwards - before;
+
+        // The position grows by what this depositor funded, and by nothing else. Folding the idle
+        // balance would have grown it by many times that.
+        assertLt(grew, before / 10, "only the deposit's own liquidity was added");
+        // A depositor buys a pro-rata claim on the idle balance and pays for it, so the balance
+        // grows here. What it must not do is drain into the position.
+        assertGe(token1.balanceOf(address(vault)), idleBefore, "the idle balance is not folded away");
     }
 
     //
