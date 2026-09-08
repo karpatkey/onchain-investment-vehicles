@@ -600,8 +600,21 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         _validateSharesChains(sharesChains);
         uint64[] memory destSelectors = _resolveStackSelectors(destChainIds, sharesChains);
         if (destSelectors.length == 0) revert NoDestinations();
+
+        KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
+        // Validate the timelock configuration HERE, on the source chain, before a single fee is
+        // spent. Unlike `deployEverywhere`, `dispatchTo` runs no local `deployOiv`, so nothing on
+        // this chain otherwise looks at `execTimelock` — a proposer array that is not strictly
+        // ascending (a reformatted or regenerated config reorders it easily), a `minDelay` outside
+        // the deployer's band, or a canceller that is also a proposer all sail through here, every
+        // lane's non-refundable fee is paid, and every destination reverts inside
+        // `KpkTimelockDeployer._validate`. `predictStackAddresses` validates exactly what each
+        // destination's `deployStack` will, and needs no shares mastercopy, so it is the cheapest
+        // complete check for what this function actually sends.
+        factory.predictStackAddresses(factory.oivToStackConfig(eff), address(this));
+
         (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
-            _price(_effectiveConfig(config, sharesChains), destSelectors, _sharesChainIds(sharesChains), gasLimit);
+            _price(eff, destSelectors, _sharesChainIds(sharesChains), gasLimit);
         if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
         messageIds = _send(message, destSelectors, fees, totalFee);
     }

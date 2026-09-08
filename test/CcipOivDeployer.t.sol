@@ -765,6 +765,25 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
     }
 
+    /// @notice A timelock config that every destination will reject must be rejected HERE, before a
+    ///         single non-refundable fee is spent. `dispatchTo` runs no local `deployOiv`, so
+    ///         nothing else on the source chain ever looks at `execTimelock`: a proposer array that
+    ///         is not strictly ascending — which a reformatted or regenerated config produces very
+    ///         easily — used to dispatch to every lane, pay every fee, and revert on arrival inside
+    ///         `KpkTimelockDeployer._validate`.
+    function test_dispatchTo_rejectsAnInvalidTimelockBeforeSpendingFees() public {
+        address[] memory proposers = new address[](2);
+        proposers[0] = address(0x2222); // descending: the deployer requires strictly ascending
+        proposers[1] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert();
+        orchestrator.dispatchTo{value: _fee(1)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
     function test_ccipReceive_revertsForWrongRouter() public {
         // Build the message first — it makes an external call (factory.oivToStackConfig) that would
         // otherwise consume the prank/expectRevert.
