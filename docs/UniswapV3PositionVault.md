@@ -113,16 +113,22 @@ supply, credited to the caller. Shares and liquidity therefore start one-to-one.
 
 ### 2. Depositing
 
-`deposit(amount, isAmount0, maxSlippageBps, deadline)` takes the same shape as `createPosition`: the
-investor names how much of **one** token to commit and the vault derives the other side from the
+`deposit(amount, isAmount0, maxCounterAmount, deadline)` takes the same shape as `createPosition`:
+the investor names how much of **one** token to commit and the vault derives the other side from the
 position's current ratio. Amounts are pulled exactly, and the wei-level remainder left by the pool's
 rounding is returned in the same call.
 
-The slippage bound is on the **price**, not on the amounts, because that is what the caller is
-actually exposed to. The counter amount is whatever the pool's price makes it at execution, so
-bounding how far that price may sit from the pool's own recent average bounds the counter amount
-too, with no need for the caller to supply a reference quote. It is capped by the vault's own
-tolerance, so a caller can ask for a stricter bound but never a looser one.
+**Both sides are bounded**, the named one by the amount itself and the other by `maxCounterAmount`.
+That second cap is the one that matters. The counter amount is whatever the ratio demands at
+execution, and near a range boundary that ratio is a steep function of price: on the mainnet
+USDC/WETH pool with a range one percent wide, a 0.4% move more than doubles it. A bound stated in
+basis points of the price cannot express that, which is why the cap is an amount. It rejects a
+manipulated price as a side effect, because a manipulated price is exactly what pushes the counter
+amount past the cap.
+
+Nothing else here needs a price guard. Shares are issued in proportion to the liquidity the deposit
+adds, and liquidity does not depend on price, so the split between a new depositor and the existing
+holders is fair whatever the pool is doing.
 
 ### 3. Redeeming
 

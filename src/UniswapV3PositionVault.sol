@@ -220,27 +220,31 @@ contract UniswapV3PositionVault is
     ///         shared with this deposit. Amounts are pulled exactly, and the wei-level remainder
     ///         left by the pool's own rounding is returned in the same call.
     ///
-    ///         The slippage bound is on the price, not on the amounts, because that is what the
-    ///         caller is actually exposed to: the counter amount is whatever the pool's price makes
-    ///         it at execution, so bounding how far that price may sit from the pool's own recent
-    ///         average bounds the counter amount too. It is capped by the vault's own tolerance, so
-    ///         a caller can ask for a stricter bound but never a looser one.
-    /// @param amount          Amount of the named token to commit.
-    /// @param isAmount0       True when the amount is token0, false when it is token1.
-    /// @param maxSlippageBps  How far the pool's price may sit from its recent average, in basis
-    ///                        points. Must be between 1 and 10000.
-    /// @param deadline        Latest timestamp at which the deposit may execute.
+    ///         Both sides are bounded: the named one by the amount itself, and the other by
+    ///         maxCounterAmount. That second cap is what a depositor is really exposed to. The
+    ///         counter amount is whatever the position's ratio demands at execution, and that ratio
+    ///         is a steep function of price near a range boundary, so a sub-one-percent move can
+    ///         more than double it. A bound on the price cannot express that; a bound on the amount
+    ///         can, and it rejects a manipulated price as a side effect, because a manipulated price
+    ///         is exactly what makes the counter amount blow past the cap.
+    ///
+    ///         Nothing else needs a price guard here. Shares are issued in proportion to the
+    ///         liquidity the deposit adds, and liquidity does not depend on price, so the split
+    ///         between this depositor and the existing holders is fair whatever the pool is doing.
+    /// @param amount           Amount of the named token to commit.
+    /// @param isAmount0        True when the amount is token0, false when it is token1.
+    /// @param maxCounterAmount Most of the other token the caller will let the vault take.
+    /// @param deadline         Latest timestamp at which the deposit may execute.
     /// @return shares  Shares minted to the caller.
     /// @return amount0 Token0 taken from the caller.
     /// @return amount1 Token1 taken from the caller.
-    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
+    function deposit(uint256 amount, bool isAmount0, uint256 maxCounterAmount, uint256 deadline)
         external
         nonReentrant
         checkDeadline(deadline)
         returns (uint256 shares, uint256 amount0, uint256 amount1)
     {
         if (!isInvestor(msg.sender)) revert NotInvestor(msg.sender);
-        _checkSlippage(maxSlippageBps);
 
         uint256 tokenId = activeTokenId;
         if (tokenId == 0) revert NoActivePosition();
@@ -261,9 +265,11 @@ contract UniswapV3PositionVault is
             sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount, isAmount0
         );
 
-        // The plan already leaves headroom for its own rounding; this is the hard guarantee that a
-        // deposit never takes more of the named token than the caller asked to commit.
-        if ((isAmount0 ? pulled0 : pulled1) > amount) revert SlippageExceeded(pulled0, pulled1);
+        // The hard guarantee on both sides: never more of the named token than was committed, and
+        // never more of the other than the caller allowed.
+        if ((isAmount0 ? pulled0 : pulled1) > amount || (isAmount0 ? pulled1 : pulled0) > maxCounterAmount) {
+            revert SlippageExceeded(pulled0, pulled1);
+        }
 
         if (pulled0 != 0) token0.safeTransferFrom(msg.sender, address(this), pulled0);
         if (pulled1 != 0) token1.safeTransferFrom(msg.sender, address(this), pulled1);

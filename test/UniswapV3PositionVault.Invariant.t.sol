@@ -59,7 +59,7 @@ contract VaultHandler is Test {
         amount1 = bound(amount1, 1e15, 200e18);
 
         vm.prank(actor);
-        try vault.deposit(amount0, true, 500, block.timestamp) {
+        try vault.deposit(amount0, true, type(uint256).max, block.timestamp) {
             deposits++;
         } catch {}
     }
