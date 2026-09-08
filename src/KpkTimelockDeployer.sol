@@ -224,9 +224,16 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         current owner must subsequently call `IRoles(execRolesModifier).transferOwnership(timelock)`.
     ///         Verify with `isExecTimelocked` afterwards.
     /// @param  execRolesModifier The fund's exec Roles Modifier, whose address is identical on every
-    ///                           chain. Given the SAME `params` on each chain, the resulting timelock
-    ///                           address is therefore identical everywhere too; differing params on one
-    ///                           chain silently produce a different address there.
+    ///                           chain. Given the same `params` AND the same caller on each chain, the
+    ///                           resulting timelock address is identical everywhere too; differing
+    ///                           params on one chain silently produce a different address there.
+    ///
+    ///                           The caller is part of that: `_salt` binds `msg.sender`, so a timelock
+    ///                           the factory deploys and one you deploy yourself for the same fund land
+    ///                           at different addresses. That is deliberate — it is what stops a
+    ///                           configured proposer pre-deploying a fund's timelock and pre-staging an
+    ///                           operation in it — but it means the manual path below governs only what
+    ///                           you then hand it, never a factory-built fund's existing timelock.
     /// @param  params            Effective timelock configuration.
     /// @return timelock          The deployed (or pre-existing) `TimelockController`.
     function deployExecTimelock(address execRolesModifier, TimelockParams calldata params)
@@ -253,7 +260,11 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
 
     // ── Prediction ────────────────────────────────────────────────────────────
 
-    /// @notice Returns the address `deployExecTimelock` would produce for `(execRolesModifier, params)`.
+    /// @notice Returns the address `deployExecTimelock` would produce for
+    ///         `(execRolesModifier, params)` **when called by `msg.sender`**. The salt binds the
+    ///         caller, so this is the fund's timelock address only if you are the account that will
+    ///         deploy it — for a factory-built fund that is the factory, not you. Reading this from a
+    ///         block explorer with a default `from` returns an address nothing will ever deploy.
     /// @dev    Validates `params` exactly as the deploy would, so a prediction can never succeed for a
     ///         configuration `deployExecTimelock` would reject. Otherwise pure CREATE2 arithmetic — it
     ///         does not indicate whether that address is already deployed.

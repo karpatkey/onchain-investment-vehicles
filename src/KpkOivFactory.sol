@@ -285,6 +285,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         uint256 salt;
         /// @notice Address that receives ownership of the exec Roles Modifier and
         ///         `DEFAULT_ADMIN_ROLE` on the KpkShares proxy. Must not be zero.
+        ///
+        ///         Each of those two is superseded INDEPENDENTLY by its timelock: with
+        ///         `execTimelock.minDelay != 0` the exec modifier goes to that timelock instead, and
+        ///         with `sharesTimelock.minDelay != 0` the shares admin role does. With both set,
+        ///         `admin` receives neither and serves only as the fallback each timelock replaces.
         address admin;
         /// @notice KpkShares initialization parameters.
         ///         `sharesParams.safe` is overridden with the deployed Avatar Safe address.
