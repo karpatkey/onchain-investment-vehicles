@@ -162,6 +162,14 @@ supply this much of one token, how much of the other does the position need?" fo
 and `previewCounterAmountForRange` does the same for a range that does not exist yet.
 `previewDeposit` and `previewRedeem` price a deposit or redemption.
 
+Two functions convert between liquidity and token amounts against a position's range at the pool's
+current price. `liquidityToAmounts(tokenId, liquidity)` says what a liquidity amount is worth, and
+`amountsToLiquidity(tokenId, amount0, amount1)` says what a pair of amounts could mint. Both round
+down, so they are near-inverses that never overstate what is reachable, and only the binding side
+counts: outside the range one token funds nothing, and inside it the smaller of the two caps the
+result. For a range that does not exist yet, the same arithmetic is reachable on the deployed
+`UniswapV3VaultMath` library, whose `positionValue` and `mintableLiquidity` are public.
+
 ## Accounting model
 
 A share is a pro-rata claim on **everything the vault owns**: the position's liquidity *and* any
@@ -322,9 +330,16 @@ The vault links `UniswapV3VaultMath`, which forge deploys and links automaticall
 compiled with a size-favouring setting declared in `foundry.toml`; no other contract is affected, so
 no existing CREATE2 address moves.
 
-The vault sits a few hundred bytes under the EIP-170 limit. Adding an external function to it will
-need either another reduction in that setting or more of its logic moved into the math library,
-which has ample room. `forge build --sizes` reports the current margin.
+The vault is effectively full: it sits about a hundred bytes under the EIP-170 limit, and the
+optimizer setting has been lowered as far as it usefully goes. **Before any further external
+function is added, the read surface should move to a separate lens contract** that reads the vault's
+public state, which is why Uniswap ships its own quoting and position-valuation helpers separately.
+Shaving the optimizer further costs runtime gas on every operation and buys only tens of bytes.
+`forge build --sizes` reports the current margin.
+
+When changing that setting, edit it by hand. A careless global search and replace on
+`optimizer_runs` will also rewrite the repository-wide value, which changes every contract's
+bytecode and moves the pinned CREATE2 addresses; `test/FactoryAddressSync.t.sol` catches it.
 
 Set `openToEveryone` to grant `INVESTOR` to the zero address at deployment, which opens deposits,
 redemptions and transfers to anyone.

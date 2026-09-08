@@ -582,10 +582,38 @@ contract UniswapV3PositionVault is
         view
         returns (uint256)
     {
-        (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
-        uint160 sqrtPriceX96 = _spotSqrtPrice();
-        (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
-        return UniswapV3VaultMath.counterAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
+        (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = _rangeSqrtRatios(priceLower, priceUpper);
+        return UniswapV3VaultMath.counterAmount(_spotSqrtPrice(), sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
+    }
+
+    /// @notice What a liquidity amount is worth in tokens, in a position's range.
+    /// @dev    Values the liquidity at the pool's current price and rounds down, so this is what the
+    ///         position would actually release. Minting the same liquidity costs at most a wei more
+    ///         on each side, which is the direction that keeps the vault whole.
+    /// @param tokenId   The position NFT whose range should be used.
+    /// @param liquidity The liquidity to value.
+    /// @return amount0 Token0 the liquidity corresponds to.
+    /// @return amount1 Token1 the liquidity corresponds to.
+    function liquidityToAmounts(uint256 tokenId, uint128 liquidity)
+        external
+        view
+        returns (uint256 amount0, uint256 amount1)
+    {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+        return UniswapV3VaultMath.positionValue(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity);
+    }
+
+    /// @notice What a pair of token amounts can mint, in a position's range.
+    /// @dev    The inverse of liquidityToAmounts, and rounds down for the same reason. Only the
+    ///         binding side counts: outside the range one token funds nothing, and inside it the
+    ///         smaller of the two caps the result.
+    /// @param tokenId The position NFT whose range should be used.
+    /// @param amount0 Token0 available.
+    /// @param amount1 Token1 available.
+    /// @return The liquidity those amounts could mint.
+    function amountsToLiquidity(uint256 tokenId, uint256 amount0, uint256 amount1) external view returns (uint128) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+        return UniswapV3VaultMath.mintableLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0, amount1);
     }
 
     /// @notice What a redemption of the given shares would pay out.
@@ -1093,6 +1121,20 @@ contract UniswapV3PositionVault is
     /// @param liquidity Liquidity just minted, which becomes the opening supply.
     function _bootstrapShares(uint128 liquidity) internal {
         if (totalSupply() == 0 && liquidity != 0) _mint(msg.sender, liquidity);
+    }
+
+    /// @notice The sqrt ratios bounding a human price range, snapped to the pool's tick spacing.
+    /// @param priceLower Lower bound, as a 1e18-scaled human price.
+    /// @param priceUpper Upper bound, as a 1e18-scaled human price.
+    /// @return sqrtRatioAX96 The snapped lower sqrt ratio.
+    /// @return sqrtRatioBX96 The snapped upper sqrt ratio.
+    function _rangeSqrtRatios(uint256 priceLower, uint256 priceUpper)
+        internal
+        view
+        returns (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96)
+    {
+        (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
+        return UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
     }
 
     /// @notice The pool's current sqrt price.

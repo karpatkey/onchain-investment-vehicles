@@ -261,6 +261,84 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         assertApproxEqRel(used1 * 1e18 / used0, expected1 * 1e18 / amount0, 1e15, "ratio matches the preview");
     }
 
+    function test_liquidityToAmounts_valuesThePositionsOwnLiquidity() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        (,, uint128 liquidity,,) = vault.activePosition();
+
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
+
+        // The position straddles the price, so it is worth some of both tokens, and the whole of
+        // its liquidity has to account for what the vault reports as its holdings.
+        assertGt(amount0, 0, "worth some token0");
+        assertGt(amount1, 0, "worth some token1");
+
+        (uint256 total0, uint256 total1) = vault.totalAssets();
+        assertApproxEqRel(amount0, total0, 1e16, "matches the reported holdings");
+        assertApproxEqRel(amount1, total1, 1e16, "matches the reported holdings");
+    }
+
+    function test_liquidityToAmounts_scalesWithTheLiquidity() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        (,, uint128 liquidity,,) = vault.activePosition();
+
+        (uint256 whole0, uint256 whole1) = vault.liquidityToAmounts(tokenId, liquidity);
+        (uint256 half0, uint256 half1) = vault.liquidityToAmounts(tokenId, liquidity / 2);
+
+        assertApproxEqRel(half0 * 2, whole0, 1e12, "half the liquidity is half the token0");
+        assertApproxEqRel(half1 * 2, whole1, 1e12, "half the liquidity is half the token1");
+    }
+
+    function test_amountsToLiquidity_invertsLiquidityToAmounts() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        (,, uint128 liquidity,,) = vault.activePosition();
+
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
+        uint128 recovered = vault.amountsToLiquidity(tokenId, amount0, amount1);
+
+        // Both directions round down, so the round trip can lose the last unit but must never
+        // invent liquidity that the amounts cannot actually fund.
+        assertLe(recovered, liquidity, "never rounds up");
+        assertApproxEqRel(recovered, liquidity, 1e12, "round trips");
+    }
+
+    function test_amountsToLiquidity_isBoundByTheScarcerSide() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        (,, uint128 liquidity,,) = vault.activePosition();
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
+
+        // Doubling one side alone cannot meaningfully mint more, because the position needs both.
+        // It is not exactly equal: the two sides were derived by rounding down, so they bind at
+        // fractionally different amounts and doubling one hands the constraint to the other.
+        assertApproxEqRel(
+            vault.amountsToLiquidity(tokenId, amount0 * 2, amount1),
+            vault.amountsToLiquidity(tokenId, amount0, amount1),
+            1e12,
+            "the scarcer side binds"
+        );
+
+        // Halving it does reduce what can be minted.
+        assertLt(
+            vault.amountsToLiquidity(tokenId, amount0 / 2, amount1),
+            vault.amountsToLiquidity(tokenId, amount0, amount1),
+            "less of the binding side mints less"
+        );
+    }
+
+    function test_amountsToLiquidity_agreesWithWhatADepositActuallyMints() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        uint128 before = _positionLiquidity();
+
+        uint256 amount0 = 5_000e6;
+        uint256 amount1 = vault.previewCounterAmount(tokenId, amount0, true);
+        uint128 quoted = vault.amountsToLiquidity(tokenId, amount0, amount1);
+
+        vm.prank(alice);
+        vault.deposit(amount0, amount1, 0, 0, block.timestamp);
+
+        // The quote is what the position gains, which is the whole point of the conversion.
+        assertApproxEqRel(_positionLiquidity() - before, quoted, 1e14, "the quote matches the mint");
+    }
+
     //
     // Deposits and redemptions
     //

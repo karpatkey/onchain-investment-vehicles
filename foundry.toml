@@ -38,9 +38,13 @@ no_match_test = "upgrade"
 # This setting also interacts with via-IR's stack allocation: raising it has produced stack-too-deep
 # in the rebalance path before, which was fixed by splitting that path into smaller frames rather
 # than by tuning the number.
-additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 120 }]
+#
+# Edit the two numbers below by hand. A global search and replace on `optimizer_runs` will also
+# rewrite the repository-wide value above, which changes every contract's bytecode and moves the
+# pinned CREATE2 addresses; test/FactoryAddressSync.t.sol is what catches that.
+additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 60 }]
 compilation_restrictions = [
-  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 120 },
+  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 60 },
 ]
 
 [fmt]

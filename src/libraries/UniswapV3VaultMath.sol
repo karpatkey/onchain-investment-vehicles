@@ -253,7 +253,7 @@ library UniswapV3VaultMath {
         uint160 sqrtRatioBX96,
         uint256 amount0,
         uint256 amount1
-    ) internal pure returns (uint128) {
+    ) public pure returns (uint128) {
         (uint128 cap0, uint128 cap1) = liquidityCaps(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0, amount1);
         if (sqrtPriceX96 <= sqrtRatioAX96) return cap0;
         if (sqrtPriceX96 >= sqrtRatioBX96) return cap1;
