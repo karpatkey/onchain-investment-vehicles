@@ -37,6 +37,9 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`WatermarkFee.t.sol`** - Tests for the `WatermarkFee` performance-fee module (`WatermarkFeeTest`)
 - **`CcipNetworksSync.t.sol`** - Guards the hardcoded per-chain CCIP constants against `script/ccip-networks.json` (`CcipNetworksSyncTest`)
 - **`EmptyCodehashSync.t.sol`** - Guards the copies of the canonical `Empty` bytecode against drift (`EmptyCodehashSyncTest`)
+- **`UniswapV3PositionVault.Math.t.sol`** - Pure math for the position vault: price conversion, tick snapping, share accounting and swap sizing (`UniswapV3PositionVaultMathTest`). Needs no RPC endpoint, and holds the repository's first fuzz tests
+- **`UniswapV3PositionVault.t.sol`** - Position vault initialization, access control, the investor gate, position operations, deposits and redemptions (`UniswapV3PositionVaultTest`)
+- **`UniswapV3PositionVault.Rebalance.t.sol`** - Position vault rebalancing: swap sizing against a live pool, single-sided ranges, price limits and residue bounds (`UniswapV3PositionVaultRebalanceTest`)
 
 These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones), from `OivTestConstants` (the OIV factory/deployer suites), or directly from Forge's `Test`, and are run by `forge test` independently of `kpkShares.Main.sol`.
 
@@ -44,8 +47,10 @@ These files inherit from `kpkSharesTestBase` (the `kpkShares.*` ones), from `Oiv
 - **`constants.sol`** - Shared test constants
 - **`errors.sol`** - Shared custom error definitions used in tests
 - **`OivTestConstants.sol`** - Shared base (`OivTestConstants`) aliasing the canonical Safe/Zodiac infra addresses for the OIV suites
+- **`UniswapV3PositionVault.TestBase.sol`** - Shared fork fixture (`UniswapV3PositionVaultTestBase`) for the position vault suites. Unlike the factory suites it **pins a mainnet block**, because every assertion depends on a pool's price, tick and observation history
 - **`mocks/tokens.sol`** - `Mock_ERC20` token used across the suite
 - **`mocks/MockCcipRouter.sol`** - Mock CCIP router used by deployer/factory tests
+- **`mocks/UniswapV3SwapHelper.sol`** - Swaps against a pool so the position vault suites can move the price or accrue fees
 
 ## 🚀 How to Use
 

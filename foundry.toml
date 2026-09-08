@@ -22,6 +22,27 @@ via_ir = true
 
 no_match_test = "upgrade"
 
+# UniswapV3PositionVault does not fit under EIP-170 at the repo-wide optimizer_runs of 2000, which
+# tunes for runtime gas at the cost of code size. Only this one file is compiled with a size-favouring
+# setting; every other contract keeps the default, so no existing CREATE2 address moves (guarded by
+# test/FactoryAddressSync.t.sol). Its own math already lives in a linked library.
+additional_compiler_profiles = [{ name = "vault-size", optimizer_runs = 200 }]
+compilation_restrictions = [
+  { paths = "src/UniswapV3PositionVault.sol", optimizer_runs = 200 },
+]
+
+[fmt]
+# The Uniswap v3 libraries under src/libraries/uniswap are vendored verbatim from the upstream
+# `0.8` branches (each file records its repo + commit). Keeping them out of `forge fmt` means they
+# stay byte-identical to upstream apart from the provenance header, so a reviewer can diff them
+# against the pinned commit. Formatting settings are forge-only and never reach solc, so this
+# section cannot move any CREATE2 address.
+ignore = ["src/libraries/uniswap/*.sol"]
+
+[fuzz]
+# First fuzz tests in this repo: the pure-math suite for UniswapV3PositionVault.
+runs = 256
+
 [profile.coverage]
 # Exclude script folder from coverage reports (regex pattern)
 no_match_coverage = "^script/"

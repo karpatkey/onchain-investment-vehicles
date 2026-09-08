@@ -1,0 +1,16 @@
+{
+  "usdc-weth-mainnet": {
+    "name": "kpk USDC/WETH Position Vault",
+    "symbol": "kpkUSDCWETH",
+    "admin": "0x0000000000000000000000000000000000000000",
+    "curator": "0x0000000000000000000000000000000000000000",
+    "assetRecoverer": "0x0000000000000000000000000000000000000000",
+    "positionManager": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "fee": 500,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  }
+}
