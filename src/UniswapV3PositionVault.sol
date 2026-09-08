@@ -287,7 +287,7 @@ contract UniswapV3PositionVault is
         (mintedLiquidity, amount0, amount1) = _increaseLiquidity(tokenId, charge0, charge1);
 
         // Price the shares on the liquidity the position actually gained, then cap at what the
-        // caller's maxima paid for, so the idle share charged below can never exceed what was taken.
+        // named amount paid for, so the idle share charged below cannot exceed what was taken.
         shares = UniswapV3VaultMath.sharesForLiquidity(supply, mintedLiquidity, liquidity);
         if (shares > targetShares) shares = targetShares;
         if (shares == 0) revert ZeroShares();
@@ -826,9 +826,11 @@ contract UniswapV3PositionVault is
     }
 
     /// @notice Replaces the vault's position with one in a new range.
-    /// @dev    The single implementation behind both rebalance entry points. The only difference
-    ///         between them is whether the balances are traded into the new range's ratio first, so
-    ///         everything else, the fee collection, the unwind, the guard and the mint, is shared.
+    /// @dev    The single implementation behind both rebalance entry points. They differ in whether
+    ///         the balances are traded into the new range's ratio first, and in where the guard's
+    ///         window and tolerance come from: the non-trading entry point passes the vault's
+    ///         configuration, the trading one passes the stricter of that and the curator's. The fee
+    ///         collection, the unwind, the guard itself and the mint are shared.
     /// @param priceLower        Lower bound of the new range.
     /// @param priceUpper        Upper bound of the new range.
     /// @param withSwap          Whether to trade the balances into the new range's ratio.

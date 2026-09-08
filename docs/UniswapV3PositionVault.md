@@ -192,7 +192,7 @@ position is opened or closed, so integrators must read it rather than cache it. 
 returns the range and liquidity. `previewCounterAmount(tokenId, amount, isAmount0)` answers "if I
 supply this much of one token, how much of the other does the position need?" for any position id,
 and `previewCounterAmountForRange` does the same for a range that does not exist yet.
-`previewDeposit` and `previewRedeem` price a deposit or redemption.
+`previewRedeem` prices a redemption.
 
 Two functions convert between liquidity and token amounts against a position's range at the pool's
 current price. `liquidityToAmounts(tokenId, liquidity)` says what a liquidity amount is worth, and
