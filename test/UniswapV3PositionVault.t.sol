@@ -114,9 +114,9 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.unwindPosition();
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.collectFees();
+        vault.collectFees(block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.addLiquidity();
+        vault.addLiquidity(block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.removeLiquidity(1);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
@@ -533,6 +533,56 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         assertGt(amount0 + amount1, 0, "redemption still pays out");
     }
 
+    function test_redeem_cannotBeLockedOutByOrdinaryVolatility() public {
+        // The configuration the deploy template ships with.
+        vm.prank(admin);
+        vault.setTwapConfig(600, 200);
+
+        _openPosition(100_000e6);
+        vm.prank(alice);
+        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+
+        // A three percent move is a routine day, and it is when holders most want out.
+        _movePriceBps(300);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
+        vault.redeem(shares, 200, block.timestamp);
+
+        // What a redemption pays is a share of the liquidity and of the idle balances, and neither
+        // depends on price, so waiving the bound costs the redeemer nothing but an unchosen split.
+        vm.prank(alice);
+        (uint256 amount0, uint256 amount1) = vault.redeem(shares, 10_000, block.timestamp);
+        assertGt(amount0 + amount1, 0, "a waived bound always lets the holder out");
+    }
+
+    function test_redeem_isNotGuardedWhenThereIsNoPosition() public {
+        _openPosition(100_000e6);
+        vm.prank(alice);
+        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+
+        vm.prank(curator);
+        vault.unwindPosition();
+
+        // With no position a redemption is two pro-rata transfers, so no price can affect it.
+        _movePriceBps(4000);
+
+        vm.prank(alice);
+        (uint256 amount0, uint256 amount1) = vault.redeem(shares, 1, block.timestamp);
+        assertGt(amount0 + amount1, 0, "idle-only redemption is never price-gated");
+    }
+
+    function test_redeem_stillValidatesTheBound() public {
+        _openPosition(100_000e6);
+
+        vm.startPrank(alice);
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        vault.redeem(1, 0, block.timestamp);
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        vault.redeem(1, 10_001, block.timestamp);
+        vm.stopPrank();
+    }
+
     //
     // Fees and compounding
     //
@@ -567,7 +617,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint128 before = _positionLiquidity();
 
         vm.prank(curator);
-        uint128 added = vault.collectFees();
+        uint128 added = vault.collectFees(block.timestamp);
 
         assertGt(added, 0, "fees were reinvested");
         assertEq(_positionLiquidity(), before + added, "position grew by the reinvested amount");
@@ -576,7 +626,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     function test_collectFees_revertsWithoutAPosition() public {
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
-        vault.collectFees();
+        vault.collectFees(block.timestamp);
     }
 
     //
@@ -635,7 +685,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _seedVault(10_000e6, 5e18);
 
         vm.prank(curator);
-        uint128 added = vault.addLiquidity();
+        uint128 added = vault.addLiquidity(block.timestamp);
 
         assertGt(added, 0, "liquidity added");
         assertEq(_positionLiquidity(), before + added, "position grew");
@@ -646,7 +696,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.NothingToAdd.selector);
-        vault.addLiquidity();
+        vault.addLiquidity(block.timestamp);
     }
 
     //
@@ -667,7 +717,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         // Ordinary curator work is blocked too, not just the path that swaps.
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.collectFees();
+        vault.collectFees(block.timestamp);
     }
 
     function test_setTwapConfig_validatesAndEmits() public {

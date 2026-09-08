@@ -309,9 +309,16 @@ contract UniswapV3PositionVault is
     ///         redemption can never sweep fees that belong to the remaining holders.
     /// @param shares          Shares to burn.
     /// @param maxSlippageBps  How far the pool's price may sit from its recent average, in basis
-    ///                        points. The split between the two tokens depends on that price, so
-    ///                        bounding it is what protects the redeemer. Must be between 1 and
-    ///                        10000, and it is capped by the vault's own tolerance.
+    ///                        points, bounding the split between the two tokens. Must be between 1
+    ///                        and 10000, and it is capped by the vault's own tolerance.
+    ///
+    ///                        Pass 10000 to waive it. What a redemption pays is the caller's share
+    ///                        of the position's liquidity and of the idle balances, and neither
+    ///                        depends on the price; only the split between the two tokens does. So
+    ///                        a redeemer always has a way out, and the guard cannot become a lock
+    ///                        during exactly the volatility that makes people want to leave. It is
+    ///                        skipped outright when the vault holds no position, where a redemption
+    ///                        is two pro-rata transfers and there is nothing a price could affect.
     /// @param deadline        Latest timestamp at which the redemption may execute.
     /// @return amount0 Token0 paid to the caller.
     /// @return amount1 Token1 paid to the caller.
@@ -323,7 +330,8 @@ contract UniswapV3PositionVault is
     {
         if (shares == 0) revert ZeroShares();
         if (!isInvestor(msg.sender)) revert NotInvestor(msg.sender);
-        _checkSlippage(maxSlippageBps);
+        if (maxSlippageBps < _MAX_BPS && activeTokenId != 0) _checkSlippage(maxSlippageBps);
+        else if (maxSlippageBps == 0 || maxSlippageBps > _MAX_BPS) revert InvalidArguments();
 
         _compound();
 
@@ -411,8 +419,17 @@ contract UniswapV3PositionVault is
     /// @dev    With fees compounded rather than distributed, collecting and reinvesting are the
     ///         same action, so this is the curator's on-demand version of what deposits and
     ///         redemptions already do.
+    /// @param deadline Latest timestamp at which the call may execute. It folds the idle balance
+    ///                 into the position at the pool's current price, so a stale one compounds at a
+    ///                 ratio the curator never chose.
     /// @return liquidity Liquidity added back into the position.
-    function collectFees() external nonReentrant isCurator returns (uint128 liquidity) {
+    function collectFees(uint256 deadline)
+        external
+        nonReentrant
+        isCurator
+        checkDeadline(deadline)
+        returns (uint128 liquidity)
+    {
         if (activeTokenId == 0) revert NoActivePosition();
         _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
         liquidity = _compound();
@@ -421,8 +438,16 @@ contract UniswapV3PositionVault is
     /// @notice Adds the vault's idle balances to the active position.
     /// @dev    Only the part of the idle balances that matches the position's ratio can be added;
     ///         a one-sided remainder stays idle until a rebalance swaps it.
+    /// @param deadline Latest timestamp at which the call may execute, for the same reason as
+    ///                 collectFees: it adds at the pool's current price.
     /// @return liquidity Liquidity added.
-    function addLiquidity() external nonReentrant isCurator returns (uint128 liquidity) {
+    function addLiquidity(uint256 deadline)
+        external
+        nonReentrant
+        isCurator
+        checkDeadline(deadline)
+        returns (uint128 liquidity)
+    {
         if (activeTokenId == 0) revert NoActivePosition();
         _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
         liquidity = _compound();

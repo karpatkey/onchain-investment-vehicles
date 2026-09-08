@@ -134,7 +134,7 @@ contract VaultHandler is Test {
     /// @notice Folds fees and idle balances back into the position.
     function collectFees() external {
         vm.prank(curator);
-        try vault.collectFees() {} catch {}
+        try vault.collectFees(block.timestamp) {} catch {}
     }
 
     /// @notice Trims part of the position into idle balances.

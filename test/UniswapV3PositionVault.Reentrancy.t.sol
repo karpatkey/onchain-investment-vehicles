@@ -132,7 +132,7 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
         vm.prank(curator);
         vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
-        vault.collectFees();
+        vault.collectFees(block.timestamp);
     }
 
     function test_reentrancy_rebalanceCannotReenterFromTheSwap() public {

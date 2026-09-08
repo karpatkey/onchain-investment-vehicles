@@ -301,13 +301,13 @@ time-weighted average over an admin-configured window and refuses to proceed bey
 admin-configured tolerance. That is `createPosition`, both rebalances, `collectFees`, `addLiquidity`,
 `deposit` and `redeem`.
 
-**`unwindPosition` and `removeLiquidity` are deliberately outside it**, and the trade-off is worth
-stating rather than leaving implicit. Neither trades: the vault receives exactly its share of the
-pool's reserves at no spread. What the spot price does set is the token *split* it receives, so
-exiting while the price is dislocated crystallises the position's side of any arbitrage instead of
-letting a round trip net out. Guarding them would bound that, at the cost of blocking the curator
-from exiting during exactly the volatility that most warrants exiting. The exit path is deliberately
-always open. See the Outstanding section of the pull request for the open question. A
+**`unwindPosition` and `removeLiquidity` are deliberately outside it, and need no deadline either.**
+Neither trades: the vault receives exactly its share of the pool's reserves at no spread, so there is
+no counterparty to extract anything. The spot price sets only the token *split* released, and because
+the position's payoff is concave in price, a composition released at a moved price is worth at least
+as much at the true price as the position itself would have been. There is no sandwich to run against
+them. Guarding them would buy nothing and would block the curator from exiting during exactly the
+volatility that most warrants exiting, so the exit path is always open. A
 rebalance checks before **and** after its swap. A pool whose observation history is too short to
 answer the window reverts rather than proceeding unguarded.
 

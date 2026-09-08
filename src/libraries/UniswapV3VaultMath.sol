@@ -529,18 +529,34 @@ library UniswapV3VaultMath {
 
         // Bracket the crossing. `lo` and `hi` are named for the predicate, not for price order:
         // `lo` always holds the endpoint where the sold token is still in surplus.
+        // Every price the search evaluates is held clear of the range's own edges. The liquidity a
+        // balance can fund grows without bound as the price approaches the edge that balance
+        // funds — the interval in the denominator goes to zero — so a probe placed a single wei
+        // inside an edge asks for a liquidity that does not fit in the uint128 Uniswap casts to,
+        // and the cast reverts with no data. That is reachable whenever the balance being sold
+        // could push the price past the far edge, which is the ordinary case for a narrow range and
+        // exactly what this function exists to handle. Backing off by a sixty-fourth of the range
+        // costs nothing: the crossing the search is looking for is where the two sides fund equal
+        // liquidity, which is never in that sliver.
+        uint160 margin = uint160((uint256(sqrtB) - uint256(sqrtA)) >> 6);
+        if (margin == 0) margin = 1;
+        uint160 innerLow = sqrtA + margin;
+        uint160 innerHigh = sqrtB - margin;
+
         uint160 lo;
         uint160 hi;
         bool degenerate;
         if (zeroForOne) {
             // Selling token0 pushes the price down. Surplus of token0 shrinks as the price falls.
-            lo = sqrtP < sqrtB ? sqrtP : sqrtB - 1;
-            hi = sqrtLimit > sqrtA ? sqrtLimit : sqrtA + 1;
+            lo = sqrtP < innerHigh ? sqrtP : innerHigh;
+            hi = sqrtLimit > innerLow ? sqrtLimit : innerLow;
+            if (hi > innerHigh) hi = innerHigh;
             degenerate = hi >= lo;
         } else {
             // Selling token1 pushes the price up. Surplus of token1 shrinks as the price rises.
-            lo = sqrtP > sqrtA ? sqrtP : sqrtA + 1;
-            hi = sqrtLimit < sqrtB ? sqrtLimit : sqrtB - 1;
+            lo = sqrtP > innerLow ? sqrtP : innerLow;
+            hi = sqrtLimit < innerHigh ? sqrtLimit : innerHigh;
+            if (hi < innerLow) hi = innerLow;
             degenerate = hi <= lo;
         }
 
@@ -553,8 +569,15 @@ library UniswapV3VaultMath {
         // from the balances it actually holds afterwards, so the shortfall stays idle rather than
         // being lost.
         if (degenerate) {
+            // Same hazard: sqrtLimit is only safe to evaluate at when it is outside the range, where
+            // one side funds nothing, or held clear of the edges.
+            uint160 probe = sqrtLimit;
+            if (probe > sqrtA && probe < sqrtB) {
+                if (probe < innerLow) probe = innerLow;
+                if (probe > innerHigh) probe = innerHigh;
+            }
             uint128 mintNone = mintableLiquidity(sqrtP, sqrtA, sqrtB, params.amount0, params.amount1);
-            uint128 mintAll = _mintableAfterSwap(params, sqrtLimit, zeroForOne, budget);
+            uint128 mintAll = _mintableAfterSwap(params, probe, zeroForOne, budget);
             return (zeroForOne, mintAll > mintNone ? budget : 0);
         }
 

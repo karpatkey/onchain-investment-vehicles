@@ -488,6 +488,57 @@ contract UniswapV3PositionVaultMathTest is Test {
         assertEq(amountIn, 0, "nothing to sell");
     }
 
+    function test_solveSwap_handlesABudgetThatOvershootsTheRangeEdge() public pure {
+        // The liquidity a balance can fund grows without bound as the price nears the edge that
+        // balance funds, so a probe placed a hair inside an edge used to ask for more than a uint128
+        // holds and revert with no data. It is reachable whenever the balance being sold could push
+        // the price past the far edge, which is the ordinary case for a narrow range and exactly
+        // what the swapping rebalance exists for.
+        (, uint256 sellingToken1) = UniswapV3VaultMath.solveSwap(
+            UniswapV3VaultMath.SwapParams({
+                sqrtPriceX96: TickMath.getSqrtRatioAtTick(-60),
+                sqrtRatioAX96: TickMath.getSqrtRatioAtTick(0),
+                sqrtRatioBX96: TickMath.getSqrtRatioAtTick(60),
+                poolLiquidity: 1e21,
+                feePips: 3000,
+                amount0: 0,
+                amount1: 10e18
+            })
+        );
+        assertGt(sellingToken1, 0, "a swap should still be sized");
+
+        (, uint256 sellingToken0) = UniswapV3VaultMath.solveSwap(
+            UniswapV3VaultMath.SwapParams({
+                sqrtPriceX96: TickMath.getSqrtRatioAtTick(60),
+                sqrtRatioAX96: TickMath.getSqrtRatioAtTick(-60),
+                sqrtRatioBX96: TickMath.getSqrtRatioAtTick(0),
+                poolLiquidity: 1e21,
+                feePips: 3000,
+                amount0: 1e19,
+                amount1: 0
+            })
+        );
+        assertGt(sellingToken0, 0, "and in the other direction too");
+    }
+
+    function testFuzz_solveSwap_neverRevertsOnAnOversizedBudget(uint256 budgetSeed, bool zeroForOne) public pure {
+        uint256 budget = bound(budgetSeed, 1e15, 1e24);
+
+        // Whatever the balance, sizing a swap into a one-tick-wide range must produce an answer
+        // rather than an undecodable revert.
+        UniswapV3VaultMath.solveSwap(
+            UniswapV3VaultMath.SwapParams({
+                sqrtPriceX96: TickMath.getSqrtRatioAtTick(zeroForOne ? int24(60) : int24(-60)),
+                sqrtRatioAX96: TickMath.getSqrtRatioAtTick(zeroForOne ? int24(-60) : int24(0)),
+                sqrtRatioBX96: TickMath.getSqrtRatioAtTick(zeroForOne ? int24(0) : int24(60)),
+                poolLiquidity: 1e21,
+                feePips: 3000,
+                amount0: zeroForOne ? budget : 0,
+                amount1: zeroForOne ? 0 : budget
+            })
+        );
+    }
+
     //
     // Price band
     //
