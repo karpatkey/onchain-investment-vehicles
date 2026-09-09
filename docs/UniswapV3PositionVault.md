@@ -184,10 +184,15 @@ shares and the two amounts the deposit would take, and pass zero to accept any f
 `previewLiquidity` is *not* a substitute here. Shares are `supply × addedLiquidity /
 positionLiquidity`, and a deposit is also charged a pro-rata share of the idle balances, so the two
 quantities only coincide at the very first position, where the supply is the opening liquidity.
-`previewDeposit` is indicative in two small ways, both toward the caller getting slightly more than
-quoted: it cannot see fees that have accrued but not been collected, and the executed share count is
-recomputed from the liquidity the pool reports actually minting. Leave a little room rather than
-passing the quote back verbatim. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
+`previewDeposit` counts the position's collectable balance alongside the idle one, because a deposit
+collects before it prices. Leaving it out would understate the vault, and a smaller vault divides
+into more shares, so the quote would come out high — the direction that makes `minShares` revert.
+
+It is still a slight over-estimate, for two reasons pulling the same way: the position manager only
+refreshes what it owes when the position is *touched*, so fees earned since the last touch are
+invisible and the real deposit will collect them; and the executed count is recomputed from the
+liquidity the pool reports actually minting. Both mean the caller receives no more than the quote, so
+leave a little room rather than passing it back verbatim. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
 inside the vault's own tolerance, so its guard never fires, and shows both offers holding while the
 fill lands short.
 

@@ -877,6 +877,21 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vault.deposit(25_000e6, UNBOUNDED, 0, block.timestamp);
         _seedVault(5000e6, 2e18);
 
+        // And leave a real collectable balance sitting in the position. Accruing fees alone is not
+        // enough: the position manager only refreshes what it owes when the position is touched, and
+        // a swap does not touch it. A trim does — removeLiquidity collects exactly the principal it
+        // released and deliberately leaves the fees behind — so afterwards the position owes a
+        // balance that a deposit will collect before it prices. A quote that ignored it would price
+        // against a smaller vault and come out high, which is the direction that makes minShares
+        // revert.
+        _accrueFees();
+        (,, uint128 held,,) = vault.activePosition();
+        vm.prank(curator);
+        vault.removeLiquidity(held / 20);
+
+        (,,, uint128 owed0, uint128 owed1) = vault.activePosition();
+        assertTrue(owed0 != 0 || owed1 != 0, "the position really does owe something now");
+
         uint256 offer0 = 10_000e6;
         uint256 offer1 = vault.previewCounterAmount(offer0, true);
 
@@ -885,7 +900,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.prank(alice);
         (uint256 shares, uint256 taken0, uint256 taken1) = vault.deposit(offer0, offer1, 0, block.timestamp);
 
-        assertApproxEqRel(shares, quoted, 1e12, "the quote matches what was minted");
+        assertApproxEqRel(shares, quoted, 1e14, "the quote matches what was minted");
         assertLe(shares, quoted, "and never exceeds it, so it is safe to size minShares against");
         assertApproxEqRel(taken0, quoted0, 1e12, "token0 taken matches the quote");
         assertApproxEqRel(taken1, quoted1, 1e12, "token1 taken matches the quote");

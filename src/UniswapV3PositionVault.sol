@@ -795,14 +795,15 @@ contract UniswapV3PositionVault is
         if (supply < _MIN_SHARES) revert SupplyTooSmall(supply, _MIN_SHARES);
 
         (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity) = _activePositionState();
+        (,,, uint128 owed0, uint128 owed1) = _position(activeTokenId);
 
         (shares,,, amount0, amount1) = UniswapV3VaultMath.depositPlan(
             sqrtPriceX96,
             sqrtRatioAX96,
             sqrtRatioBX96,
             liquidity,
-            token0.balanceOf(address(this)),
-            token1.balanceOf(address(this)),
+            token0.balanceOf(address(this)) + owed0,
+            token1.balanceOf(address(this)) + owed1,
             supply,
             amount0Desired,
             amount1Desired
