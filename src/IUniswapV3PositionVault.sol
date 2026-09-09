@@ -399,6 +399,17 @@ interface IUniswapV3PositionVault {
     /// @param isAmount0 True when the amount is token0, false when it is token1.
     function previewLiquidity(uint256 amount, bool isAmount0) external view returns (uint128);
 
+    /// @notice What a deposit of the given amounts would mint and cost.
+    /// @dev    The number to put in a deposit's minShares. Shares are not liquidity once the vault
+    ///         has a supply, so previewLiquidity is not a substitute. Indicative: it cannot see
+    ///         uncollected fees, and the executed share count can be a wei or two lower.
+    /// @param amount0Desired The most token0 to spend.
+    /// @param amount1Desired The most token1 to spend.
+    function previewDeposit(uint256 amount0Desired, uint256 amount1Desired)
+        external
+        view
+        returns (uint256 shares, uint256 amount0, uint256 amount1);
+
     /// @notice What a redemption of the given shares would pay out.
     function previewRedeem(uint256 shares) external view returns (uint256 amount0, uint256 amount1);
 

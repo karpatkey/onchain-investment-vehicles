@@ -178,8 +178,16 @@ deposit takes what the ratio needs at the price when the transaction lands, not 
 so a caller who offered generously on both sides has left the size of their purchase entirely to the
 pool — both offers can be respected while the fill comes in well under what was quoted. Nothing else
 constrains that: shares are priced on the liquidity actually added, and the only other check is that
-it is non-zero. Quote it with `previewLiquidity`, which reports the liquidity an amount opens, and
-pass zero to accept any fill. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
+it is non-zero. Quote it with **`previewDeposit(amount0Desired, amount1Desired)`**, which returns the
+shares and the two amounts the deposit would take, and pass zero to accept any fill.
+
+`previewLiquidity` is *not* a substitute here. Shares are `supply × addedLiquidity /
+positionLiquidity`, and a deposit is also charged a pro-rata share of the idle balances, so the two
+quantities only coincide at the very first position, where the supply is the opening liquidity.
+`previewDeposit` is indicative in two small ways, both toward the caller getting slightly more than
+quoted: it cannot see fees that have accrued but not been collected, and the executed share count is
+recomputed from the liquidity the pool reports actually minting. Leave a little room rather than
+passing the quote back verbatim. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
 inside the vault's own tolerance, so its guard never fires, and shows both offers holding while the
 fill lands short.
 

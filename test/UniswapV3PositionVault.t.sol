@@ -867,6 +867,50 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vault.deposit(offer0, offer1, quoted, block.timestamp);
     }
 
+    function test_previewDeposit_quotesWhatTheDepositActuallyMints() public {
+        _openPosition(100_000e6);
+
+        // Put the vault somewhere non-trivial first: a second holder, so the supply is no longer
+        // the opening liquidity, and an idle balance, so the pro-rata idle charge is in play. Both
+        // are the cases where shares and liquidity part company.
+        vm.prank(bob);
+        vault.deposit(25_000e6, UNBOUNDED, 0, block.timestamp);
+        _seedVault(5000e6, 2e18);
+
+        uint256 offer0 = 10_000e6;
+        uint256 offer1 = vault.previewCounterAmount(offer0, true);
+
+        (uint256 quoted, uint256 quoted0, uint256 quoted1) = vault.previewDeposit(offer0, offer1);
+
+        vm.prank(alice);
+        (uint256 shares, uint256 taken0, uint256 taken1) = vault.deposit(offer0, offer1, 0, block.timestamp);
+
+        assertApproxEqRel(shares, quoted, 1e12, "the quote matches what was minted");
+        assertLe(shares, quoted, "and never exceeds it, so it is safe to size minShares against");
+        assertApproxEqRel(taken0, quoted0, 1e12, "token0 taken matches the quote");
+        assertApproxEqRel(taken1, quoted1, 1e12, "token1 taken matches the quote");
+    }
+
+    function test_previewDeposit_isNotTheSameAsPreviewLiquidity() public {
+        // Shares are supply x addedLiquidity / positionLiquidity, so the two only coincide while the
+        // supply is still the opening liquidity. Once anyone has deposited they diverge, which is
+        // why previewLiquidity cannot be used to size minShares.
+        _openPosition(100_000e6);
+
+        vm.prank(bob);
+        vault.deposit(50_000e6, UNBOUNDED, 0, block.timestamp);
+
+        uint256 offer0 = 10_000e6;
+        uint256 offer1 = vault.previewCounterAmount(offer0, true);
+
+        (uint256 shares,,) = vault.previewDeposit(offer0, offer1);
+        uint256 liquidity = vault.previewLiquidity(offer0, true);
+
+        assertGt(shares, 0, "the deposit buys shares");
+        assertGt(liquidity, 0, "and opens liquidity");
+        assertTrue(shares != liquidity, "but they are different quantities");
+    }
+
     //
     // Fees and compounding
     //

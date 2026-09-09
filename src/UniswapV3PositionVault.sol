@@ -768,6 +768,47 @@ contract UniswapV3PositionVault is
             UniswapV3VaultMath.liquidityFromSingleAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
     }
 
+    /// @notice What a deposit of the given amounts would mint and cost.
+    /// @dev    The number to put in a deposit's minShares. Shares are not liquidity: a deposit mints
+    ///         `supply × addedLiquidity / positionLiquidity`, capped at what the amounts paid for,
+    ///         and it also charges a pro-rata share of the idle balances. Only at the very first
+    ///         position, where the supply is the opening liquidity, do the two coincide — so
+    ///         previewLiquidity is not a substitute for this on a vault that has been running.
+    ///
+    ///         Indicative in two directions, both small, both toward the caller getting slightly
+    ///         more than quoted. It cannot see fees that have accrued but not yet been collected,
+    ///         and a deposit collects before it prices, so the real deposit is priced against a
+    ///         slightly larger vault. And the share count here is what the plan buys; the executed
+    ///         count is recomputed from the liquidity the pool reports actually minting, which can
+    ///         be a wei or two lower. Leave a little room rather than passing this back verbatim.
+    /// @param amount0Desired The most token0 to spend.
+    /// @param amount1Desired The most token1 to spend.
+    /// @return shares  Shares the deposit would mint.
+    /// @return amount0 Token0 it would take.
+    /// @return amount1 Token1 it would take.
+    function previewDeposit(uint256 amount0Desired, uint256 amount1Desired)
+        external
+        view
+        returns (uint256 shares, uint256 amount0, uint256 amount1)
+    {
+        uint256 supply = totalSupply();
+        if (supply < _MIN_SHARES) revert SupplyTooSmall(supply, _MIN_SHARES);
+
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity) = _activePositionState();
+
+        (shares,,, amount0, amount1) = UniswapV3VaultMath.depositPlan(
+            sqrtPriceX96,
+            sqrtRatioAX96,
+            sqrtRatioBX96,
+            liquidity,
+            token0.balanceOf(address(this)),
+            token1.balanceOf(address(this)),
+            supply,
+            amount0Desired,
+            amount1Desired
+        );
+    }
+
     /// @notice What a redemption of the given shares would pay out.
     /// @dev    Indicative. Prices the caller's pro-rata slice of everything the vault owns, which
     ///         is what a redemption pays once fees have been collected. The executed amounts can
