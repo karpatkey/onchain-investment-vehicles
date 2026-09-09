@@ -64,7 +64,6 @@ because the pool init-code hash is not identical on every chain hosting a v3 dep
 ```
 DEFAULT_ADMIN_ROLE
 ├── grants and revokes every role, including its own
-├── sets the manipulation-guard configuration
 ├── sets the recipient of recovered tokens
 └── authorises upgrades
 
@@ -152,7 +151,7 @@ large enough for the pro-rata arithmetic to be fine-grained.
 
 ### 2. Depositing
 
-`deposit(amount0Desired, amount1Desired, deadline)` takes the shape of Uniswap's own
+`deposit(amount0Desired, amount1Desired, minShares, deadline)` takes the shape of Uniswap's own
 `increaseLiquidity`: the investor offers as much of each token as they are willing to spend, and the
 vault takes what the position's current ratio needs, bounded by whichever offer is the tighter of the
 two. Neither is ever exceeded — the remainder is simply not taken — and the wei-level remainder left
@@ -261,7 +260,7 @@ leaving everything idle and `activeTokenId()` at zero.
 `activeTokenId()` returns the current NFT id, or zero when there is none; it changes every time a
 position is opened or closed, so integrators must read it rather than cache it. `activePosition()`
 returns the range and liquidity. `previewCounterAmount(amount, isAmount0)` answers "if I
-supply this much of one token, how much of the other does the position need?" for any position id,
+supply this much of one token, how much of the other does the position need?" for the open position,
 and `previewCounterAmountForRange` does the same for a range that does not exist yet.
 `previewRedeem` prices a redemption.
 
@@ -502,11 +501,16 @@ position manager call revert rather than silently mis-accounting.
 | Parameter | Set at | Notes |
 |---|---|---|
 | `token0`, `token1`, `fee` | initialization | Immutable in practice; the pool is resolved from them. |
-| `twapPeriod` | initialization, admin | Manipulation-guard window in seconds. Must be non-zero. A floor: a caller may ask for a longer one. |
-| `maxTwapDeviationBps` | initialization, admin | Tolerance in basis points. Must be in (0, 10000]. A ceiling: a caller may ask for a tighter one. |
+| `twapPeriod` | initialization | Manipulation-guard window in seconds. A floor: a caller may ask for a longer one. No setter — see the note below. |
+| `maxTwapDeviationBps` | initialization | Tolerance in basis points. A ceiling: a caller may ask for a tighter one. No setter — see the note below. |
 | `assetRecoverer` | initialization, admin | Recipient of swept tokens. |
 
 Both pool tokens must report 18 decimals or fewer, which the price scaling relies on.
+
+The two guard parameters are fixed for the life of the vault: there is no setter, deliberately, so
+that no role can widen the manipulation guard on a vault investors have already funded. Choosing
+them is therefore a deployment decision that cannot be walked back, and the deploy script
+range-checks the configured values before it will build a vault from them.
 
 ## Events
 
@@ -519,7 +523,7 @@ Both pool tokens must report 18 decimals or fewer, which the price scaling relie
 | `Compounded` | Fees are collected and idle balances folded back in. Curator paths only; the investor paths collect without folding. |
 | `LiquidityRemoved` | The curator trims the position. |
 | `Rebalanced` | A rebalance completes, reporting the swap, if any, and the residue. The no-swap variant reports zero amounts. |
-| `TwapConfigUpdate`, `AssetRecovererUpdate` | The admin changes configuration. |
+| `AssetRecovererUpdate` | The admin changes the recipient of recovered tokens. |
 
 ## Deployment
 

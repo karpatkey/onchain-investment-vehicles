@@ -90,9 +90,12 @@ interface IUniswapV3PositionVault {
     /// @param minimum The smallest supply either may be.
     error SupplyTooSmall(uint256 supply, uint256 minimum);
 
-    /// @notice The amounts moved fell short of the caller's minimums.
-    /// @param amount0 Token0 the operation actually moved.
-    /// @param amount1 Token1 the operation actually moved.
+    /// @notice A deposit would have taken more of a token than the caller offered.
+    /// @dev    The offered amounts are maxima, not targets, so this fires when the plan's charge
+    ///         exceeds one of them — not when it falls short. A deposit that is merely smaller than
+    ///         the caller hoped for is a successful deposit; minShares is what bounds that.
+    /// @param amount0 Token0 the deposit would have taken.
+    /// @param amount1 Token1 the deposit would have taken.
     error SlippageExceeded(uint256 amount0, uint256 amount1);
 
     /// @notice The transaction was mined after the caller's deadline.

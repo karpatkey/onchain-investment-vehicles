@@ -121,8 +121,11 @@ contract UniswapV3PositionVault is
     ///      reject calls that did not originate from a rebalance.
     bool private _swapping;
 
-    /// @dev True only while this contract is inside its own position mint, so an incoming NFT can
-    ///      be distinguished from an unsolicited transfer.
+    /// @dev True only while this contract is inside its own position mint. Today's position manager
+    ///      mints with _mint rather than _safeMint, so the receive hook is never actually reached
+    ///      during a mint of ours and this flag is never observed true; it is here so that a manager
+    ///      which did use _safeMint would still be able to deliver, rather than have the vault
+    ///      refuse the position it just paid for.
     bool private _minting;
 
     /// @notice Id of the position NFT the vault currently holds, or 0 when it holds none.
@@ -521,6 +524,12 @@ contract UniswapV3PositionVault is
         (,,, uint128 current) = _positionState(tokenId);
         if (liquidity == 0 || liquidity > current) revert InvalidArguments();
 
+        // Trimming everything is allowed and leaves the NFT open at zero liquidity, which is not
+        // the same state as having no position: the range survives, so compound can refill it. What
+        // cannot happen in that state is a deposit — shares are priced as a fraction of the
+        // position's liquidity and there is none to take a fraction of — so deposit reverts
+        // NoActivePosition until the curator refills or replaces the range.
+
         (amount0, amount1) = _withdrawLiquidity(tokenId, liquidity);
 
         emit LiquidityRemoved(tokenId, liquidity, amount0, amount1);
@@ -876,10 +885,15 @@ contract UniswapV3PositionVault is
 
     /// @inheritdoc IERC721Receiver
     /// @dev The vault only ever holds a position it minted itself, so a token offered through
-    ///      safeTransferFrom outside a mint is refused. This is not a guarantee that nothing else
-    ///      can arrive: a plain transferFrom invokes no hook, so any ERC-721 can still be parked on
-    ///      the vault, and RecoverFunds sweeps ERC-20s only, which leaves such a token stranded. It
-    ///      is inert rather than dangerous, since only activeTokenId is ever acted on.
+    ///      safeTransferFrom outside a mint is refused. In practice that is every token offered
+    ///      this way: the position manager mints with _mint, which invokes no hook, so this
+    ///      function is unreachable during the vault's own mint and _minting is never seen true
+    ///      here. The flag is kept for a manager that minted with _safeMint; see its declaration.
+    ///
+    ///      Refusing here is not a guarantee that nothing else can arrive: a plain transferFrom
+    ///      invokes no hook either, so any ERC-721 can still be parked on the vault, and
+    ///      RecoverFunds sweeps ERC-20s only, which leaves such a token stranded. It is inert
+    ///      rather than dangerous, since only activeTokenId is ever acted on.
     function onERC721Received(address, address, uint256, bytes calldata) external view override returns (bytes4) {
         if (!_minting || msg.sender != address(positionManager)) revert UnexpectedNft();
         return IERC721Receiver.onERC721Received.selector;
@@ -935,12 +949,14 @@ contract UniswapV3PositionVault is
     //
 
     /// @notice Collects the position's fees and folds every idle balance back into it.
-    /// @dev    The step that makes fees accrue to holders already in the vault. Runs before any
-    ///         deposit or redemption is priced, so the share price already reflects the fees at the
-    ///         moment an investor transacts. A one-sided remainder cannot be added at the pool's
-    ///         ratio and stays idle, still owned pro-rata, until a rebalance swaps it.
-    /// @return added Liquidity added back into the position.
-    /// @dev Only the curator's own entry points reach this, and only behind the price guard.
+    /// @dev    Two steps, and only the first one is shared with the investor paths: deposit and
+    ///         redeem call _collect directly, so fees are already in the vault when a share price is
+    ///         computed, but nothing is folded back on their behalf. Folding is this function's
+    ///         second step and belongs to the curator alone, for the reason below. A one-sided
+    ///         remainder cannot be added at the pool's ratio and stays idle, still owned pro-rata,
+    ///         until a rebalance swaps it.
+    ///
+    ///         Only the curator's own entry points reach this, and only behind the price guard.
     ///
     ///      Folding buys liquidity at whatever price the pool is at, and buying is the direction
     ///      that punishes a wrong price: liquidity acquired at P' and valued at the true price P
