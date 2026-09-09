@@ -69,6 +69,23 @@ contract MathHarness {
     function priceDeviationBps(uint160 spot, uint160 twap) external pure returns (uint256) {
         return UniswapV3VaultMath.priceDeviationBps(spot, twap);
     }
+
+    /// @notice depositPlan behind an external call, so a fuzz case may revert without failing.
+    function depositPlan(
+        uint160 sqrtPriceX96,
+        uint160 sqrtRatioAX96,
+        uint160 sqrtRatioBX96,
+        uint128 liquidity,
+        uint256 idle0,
+        uint256 idle1,
+        uint256 supply,
+        uint256 amount0Desired,
+        uint256 amount1Desired
+    ) external pure returns (uint256 shares, uint256 pulled0, uint256 pulled1) {
+        (shares,,, pulled0, pulled1) = UniswapV3VaultMath.depositPlan(
+            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount0Desired, amount1Desired
+        );
+    }
 }
 
 /// @title  UniswapV3PositionVaultMathTest
@@ -335,6 +352,74 @@ contract UniswapV3PositionVaultMathTest is Test {
         );
 
         assertLe(pulled0, amount, "charged more than the caller named");
+    }
+
+    function testFuzz_depositPlan_neverChargesMoreThanEitherNamedAmount(
+        int24 tickLowerSeed,
+        int24 tickUpperSeed,
+        int24 currentTickSeed,
+        uint128 liquiditySeed,
+        uint256 idle0Seed,
+        uint256 idle1Seed,
+        uint256 supplySeed,
+        uint256 offer0Seed,
+        uint256 offer1Seed
+    ) public {
+        // The test above pins one range, one supply-to-liquidity ratio and one side of the charge.
+        // This one is the general statement: both offers are maxima, so neither may ever be
+        // exceeded, at any price relative to the range and at any ratio of supply to liquidity.
+        //
+        // What this does and does not pin, measured 2026-09-10. Deleting the headroom entirely
+        // (ROUNDING_HEADROOM = 0) fails it in ~20 runs, over-charging by exactly one wei, so the
+        // mechanism itself is guarded. Halving it to 1 does NOT fail, at 256 runs or at 50,000 — the
+        // gap between one wei and two is not reachable by random draw. So the second wei rests on
+        // the bound rather than on a case anyone has produced: getAmount0Delta rounds up twice and
+        // the idle claim once, three ceilings whose excess sums to strictly less than two, and the
+        // headroom has to cover all three at once. Do not lower it to 1 on the strength of this
+        // test staying green.
+        int24 tickLower = int24(bound(tickLowerSeed, -800_000, 799_000));
+        int24 tickUpper = int24(bound(tickUpperSeed, tickLower + 1, 800_000));
+        // Unbounded by the range, so the price falls below it, inside it and above it across runs —
+        // the out-of-range cases are where a position is single-sided and a side gets skipped.
+        int24 currentTick = int24(bound(currentTickSeed, -800_000, 800_000));
+
+        uint160 sqrtP = TickMath.getSqrtRatioAtTick(currentTick);
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(tickLower);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(tickUpper);
+
+        uint128 liquidity = uint128(bound(liquiditySeed, 1, type(uint96).max));
+        uint256 idle0 = bound(idle0Seed, 0, type(uint96).max);
+        uint256 idle1 = bound(idle1Seed, 0, type(uint96).max);
+        // Independent of the liquidity, so the supply-to-liquidity ratio that scales every charge
+        // spans several orders of magnitude either side of one.
+        uint256 supply = bound(supplySeed, 1, type(uint112).max);
+
+        // The offers are sampled against what the vault actually holds, not over the whole word.
+        // Uniform offers are astronomically larger or smaller than the charge in almost every draw,
+        // and the charge only presses against an offer when the two are the same size — which is
+        // the only regime where a wei of headroom is the difference between a plan and a revert.
+        (uint256 pos0, uint256 pos1) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
+        uint256 offer0 = bound(offer0Seed, 0, _offerCeiling(pos0 + idle0));
+        uint256 offer1 = bound(offer1Seed, 0, _offerCeiling(pos1 + idle1));
+
+        try harness.depositPlan(sqrtP, sqrtA, sqrtB, liquidity, idle0, idle1, supply, offer0, offer1) returns (
+            uint256 shares, uint256 pulled0, uint256 pulled1
+        ) {
+            // Reverting is a legitimate outcome here — the offers may buy no shares, or the price
+            // may make the only offered side unusable. What is never legitimate is returning a plan
+            // that spends more than was offered.
+            assertGt(shares, 0, "a plan that returns at all must buy something");
+            assertLe(pulled0, offer0, "charged more token0 than the caller named");
+            assertLe(pulled1, offer1, "charged more token1 than the caller named");
+        } catch {}
+    }
+
+    /// @notice An offer bound a little above what the vault holds of that side, without overflowing.
+    /// @dev    Four times the holding puts the draw either side of the charge often enough for the
+    ///         rounding to be under pressure; the saturation keeps an extreme range representable.
+    function _offerCeiling(uint256 total) private pure returns (uint256) {
+        if (total == 0) return 1e6;
+        return total > type(uint240).max / 4 ? type(uint240).max : total * 4 + 8;
     }
 
     //

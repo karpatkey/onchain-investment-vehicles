@@ -969,12 +969,24 @@ contract UniswapV3PositionVault is
     ///
     ///         Only the curator's own entry points reach this, and only behind the price guard.
     ///
-    ///      Folding buys liquidity at whatever price the pool is at, and buying is the direction
-    ///      that punishes a wrong price: liquidity acquired at P' and valued at the true price P
-    ///      costs an excess of (sqrt(P') - sqrt(P))^2 / sqrt(P') per unit, which is positive for
-    ///      every P' other than P. That is the opposite of releasing a position, which is concave
-    ///      in price and therefore safe to do at any price — which is why unwinding needs no guard
-    ///      and this does.
+    ///      Folding buys liquidity at whatever price the pool is at, and a wrong price is costly:
+    ///      liquidity acquired at P' and valued at the true price P costs an excess of
+    ///      (sqrt(P') - sqrt(P))^2 / sqrt(P') per unit, positive for every P' other than P.
+    ///
+    ///      Releasing has the same curvature, not the opposite one — the value of a fixed amount of
+    ///      liquidity is convex in sqrt(price), so a release at P' over-pays the releaser by that
+    ///      same expression. What differs is who carries it. When the vault folds, the vault is the
+    ///      one transacting at the bad price and the excess is paid out of every holder's stake.
+    ///      When a redeemer releases, they receive a fixed fraction of the position's LIQUIDITY,
+    ///      which is what it is whatever the price; the excess they collect comes from the pool, and
+    ///      moving the pool there and back costs them the same amount before fees. The holders who
+    ///      stay keep the same liquidity per share either way.
+    ///
+    ///      So the reason a redemption needs no guard is that shares are a claim on liquidity rather
+    ///      than on value, and the reason this needs one is that folding converts holders' idle
+    ///      balances into liquidity at a price someone else can choose. Do not read it as "releasing
+    ///      is safe, acquiring is not" and waive a guard on that basis: any path where the VAULT is
+    ///      the one transacting needs the guard, in either direction.
     ///
     ///      It folds the whole idle balance, not dust. removeLiquidity and the non-trading
     ///      rebalance both leave a large one-sided balance behind on purpose, so an investor path
