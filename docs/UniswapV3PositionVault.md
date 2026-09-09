@@ -247,6 +247,15 @@ counts: outside the range one token funds nothing, and inside it the smaller of 
 result. For a range that does not exist yet, the same arithmetic is reachable on the deployed
 `UniswapV3VaultMath` library, whose `positionValue` and `mintableLiquidity` are public.
 
+`previewLiquidity(tokenId, amount, isAmount0)` composes the two: it takes one amount, pairs it at the
+position's current ratio the way `previewCounterAmount` would, and returns the liquidity the pair
+opens. Sizing a commitment is what it is for — the opening share supply equals the opening liquidity,
+and a deposit's share count is proportional to the liquidity it adds, so this is the quantity worth
+comparing before committing. It is exactly the composition and not an approximation of it, because
+the counter quote rounds up and so never binds tighter than the amount it came from;
+`test_previewLiquidity_matchesQuotingThenConverting` checks that against both sides, and fails on a
+one-wei difference.
+
 ## Accounting model
 
 A share is a pro-rata claim on **everything the vault owns**: the position's liquidity *and* any

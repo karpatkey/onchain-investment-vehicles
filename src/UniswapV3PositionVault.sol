@@ -761,6 +761,27 @@ contract UniswapV3PositionVault is
         return UniswapV3VaultMath.mintableLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0, amount1);
     }
 
+    /// @notice How much liquidity one token amount opens, once paired at the position's ratio.
+    /// @dev    The composition callers were writing by hand: take the counter amount
+    ///         previewCounterAmount would quote for this side, then ask what the pair funds. It is
+    ///         the same number, because that quote rounds up and so never binds tighter than the
+    ///         amount it was derived from &mdash; pinned by
+    ///         test_previewLiquidity_matchesQuotingThenConverting.
+    ///
+    ///         Useful for sizing before committing, since the share supply starts equal to the
+    ///         opening liquidity and a deposit's share count is proportional to the liquidity it
+    ///         adds. Values at the pool's current price and rounds down, so it reports what the
+    ///         amount would actually open rather than what it nominally represents.
+    /// @param tokenId   The position NFT whose range should be used.
+    /// @param amount    Amount of the named token.
+    /// @param isAmount0 True when the amount is token0, false when it is token1.
+    /// @return The liquidity that amount opens once paired.
+    function previewLiquidity(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint128) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+        return
+            UniswapV3VaultMath.liquidityFromSingleAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
+    }
+
     /// @notice What a redemption of the given shares would pay out.
     /// @dev    Indicative. Prices the caller's pro-rata slice of everything the vault owns, which
     ///         is what a redemption pays once fees have been collected. The executed amounts can

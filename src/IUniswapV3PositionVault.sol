@@ -398,6 +398,14 @@ interface IUniswapV3PositionVault {
     /// @notice The liquidity a pair of token amounts funds in a position's range.
     function amountsToLiquidity(uint256 tokenId, uint256 amount0, uint256 amount1) external view returns (uint128);
 
+    /// @notice How much liquidity one token amount opens, once paired at the position's ratio.
+    /// @dev    Equivalent to quoting the other side with previewCounterAmount and converting the
+    ///         pair with amountsToLiquidity, in one call.
+    /// @param tokenId   The position NFT whose range should be used.
+    /// @param amount    Amount of the named token.
+    /// @param isAmount0 True when the amount is token0, false when it is token1.
+    function previewLiquidity(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint128);
+
     /// @notice What a redemption of the given shares would pay out.
     function previewRedeem(uint256 shares) external view returns (uint256 amount0, uint256 amount1);
 

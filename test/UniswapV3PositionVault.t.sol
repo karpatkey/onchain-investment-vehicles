@@ -763,6 +763,56 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         assertGe(token1.balanceOf(address(vault)), idleBefore, "the idle balance is not folded away");
     }
 
+    function test_previewLiquidity_matchesQuotingThenConverting() public {
+        // The claim the docstring makes: this is the composition callers were writing by hand, not
+        // an approximation of it. Quote the other side, convert the pair, compare.
+        uint256 tokenId = _openPosition(100_000e6);
+
+        uint256[3] memory amounts0 = [uint256(1e6), 10_000e6, 250_000e6];
+        for (uint256 i; i < amounts0.length; ++i) {
+            uint256 paired1 = vault.previewCounterAmount(tokenId, amounts0[i], true);
+            assertEq(
+                vault.previewLiquidity(tokenId, amounts0[i], true),
+                vault.amountsToLiquidity(tokenId, amounts0[i], paired1),
+                "naming token0 must match quoting then converting"
+            );
+        }
+
+        uint256[3] memory amounts1 = [uint256(1e15), 3e18, 80e18];
+        for (uint256 i; i < amounts1.length; ++i) {
+            uint256 paired0 = vault.previewCounterAmount(tokenId, amounts1[i], false);
+            assertEq(
+                vault.previewLiquidity(tokenId, amounts1[i], false),
+                vault.amountsToLiquidity(tokenId, paired0, amounts1[i]),
+                "naming token1 must match too"
+            );
+        }
+    }
+
+    function test_previewLiquidity_agreesWithWhatAPositionActuallyOpens() public {
+        // And the number is the one the vault really mints, not just an internally consistent one.
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
+        uint256 amount0 = 100_000e6;
+        uint256 need1 = vault.previewCounterAmountForRange(lower, upper, amount0, true);
+        _seedVault(amount0, need1 + 1e15);
+
+        vm.prank(curator);
+        (uint256 tokenId, uint128 minted,,) = vault.createPosition(lower, upper, amount0, need1, block.timestamp);
+
+        // Asked of the position that now exists, the same amount reports the liquidity it opened.
+        assertApproxEqRel(vault.previewLiquidity(tokenId, amount0, true), minted, 1e12, "the quote matches the mint");
+    }
+
+    function test_previewLiquidity_refusesTheSideThePositionCannotUse() public {
+        uint256 tokenId = _openPosition(100_000e6);
+        _movePriceBps(-3000);
+
+        // Out of range on one side, the other token funds nothing, exactly as previewCounterAmount
+        // refuses it rather than quoting zero.
+        vm.expectRevert(IUniswapV3PositionVault.AmountSideNotUsable.selector);
+        vault.previewLiquidity(tokenId, 1e18, false);
+    }
+
     //
     // Fees and compounding
     //

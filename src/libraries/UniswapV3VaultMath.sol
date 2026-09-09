@@ -378,7 +378,7 @@ library UniswapV3VaultMath {
         uint160 sqrtRatioBX96,
         uint256 amount,
         bool isAmount0
-    ) internal pure returns (uint128) {
+    ) public pure returns (uint128) {
         if (sqrtPriceX96 <= sqrtRatioAX96) {
             if (!isAmount0) revert IUniswapV3PositionVault.AmountSideNotUsable();
             return LiquidityAmounts.getLiquidityForAmount0(sqrtRatioAX96, sqrtRatioBX96, amount);
