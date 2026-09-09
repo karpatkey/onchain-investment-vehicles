@@ -263,7 +263,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 tokenId = _openPosition(100_000e6);
 
         uint256 amount0 = 10_000e6;
-        uint256 expected1 = vault.previewCounterAmount(tokenId, amount0, true);
+        uint256 expected1 = vault.previewCounterAmount(amount0, true);
 
         vm.prank(alice);
         (, uint256 used0, uint256 used1) = vault.deposit(amount0, UNBOUNDED, block.timestamp);
@@ -276,7 +276,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 tokenId = _openPosition(100_000e6);
         (,, uint128 liquidity,,) = vault.activePosition();
 
-        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(liquidity);
 
         // The position straddles the price, so it is worth some of both tokens, and the whole of
         // its liquidity has to account for what the vault reports as its holdings.
@@ -292,8 +292,8 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 tokenId = _openPosition(100_000e6);
         (,, uint128 liquidity,,) = vault.activePosition();
 
-        (uint256 whole0, uint256 whole1) = vault.liquidityToAmounts(tokenId, liquidity);
-        (uint256 half0, uint256 half1) = vault.liquidityToAmounts(tokenId, liquidity / 2);
+        (uint256 whole0, uint256 whole1) = vault.liquidityToAmounts(liquidity);
+        (uint256 half0, uint256 half1) = vault.liquidityToAmounts(liquidity / 2);
 
         assertApproxEqRel(half0 * 2, whole0, 1e12, "half the liquidity is half the token0");
         assertApproxEqRel(half1 * 2, whole1, 1e12, "half the liquidity is half the token1");
@@ -303,8 +303,8 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 tokenId = _openPosition(100_000e6);
         (,, uint128 liquidity,,) = vault.activePosition();
 
-        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
-        uint128 recovered = vault.amountsToLiquidity(tokenId, amount0, amount1);
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(liquidity);
+        uint128 recovered = vault.amountsToLiquidity(amount0, amount1);
 
         // Both directions round down, so the round trip can lose the last unit but must never
         // invent liquidity that the amounts cannot actually fund.
@@ -315,22 +315,22 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     function test_amountsToLiquidity_isBoundByTheScarcerSide() public {
         uint256 tokenId = _openPosition(100_000e6);
         (,, uint128 liquidity,,) = vault.activePosition();
-        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(tokenId, liquidity);
+        (uint256 amount0, uint256 amount1) = vault.liquidityToAmounts(liquidity);
 
         // Doubling one side alone cannot meaningfully mint more, because the position needs both.
         // It is not exactly equal: the two sides were derived by rounding down, so they bind at
         // fractionally different amounts and doubling one hands the constraint to the other.
         assertApproxEqRel(
-            vault.amountsToLiquidity(tokenId, amount0 * 2, amount1),
-            vault.amountsToLiquidity(tokenId, amount0, amount1),
+            vault.amountsToLiquidity(amount0 * 2, amount1),
+            vault.amountsToLiquidity(amount0, amount1),
             1e12,
             "the scarcer side binds"
         );
 
         // Halving it does reduce what can be minted.
         assertLt(
-            vault.amountsToLiquidity(tokenId, amount0 / 2, amount1),
-            vault.amountsToLiquidity(tokenId, amount0, amount1),
+            vault.amountsToLiquidity(amount0 / 2, amount1),
+            vault.amountsToLiquidity(amount0, amount1),
             "less of the binding side mints less"
         );
     }
@@ -340,8 +340,8 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint128 before = _positionLiquidity();
 
         uint256 amount0 = 5_000e6;
-        uint256 amount1 = vault.previewCounterAmount(tokenId, amount0, true);
-        uint128 quoted = vault.amountsToLiquidity(tokenId, amount0, amount1);
+        uint256 amount1 = vault.previewCounterAmount(amount0, true);
+        uint128 quoted = vault.amountsToLiquidity(amount0, amount1);
 
         vm.prank(alice);
         vault.deposit(amount0, UNBOUNDED, block.timestamp);
@@ -448,7 +448,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         uint256 offer0 = 10_000e6;
-        uint256 offer1 = vault.previewCounterAmount(vault.activeTokenId(), offer0, true);
+        uint256 offer1 = vault.previewCounterAmount(offer0, true);
 
         vm.prank(alice);
         (uint256 shares, uint256 taken0, uint256 taken1) = vault.deposit(offer0, offer1, block.timestamp);
@@ -462,7 +462,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         uint256 offer0 = 10_000e6;
-        uint256 matching1 = vault.previewCounterAmount(vault.activeTokenId(), offer0, true);
+        uint256 matching1 = vault.previewCounterAmount(offer0, true);
 
         // Halve what the caller will spend on token1 and the deposit halves with it, rather than
         // reverting or reaching past the offer. Both amounts are maxima; the smaller one decides.
@@ -770,20 +770,20 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         uint256[3] memory amounts0 = [uint256(1e6), 10_000e6, 250_000e6];
         for (uint256 i; i < amounts0.length; ++i) {
-            uint256 paired1 = vault.previewCounterAmount(tokenId, amounts0[i], true);
+            uint256 paired1 = vault.previewCounterAmount(amounts0[i], true);
             assertEq(
-                vault.previewLiquidity(tokenId, amounts0[i], true),
-                vault.amountsToLiquidity(tokenId, amounts0[i], paired1),
+                vault.previewLiquidity(amounts0[i], true),
+                vault.amountsToLiquidity(amounts0[i], paired1),
                 "naming token0 must match quoting then converting"
             );
         }
 
         uint256[3] memory amounts1 = [uint256(1e15), 3e18, 80e18];
         for (uint256 i; i < amounts1.length; ++i) {
-            uint256 paired0 = vault.previewCounterAmount(tokenId, amounts1[i], false);
+            uint256 paired0 = vault.previewCounterAmount(amounts1[i], false);
             assertEq(
-                vault.previewLiquidity(tokenId, amounts1[i], false),
-                vault.amountsToLiquidity(tokenId, paired0, amounts1[i]),
+                vault.previewLiquidity(amounts1[i], false),
+                vault.amountsToLiquidity(paired0, amounts1[i]),
                 "naming token1 must match too"
             );
         }
@@ -800,7 +800,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         (uint256 tokenId, uint128 minted,,) = vault.createPosition(lower, upper, amount0, need1, block.timestamp);
 
         // Asked of the position that now exists, the same amount reports the liquidity it opened.
-        assertApproxEqRel(vault.previewLiquidity(tokenId, amount0, true), minted, 1e12, "the quote matches the mint");
+        assertApproxEqRel(vault.previewLiquidity(amount0, true), minted, 1e12, "the quote matches the mint");
     }
 
     function test_previewLiquidity_refusesTheSideThePositionCannotUse() public {
@@ -810,7 +810,26 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         // Out of range on one side, the other token funds nothing, exactly as previewCounterAmount
         // refuses it rather than quoting zero.
         vm.expectRevert(IUniswapV3PositionVault.AmountSideNotUsable.selector);
-        vault.previewLiquidity(tokenId, 1e18, false);
+        vault.previewLiquidity(1e18, false);
+    }
+
+    function test_reads_refuseToAnswerWhenThereIsNoPosition() public {
+        // They read the one position the vault holds rather than taking an id, so with none open
+        // there is nothing to answer against. Refusing beats quoting against a stale or foreign
+        // range, which is what taking an id allowed.
+        assertEq(vault.activeTokenId(), 0, "the fixture starts with no position");
+
+        vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
+        vault.previewCounterAmount(1000e6, true);
+
+        vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
+        vault.previewLiquidity(1000e6, true);
+
+        vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
+        vault.liquidityToAmounts(1e15);
+
+        vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
+        vault.amountsToLiquidity(1000e6, 1e18);
     }
 
     //

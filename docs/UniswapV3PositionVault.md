@@ -234,20 +234,27 @@ leaving everything idle and `activeTokenId()` at zero.
 
 `activeTokenId()` returns the current NFT id, or zero when there is none; it changes every time a
 position is opened or closed, so integrators must read it rather than cache it. `activePosition()`
-returns the range and liquidity. `previewCounterAmount(tokenId, amount, isAmount0)` answers "if I
+returns the range and liquidity. `previewCounterAmount(amount, isAmount0)` answers "if I
 supply this much of one token, how much of the other does the position need?" for any position id,
 and `previewCounterAmountForRange` does the same for a range that does not exist yet.
 `previewRedeem` prices a redemption.
 
-Two functions convert between liquidity and token amounts against a position's range at the pool's
-current price. `liquidityToAmounts(tokenId, liquidity)` says what a liquidity amount is worth, and
-`amountsToLiquidity(tokenId, amount0, amount1)` says what a pair of amounts could mint. Both round
+None of these take a position id. The vault holds one position at a time, so an id was redundant —
+and worse than redundant: the range came from the id while the price came from this vault's own pool,
+so an id belonging to a position on any other pool returned a number computed at the wrong price
+instead of reverting. With no parameter there is nothing to get wrong, and with no position open they
+revert `NoActivePosition` rather than answering against nothing. Use `previewCounterAmountForRange`
+for a range that does not exist yet.
+
+Two functions convert between liquidity and token amounts against the position's range at the pool's
+current price. `liquidityToAmounts(liquidity)` says what a liquidity amount is worth, and
+`amountsToLiquidity(amount0, amount1)` says what a pair of amounts could mint. Both round
 down, so they are near-inverses that never overstate what is reachable, and only the binding side
 counts: outside the range one token funds nothing, and inside it the smaller of the two caps the
 result. For a range that does not exist yet, the same arithmetic is reachable on the deployed
 `UniswapV3VaultMath` library, whose `positionValue` and `mintableLiquidity` are public.
 
-`previewLiquidity(tokenId, amount, isAmount0)` composes the two: it takes one amount, pairs it at the
+`previewLiquidity(amount, isAmount0)` composes the two: it takes one amount, pairs it at the
 position's current ratio the way `previewCounterAmount` would, and returns the liquidity the pair
 opens. Sizing a commitment is what it is for — the opening share supply equals the opening liquidity,
 and a deposit's share count is proportional to the liquidity it adds, so this is the quantity worth

@@ -700,19 +700,16 @@ contract UniswapV3PositionVault is
         amount1 += principal1 + owed1;
     }
 
-    /// @notice The counter amount a position of the given range needs alongside a named amount.
+    /// @notice The counter amount the active position needs alongside a named amount.
     /// @dev    Answers "if I put in this much token0, how much token1 does the position take?" at
     ///         the pool's current price. Rounds the counter amount up, so supplying it is always
-    ///         enough. The range comes from the id, but the price comes from this vault's own pool,
-    ///         so an id belonging to a position on any other pool returns a number computed at the
-    ///         wrong price rather than reverting. Pass this vault's own position, or one on the
-    ///         same pool.
-    /// @param tokenId   The position NFT id whose range should be used.
+    ///         enough. This is how the two arguments to deposit are sized; use
+    ///         previewCounterAmountForRange for a range that does not exist yet.
     /// @param amount    Amount of the named token.
     /// @param isAmount0 True when the amount is token0, false when it is token1.
     /// @return The amount of the other token required.
-    function previewCounterAmount(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint256) {
-        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+    function previewCounterAmount(uint256 amount, bool isAmount0) external view returns (uint256) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _activePositionState();
         return UniswapV3VaultMath.counterAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
     }
 
@@ -735,16 +732,11 @@ contract UniswapV3PositionVault is
     /// @dev    Values the liquidity at the pool's current price and rounds down, so this is what the
     ///         position would actually release. Minting the same liquidity costs at most a wei more
     ///         on each side, which is the direction that keeps the vault whole.
-    /// @param tokenId   The position NFT whose range should be used.
     /// @param liquidity The liquidity to value.
     /// @return amount0 Token0 the liquidity corresponds to.
     /// @return amount1 Token1 the liquidity corresponds to.
-    function liquidityToAmounts(uint256 tokenId, uint128 liquidity)
-        external
-        view
-        returns (uint256 amount0, uint256 amount1)
-    {
-        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+    function liquidityToAmounts(uint128 liquidity) external view returns (uint256 amount0, uint256 amount1) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _activePositionState();
         return UniswapV3VaultMath.positionValue(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity);
     }
 
@@ -752,12 +744,11 @@ contract UniswapV3PositionVault is
     /// @dev    The inverse of liquidityToAmounts, and rounds down for the same reason. Only the
     ///         binding side counts: outside the range one token funds nothing, and inside it the
     ///         smaller of the two caps the result.
-    /// @param tokenId The position NFT whose range should be used.
     /// @param amount0 Token0 available.
     /// @param amount1 Token1 available.
     /// @return The liquidity those amounts could mint.
-    function amountsToLiquidity(uint256 tokenId, uint256 amount0, uint256 amount1) external view returns (uint128) {
-        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+    function amountsToLiquidity(uint256 amount0, uint256 amount1) external view returns (uint128) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _activePositionState();
         return UniswapV3VaultMath.mintableLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0, amount1);
     }
 
@@ -772,12 +763,11 @@ contract UniswapV3PositionVault is
     ///         opening liquidity and a deposit's share count is proportional to the liquidity it
     ///         adds. Values at the pool's current price and rounds down, so it reports what the
     ///         amount would actually open rather than what it nominally represents.
-    /// @param tokenId   The position NFT whose range should be used.
     /// @param amount    Amount of the named token.
     /// @param isAmount0 True when the amount is token0, false when it is token1.
     /// @return The liquidity that amount opens once paired.
-    function previewLiquidity(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint128) {
-        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _positionState(tokenId);
+    function previewLiquidity(uint256 amount, bool isAmount0) external view returns (uint128) {
+        (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96,) = _activePositionState();
         return
             UniswapV3VaultMath.liquidityFromSingleAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
     }
@@ -1349,6 +1339,26 @@ contract UniswapV3PositionVault is
     /// @return sqrtPriceX96 The pool's current sqrt price.
     function _spotSqrtPrice() internal view returns (uint160 sqrtPriceX96) {
         (sqrtPriceX96,,,,,,) = pool.slot0();
+    }
+
+    /// @notice The active position's state, for the reads that all work on it.
+    /// @dev    The vault holds one position at a time, so none of the previews take an id. They used
+    ///         to, and it was a hazard rather than a convenience: the range came from the id but the
+    ///         price came from this vault's own pool, so an id belonging to a position on any other
+    ///         pool returned a number computed at the wrong price instead of reverting. With no
+    ///         parameter there is nothing to get wrong.
+    /// @return sqrtPriceX96  The pool's current sqrt price.
+    /// @return sqrtRatioAX96 The position's lower sqrt ratio.
+    /// @return sqrtRatioBX96 The position's upper sqrt ratio.
+    /// @return liquidity     The position's current liquidity.
+    function _activePositionState()
+        internal
+        view
+        returns (uint160 sqrtPriceX96, uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity)
+    {
+        uint256 tokenId = activeTokenId;
+        if (tokenId == 0) revert NoActivePosition();
+        return _positionState(tokenId);
     }
 
     /// @notice The pool price plus a position's range bounds and liquidity.

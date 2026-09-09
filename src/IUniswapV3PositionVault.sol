@@ -380,8 +380,10 @@ interface IUniswapV3PositionVault {
     /// @notice Everything the vault owns, in both tokens.
     function totalAssets() external view returns (uint256 amount0, uint256 amount1);
 
-    /// @notice The counter amount a position of the given range needs alongside a named amount.
-    function previewCounterAmount(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint256);
+    /// @notice The counter amount the active position needs alongside a named amount.
+    /// @dev    No position id: the vault holds one at a time, and taking an id meant an id from
+    ///         another pool was priced against this vault's pool rather than refused.
+    function previewCounterAmount(uint256 amount, bool isAmount0) external view returns (uint256);
 
     /// @notice The same, for a range that does not exist yet.
     function previewCounterAmountForRange(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0)
@@ -389,22 +391,18 @@ interface IUniswapV3PositionVault {
         view
         returns (uint256);
 
-    /// @notice The token amounts a quantity of liquidity occupies in a position's range.
-    function liquidityToAmounts(uint256 tokenId, uint128 liquidity)
-        external
-        view
-        returns (uint256 amount0, uint256 amount1);
+    /// @notice The token amounts a quantity of liquidity occupies in the active position's range.
+    function liquidityToAmounts(uint128 liquidity) external view returns (uint256 amount0, uint256 amount1);
 
-    /// @notice The liquidity a pair of token amounts funds in a position's range.
-    function amountsToLiquidity(uint256 tokenId, uint256 amount0, uint256 amount1) external view returns (uint128);
+    /// @notice The liquidity a pair of token amounts funds in the active position's range.
+    function amountsToLiquidity(uint256 amount0, uint256 amount1) external view returns (uint128);
 
     /// @notice How much liquidity one token amount opens, once paired at the position's ratio.
     /// @dev    Equivalent to quoting the other side with previewCounterAmount and converting the
     ///         pair with amountsToLiquidity, in one call.
-    /// @param tokenId   The position NFT whose range should be used.
     /// @param amount    Amount of the named token.
     /// @param isAmount0 True when the amount is token0, false when it is token1.
-    function previewLiquidity(uint256 tokenId, uint256 amount, bool isAmount0) external view returns (uint128);
+    function previewLiquidity(uint256 amount, bool isAmount0) external view returns (uint128);
 
     /// @notice What a redemption of the given shares would pay out.
     function previewRedeem(uint256 shares) external view returns (uint256 amount0, uint256 amount1);
