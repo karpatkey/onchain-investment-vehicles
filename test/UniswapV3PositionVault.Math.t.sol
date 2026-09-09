@@ -296,7 +296,7 @@ contract UniswapV3PositionVaultMathTest is Test {
         uint128 liquidity = 1e18;
         uint256 supply = liquidity;
 
-        (uint256 total0,) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
+        (uint256 total0, uint256 total1) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
 
         // A deposit many times the size of the vault is the case that used to break. The share
         // count comes from the vault's own totals and the charge is then recomputed from the
@@ -305,8 +305,10 @@ contract UniswapV3PositionVaultMathTest is Test {
         uint256[7] memory multiples = [uint256(1), 2, 3, 5, 10, 1000, 100_000];
         for (uint256 i; i < multiples.length; ++i) {
             uint256 amount = total0 * multiples[i];
-            (,,, uint256 pulled0,) =
-                UniswapV3VaultMath.depositPlan(sqrtP, sqrtA, sqrtB, liquidity, 0, 0, supply, amount, true);
+            // token1's offer is deliberately looser, so token0 is the side that binds.
+            (,,, uint256 pulled0,) = UniswapV3VaultMath.depositPlan(
+                sqrtP, sqrtA, sqrtB, liquidity, 0, 0, supply, amount, total1 * 200_000 + 1
+            );
 
             assertLe(pulled0, amount, "charged more than the caller named");
         }
@@ -324,12 +326,13 @@ contract UniswapV3PositionVaultMathTest is Test {
         uint160 sqrtA = TickMath.getSqrtRatioAtTick(-600);
         uint160 sqrtB = TickMath.getSqrtRatioAtTick(600);
 
-        (uint256 total0,) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
+        (uint256 total0, uint256 total1) = UniswapV3VaultMath.positionValue(sqrtP, sqrtA, sqrtB, liquidity);
         vm.assume(total0 > 1e6);
 
         uint256 amount = bound(amountSeed, 1e6, total0 * 100_000);
-        (,,, uint256 pulled0,) =
-            UniswapV3VaultMath.depositPlan(sqrtP, sqrtA, sqrtB, liquidity, 0, 0, liquidity, amount, true);
+        (,,, uint256 pulled0,) = UniswapV3VaultMath.depositPlan(
+            sqrtP, sqrtA, sqrtB, liquidity, 0, 0, liquidity, amount, total1 * 200_000 + 1
+        );
 
         assertLe(pulled0, amount, "charged more than the caller named");
     }

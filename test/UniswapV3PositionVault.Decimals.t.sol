@@ -131,8 +131,7 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
         uint256 before1 = token1.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 shares, uint256 spent0, uint256 spent1) =
-            vault.deposit(5e8, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares, uint256 spent0, uint256 spent1) = vault.deposit(5e8, UNBOUNDED, block.timestamp);
 
         assertGt(shares, 0, "shares minted");
         assertLe(spent0, 5e8, "never exceeds the token0 maximum");

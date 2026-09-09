@@ -214,7 +214,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         // is. Folding buys liquidity at whatever price the caller arrived at, which is why only the
         // curator's guarded entry points do it.
         vm.prank(alice);
-        vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         assertGe(token0.balanceOf(address(vault)), residue0, "the token0 residue is still idle");
         assertGe(token1.balanceOf(address(vault)), residue1, "the token1 residue is still idle");
@@ -233,7 +233,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         _openPosition(200_000e6);
 
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(50_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(50_000e6, UNBOUNDED, block.timestamp);
 
         (uint256 before0, uint256 before1) = vault.previewRedeem(shares);
         (uint256 lower, uint256 upper) = _shiftedRange(1200, 400);

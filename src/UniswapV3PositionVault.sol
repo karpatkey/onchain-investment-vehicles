@@ -233,50 +233,34 @@ contract UniswapV3PositionVault is
     // Investor Operations
     //
 
-    /// @notice Buys into the position by naming one token amount.
-    /// @dev    Shaped like createPosition: the caller says how much of one token to commit and the
-    ///         vault derives the other side from the position's current ratio. The position's fees
-    ///         are collected into the idle balance first, so they belong to existing holders and are
-    ///         charged to this deposit rather than shared with it. They are not folded back into the
-    ///         position: that is a curator action, for the reason given on _compound. Amounts are
-    ///         pulled exactly, and the wei-level remainder
-    ///         left by the pool's own rounding is returned in the same call.
+    /// @notice Buys into the position with both token amounts, in the shape of increaseLiquidity.
+    /// @dev    The caller offers as much of each token as they are willing to spend and the vault
+    ///         takes what the position's current ratio needs, bounded by whichever offer is the
+    ///         tighter of the two. Neither amount is ever exceeded; the remainder is simply not
+    ///         taken. The position's fees are collected into the idle balance first, so they belong
+    ///         to existing holders and are charged to this deposit rather than shared with it. They
+    ///         are not folded back into the position: that is a curator action, for the reason given
+    ///         on _compound.
     ///
-    ///         Both sides are bounded: the named one by the amount itself, and the other by how far
-    ///         it may run past what this deposit would have cost at a fair price. The counter amount
-    ///         is whatever the position's ratio demands at execution, and near a range boundary that
-    ///         ratio is a steep function of price, so a sub-one-percent move can more than double
-    ///         it. The allowance is therefore measured against the amount rather than against the
-    ///         price, and the reference it is measured from is priced at the pool's own time-weighted
-    ///         average, which nobody can move cheaply.
+    ///         Both bounds are amounts rather than percentages, because what the second side costs
+    ///         is not a function of price alone. It scales with the caller's share of the vault,
+    ///         which is their amount over the vault's holding of that token — so offering a token
+    ///         the vault holds almost none of buys a large fraction of the vault and is charged the
+    ///         matching fraction of the other side. That is pro-rata, and the shares are worth what
+    ///         they cost, but it can be far more than expected, and a percentage bound cannot catch
+    ///         it: the charge is not off the fair price, it is the fair price of a much larger
+    ///         purchase. Two absolute amounts catch it.
     ///
-    ///         The bound is relative to that reference, so it constrains the price the counter amount
-    ///         is struck at and not its size. Both scale with the caller's share of the vault, and
-    ///         that share is the named amount over the vault's holding of the named token — so
-    ///         depositing into a vault holding almost none of the side you name buys a large
-    ///         fraction of it and is charged the matching fraction of the other side. The charge is
-    ///         pro-rata and the shares are worth what they cost, but it can be far more of the other
-    ///         token than a caller who has not looked would expect, and no value of this bound
-    ///         prevents it. Approve what you mean to spend, and check totalAssets first when the
-    ///         position may be sitting wholly on one side.
-    ///
-    ///         One part of that reference is movable, and it is worth naming: it is computed from the
-    ///         vault's live idle balances, so a donation into the vault raises both the charge and
-    ///         the allowance that bounds it. The depositor receives a proportional claim on the
-    ///         donation and the donor pays for it, so this is unexpected spend against a standing
-    ///         approval rather than a loss. Approve what you mean to spend.
-    ///
-    ///         Because the allowance is on an amount, it is not a fraction of a price and is not
-    ///         capped at one hundred percent. A tight range can legitimately need a large one.
-    /// @param amount          Amount of the named token to commit.
-    /// @param isAmount0       True when the amount is token0, false when it is token1.
-    /// @param maxSlippageBps  How far the other token may run past what this deposit would cost at
-    ///                        the pool's average price, in basis points. 100 is one percent.
-    /// @param deadline        Latest timestamp at which the deposit may execute.
+    ///         Pass what you actually hold rather than a sentinel; a very large value for both sides
+    ///         has no meaningful answer and the share arithmetic will revert rather than return one.
+    ///         previewCounterAmount quotes one side against the other for the active position.
+    /// @param amount0Desired The most token0 to spend.
+    /// @param amount1Desired The most token1 to spend.
+    /// @param deadline       Latest timestamp at which the deposit may execute.
     /// @return shares  Shares minted to the caller.
-    /// @return amount0 Token0 taken from the caller.
-    /// @return amount1 Token1 taken from the caller.
-    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
+    /// @return amount0 Token0 actually taken.
+    /// @return amount1 Token1 actually taken.
+    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 deadline)
         external
         nonReentrant
         checkDeadline(deadline)
@@ -310,24 +294,15 @@ contract UniswapV3PositionVault is
         uint256 idle0 = token0.balanceOf(address(this));
         uint256 idle1 = token1.balanceOf(address(this));
 
-        uint256 allowed;
-        {
-            (, uint160 sqrtTwapX96) = _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
-            uint256 fairCounter = UniswapV3VaultMath.referenceCounter(
-                sqrtTwapX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, amount, isAmount0
-            );
-            allowed = fairCounter + fairCounter * maxSlippageBps / _MAX_BPS;
-        }
+        // The vault's own guard, at its own tolerance. What the caller bounds is the amount, below.
+        _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
 
         (uint256 targetShares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) = UniswapV3VaultMath.depositPlan(
-            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount, isAmount0
+            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, amount0Desired, amount1Desired
         );
 
-        // The hard guarantee on both sides: never more of the named token than was committed, and
-        // never more of the other than the fair price implied plus the caller's allowance.
-        if ((isAmount0 ? pulled0 : pulled1) > amount || (isAmount0 ? pulled1 : pulled0) > allowed) {
-            revert SlippageExceeded(pulled0, pulled1);
-        }
+        // The hard guarantee, each side against the caller's own number.
+        if (pulled0 > amount0Desired || pulled1 > amount1Desired) revert SlippageExceeded(pulled0, pulled1);
 
         if (pulled0 != 0) token0.safeTransferFrom(msg.sender, address(this), pulled0);
         if (pulled1 != 0) token1.safeTransferFrom(msg.sender, address(this), pulled1);

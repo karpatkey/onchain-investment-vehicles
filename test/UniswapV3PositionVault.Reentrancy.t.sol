@@ -20,6 +20,9 @@ import {MockPositionManager, MockUniswapV3Factory, MockUniswapV3Pool} from "./mo
 ///         vault at the two moments it has genuinely handed over control: inside the position
 ///         manager while liquidity is being added, and inside the pool during a rebalance swap.
 contract UniswapV3PositionVaultReentrancyTest is Test {
+    /// @notice An offer high enough not to bind, for the side a test is not about.
+    uint256 internal constant UNBOUNDED = type(uint128).max;
+
     UniswapV3PositionVault internal vault;
     MockUniswapV3Factory internal factory;
     MockUniswapV3Pool internal pool;
@@ -33,9 +36,6 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
     address internal alice = makeAddr("alice");
 
     uint24 internal constant FEE = 3000;
-
-    /// @dev A relative allowance wide enough never to be the binding constraint here.
-    uint16 internal constant GENEROUS_SLIPPAGE_BPS = 20_000;
 
     /// @dev Both tokens have 18 decimals and the mock pool sits at tick 0, so its human price is
     ///      exactly 1e18 and a range of a half to double straddles it comfortably.
@@ -103,17 +103,17 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         // While the vault is inside deposit and has handed control to the position manager, try to
         // start a second deposit.
         manager.armIncreaseAttack(
-            address(vault), abi.encodeCall(vault.deposit, (100e18, true, uint16(20_000), block.timestamp + 1))
+            address(vault), abi.encodeCall(vault.deposit, (100e18, UNBOUNDED, block.timestamp + 1))
         );
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
-        vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e18, UNBOUNDED, block.timestamp);
     }
 
     function test_reentrancy_redeemCannotReenterFromThePositionManager() public {
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(1000e18, UNBOUNDED, block.timestamp);
 
         // A redemption collects fees before it burns, so the manager gets control while the vault's
         // supply and balances still say the caller owns what they are about to give up.
@@ -138,7 +138,7 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
     function test_reentrancy_rebalanceCannotReenterFromTheSwap() public {
         vm.prank(alice);
-        vault.deposit(1000e18, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e18, UNBOUNDED, block.timestamp);
 
         // Leave the vault holding only token0, so the rebalance has to swap.
         vm.prank(curator);

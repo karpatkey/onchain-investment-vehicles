@@ -67,9 +67,11 @@ abstract contract UniswapV3PositionVaultTestBase is Test {
     address internal stranger = makeAddr("stranger");
     address internal recoverer = makeAddr("recoverer");
 
-    /// @dev A relative allowance wide enough that these deposits are never the binding constraint.
-    ///      It is a fraction of an amount, not of a price, so values above 10000 are meaningful.
-    uint16 internal constant GENEROUS_SLIPPAGE_BPS = 20_000;
+    /// @notice An offer high enough not to bind, for the side a test is not about.
+    /// @dev    Deliberately not type(uint256).max: a deposit turns each offer into a share count by
+    ///         multiplying by the supply, so an offer that large has no representable answer and
+    ///         reverts rather than meaning "no limit".
+    uint256 internal constant UNBOUNDED = type(uint128).max;
 
     uint32 internal constant TWAP_PERIOD = 300;
     uint16 internal constant MAX_DEVIATION_BPS = 500;

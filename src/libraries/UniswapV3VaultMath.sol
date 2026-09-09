@@ -409,45 +409,6 @@ library UniswapV3VaultMath {
         return FullMath.mulDiv(amount, supply, total);
     }
 
-    /// @notice What the unnamed side of a deposit would cost at a reference price.
-    /// @dev    The counter amount a deposit actually charges is set by the pool's spot price, which
-    ///         anyone can move. Pricing the same deposit at the pool's time-weighted average gives a
-    ///         figure nobody can move cheaply, which is what a caller's slippage allowance is
-    ///         measured against.
-    ///
-    ///         It prices the whole claim, position and idle together, exactly as the real charge
-    ///         does, so the two are comparable even when a rebalance has left a large one-sided
-    ///         surplus sitting in the vault.
-    /// @param sqrtPriceX96  The reference price, in practice the average rather than the spot.
-    /// @param sqrtRatioAX96 The position's lower sqrt ratio.
-    /// @param sqrtRatioBX96 The position's upper sqrt ratio.
-    /// @param liquidity     The position's current liquidity.
-    /// @param idle0         Token0 sitting idle in the vault.
-    /// @param idle1         Token1 sitting idle in the vault.
-    /// @param amount        The amount of the named token.
-    /// @param isAmount0     True when that amount is token0.
-    /// @return The amount of the other token the deposit would cost at that price.
-    function referenceCounter(
-        uint160 sqrtPriceX96,
-        uint160 sqrtRatioAX96,
-        uint160 sqrtRatioBX96,
-        uint128 liquidity,
-        uint256 idle0,
-        uint256 idle1,
-        uint256 amount,
-        bool isAmount0
-    ) public pure returns (uint256) {
-        (uint256 total0, uint256 total1) =
-            amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, false);
-        total0 += idle0;
-        total1 += idle1;
-
-        uint256 named = isAmount0 ? total0 : total1;
-        if (named == 0) revert IUniswapV3PositionVault.AmountSideNotUsable();
-
-        return FullMath.mulDiv(amount, isAmount0 ? total1 : total0, named);
-    }
-
     /// @notice What a deposit of the given share count costs and how much liquidity it buys.
     /// @dev    Splits the cost into the part that funds new liquidity and the part that buys into
     ///         the idle balances. The liquidity part rounds up because that is what the pool charges
@@ -994,9 +955,9 @@ library UniswapV3VaultMath {
     /// @param idle0         Token0 sitting idle in the vault.
     /// @param idle1         Token1 sitting idle in the vault.
     /// @param supply        The current share supply.
-    /// @param amount        The amount of the named token the caller will supply.
-    /// @param isAmount0     True when that amount is token0.
-    /// @return shares  The share count that amount buys.
+    /// @param amount0Desired The most token0 the caller will supply.
+    /// @param amount1Desired The most token1 the caller will supply.
+    /// @return shares  The share count the tighter of the two offers buys.
     /// @return charge0 Token0 that funds the new liquidity.
     /// @return charge1 Token1 that funds the new liquidity.
     /// @return pulled0 Total token0 to take from the depositor.
@@ -1009,8 +970,8 @@ library UniswapV3VaultMath {
         uint256 idle0,
         uint256 idle1,
         uint256 supply,
-        uint256 amount,
-        bool isAmount0
+        uint256 amount0Desired,
+        uint256 amount1Desired
     ) public pure returns (uint256 shares, uint256 charge0, uint256 charge1, uint256 pulled0, uint256 pulled1) {
         // The denominator rounds UP, and that direction is load-bearing rather than cosmetic. What
         // the deposit is finally charged is recomputed from the liquidity the share count buys, so
@@ -1023,10 +984,24 @@ library UniswapV3VaultMath {
         (uint256 total0, uint256 total1) =
             amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, true);
 
-        // The charge also rounds two components up: the tokens the new liquidity needs, and the
-        // claim on the idle balances. Each ceiling can add a wei, so the amount is reduced by that
-        // fixed headroom as well.
-        shares = sharesForSide(_lessHeadroom(amount), isAmount0 ? total0 + idle0 : total1 + idle1, supply);
+        total0 += idle0;
+        total1 += idle1;
+
+        // Each side buys a share count, and the deposit is the smaller of the two: it is bounded by
+        // whichever token the caller brought least of, relative to what the vault holds of it. A
+        // side the vault holds none of costs nothing, so it constrains nothing and is skipped —
+        // which is also what keeps an out-of-range position, funded by one token alone, depositable.
+        //
+        // The charge rounds two components up: the tokens the new liquidity needs, and the claim on
+        // the idle balances. Each ceiling can add a wei, so both amounts are reduced by that fixed
+        // headroom before they are turned into a share count.
+        shares = type(uint256).max;
+        if (total0 != 0) shares = sharesForSide(_lessHeadroom(amount0Desired), total0, supply);
+        if (total1 != 0) {
+            uint256 fromToken1 = sharesForSide(_lessHeadroom(amount1Desired), total1, supply);
+            if (fromToken1 < shares) shares = fromToken1;
+        }
+        if (shares == type(uint256).max) revert IUniswapV3PositionVault.AmountSideNotUsable();
         (, charge0, charge1, pulled0, pulled1) =
             depositCost(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, idle0, idle1, supply, shares);
     }

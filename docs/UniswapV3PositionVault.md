@@ -144,27 +144,31 @@ large enough for the pro-rata arithmetic to be fine-grained.
 
 ### 2. Depositing
 
-`deposit(amount, isAmount0, maxSlippageBps, deadline)` takes the same shape as `createPosition`: the
-investor names how much of **one** token to commit and the vault derives the other side from the
-position's current ratio. Amounts are pulled exactly, and the wei-level remainder left by the pool's
-rounding is returned in the same call.
+`deposit(amount0Desired, amount1Desired, deadline)` takes the shape of Uniswap's own
+`increaseLiquidity`: the investor offers as much of each token as they are willing to spend, and the
+vault takes what the position's current ratio needs, bounded by whichever offer is the tighter of the
+two. Neither is ever exceeded — the remainder is simply not taken — and the wei-level remainder left
+by the pool's rounding is returned in the same call.
 
-**Both sides are bounded**, the named one by the amount itself and the other by how far it may run
-past what the same deposit would have cost at a fair price. That second bound is the one that
-matters, and two details make it work.
+**Both bounds are amounts, not percentages, and that is the point.** A percentage bound expresses
+"do not let the price move more than this against me", which is the right shape when what a deposit
+costs is a function of price. Here it is not. What the second side costs scales with the caller's
+share of the vault, and that share is their amount over the vault's holding of *that token* — so
+offering a token the vault holds almost none of buys a large fraction of the whole vault and is
+charged the matching fraction of the other side.
 
-It is measured against an **amount**, not a price. The counter amount is whatever the ratio demands
-at execution, and near a range boundary that ratio is a steep function of price: on the mainnet
-USDC/WETH pool with a range one percent wide, a 0.4% move more than doubles it. A percentage of the
-price cannot express that; a percentage of the amount can.
+The charge in that case is exactly pro-rata and the shares are worth what they cost, so nobody is
+robbed. But it can be enormously more of the other token than the caller intended, and a percentage
+bound cannot catch it, because the charge is not *off* the fair price — it is the fair price of a
+much larger purchase than the caller thought they were making. Measured on the pinned fork: with the
+position rebalanced wholly onto one side and a dust donation of the other, a 0.1 WETH offer under the
+old percentage bound was charged **4,202,800 USDC** at the tightest setting that bound allowed. Two
+absolute amounts refuse it; `test_deposit_cannotBeMadeToSpendTheWholeOtherSide` pins that.
 
-The reference it is measured from is the counter amount at the pool's **time-weighted average
-price**, not at spot. Spot is what anyone can move, so measuring against it would be circular. The
-average is not cheap to move, and using it means the caller needs no quote of their own: the vault
-works out what fair costs, and the caller only says how far past that they will go.
-
-Because the allowance is a fraction of an amount rather than of a price, it is not capped at one
-hundred percent. A tight range can legitimately need a large one.
+Quote the pairing with `previewCounterAmount` against the active position and allow a little over for
+the price moving between the quote and the transaction. Pass amounts you actually hold rather than a
+sentinel: each offer is turned into a share count by multiplying by the supply, so a very large value
+on both sides has no representable answer and reverts rather than meaning "no limit".
 
 Nothing else here needs a separate price guard. Shares are issued in proportion to the liquidity the
 deposit adds, and liquidity does not depend on price, so the split between a new depositor and the
@@ -477,8 +481,9 @@ Before verifying a deployed library, compare its on-chain runtime bytecode again
 verify with the settings of whichever matches. Assuming the repository default will silently fail,
 and that failure looks like a source mismatch rather than a configuration one.
 
-Simplifying the investor functions to one named amount and one slippage bound also made the vault
-smaller, which bought back some room. It still sits only a few hundred bytes under the EIP-170 limit, and the
+Giving `deposit` two absolute amounts instead of a named amount and a percentage also made the vault
+smaller, because the reference price the percentage was measured against is no longer computed at
+all. It still sits some hundreds of bytes under the EIP-170 limit, and the
 optimizer setting has been lowered as far as it usefully goes. **Before any further external
 function is added, the read surface should move to a separate lens contract** that reads the vault's
 public state, which is why Uniswap ships its own quoting and position-valuation helpers separately.

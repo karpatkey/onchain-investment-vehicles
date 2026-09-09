@@ -233,16 +233,14 @@ interface IUniswapV3PositionVault {
     // Investor operations
     //
 
-    /// @notice Buys into the position by naming one token amount.
-    /// @param amount          Amount of the named token to commit.
-    /// @param isAmount0       True when the amount is token0, false when it is token1.
-    /// @param maxSlippageBps  How far the un-named side may run past what the deposit would cost at
-    ///                        the pool's time-weighted average price, in basis points.
-    /// @param deadline        Latest timestamp at which the call may execute.
+    /// @notice Buys into the position with both token amounts, in the shape of increaseLiquidity.
+    /// @param amount0Desired The most token0 to spend.
+    /// @param amount1Desired The most token1 to spend.
+    /// @param deadline       Latest timestamp at which the call may execute.
     /// @return shares  Shares minted to the caller.
-    /// @return amount0 Token0 taken from the caller.
-    /// @return amount1 Token1 taken from the caller.
-    function deposit(uint256 amount, bool isAmount0, uint16 maxSlippageBps, uint256 deadline)
+    /// @return amount0 Token0 actually taken.
+    /// @return amount1 Token1 actually taken.
+    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 deadline)
         external
         returns (uint256 shares, uint256 amount0, uint256 amount1);
 

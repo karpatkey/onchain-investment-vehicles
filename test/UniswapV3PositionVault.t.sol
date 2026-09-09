@@ -145,7 +145,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IUniswapV3PositionVault.NotInvestor.selector, stranger));
-        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e6, UNBOUNDED, block.timestamp);
 
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IUniswapV3PositionVault.NotInvestor.selector, stranger));
@@ -170,7 +170,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.startPrank(stranger);
         IERC20(USDC).approve(address(vault), type(uint256).max);
         IERC20(WETH).approve(address(vault), type(uint256).max);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
         assertGt(shares, 0, "an open vault accepts anyone");
 
         // Redeeming and transferring are open on the same terms.
@@ -184,7 +184,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IUniswapV3PositionVault.NotInvestor.selector, stranger));
-        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e6, UNBOUNDED, block.timestamp);
     }
 
     //
@@ -266,7 +266,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 expected1 = vault.previewCounterAmount(tokenId, amount0, true);
 
         vm.prank(alice);
-        (, uint256 used0, uint256 used1) = vault.deposit(amount0, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (, uint256 used0, uint256 used1) = vault.deposit(amount0, UNBOUNDED, block.timestamp);
 
         // The preview prices the ratio, so the two amounts must sit on the same line.
         assertApproxEqRel(used1 * 1e18 / used0, expected1 * 1e18 / amount0, 1e15, "ratio matches the preview");
@@ -344,7 +344,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint128 quoted = vault.amountsToLiquidity(tokenId, amount0, amount1);
 
         vm.prank(alice);
-        vault.deposit(amount0, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(amount0, UNBOUNDED, block.timestamp);
 
         // The quote is what the position gains, which is the whole point of the conversion.
         assertApproxEqRel(_positionLiquidity() - before, quoted, 1e14, "the quote matches the mint");
@@ -370,8 +370,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 balance1Before = token1.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 shares, uint256 amount0, uint256 amount1) =
-            vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares, uint256 amount0, uint256 amount1) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         assertGt(shares, 0, "shares minted");
         assertEq(vault.balanceOf(alice), shares, "shares credited");
@@ -399,7 +398,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     function test_deposit_revertsWhenThereIsNoPosition() public {
         vm.prank(alice);
         vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
-        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e6, UNBOUNDED, block.timestamp);
     }
 
     function test_deposit_respectsTheDeadline() public {
@@ -407,70 +406,87 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(alice);
         vm.expectRevert(IUniswapV3PositionVault.DeadlineExpired.selector);
-        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp - 1);
+        vault.deposit(1000e6, UNBOUNDED, block.timestamp - 1);
     }
 
-    function test_deposit_refusesToRunPastTheCallersAllowance() public {
+    function test_deposit_takesNoMoreThanEitherOffer() public {
         _openPosition(100_000e6);
 
-        // Undisturbed, the pool sits on its own average closely enough that even a zero allowance
-        // clears: the reference and the charge agree.
-        vm.prank(alice);
-        (uint256 sharesAtRest,,) = vault.deposit(1000e6, true, 0, block.timestamp);
-        assertGt(sharesAtRest, 0, "at rest the charge matches the reference");
-
-        // Push the price up, which leaves the position holding less token0 and so makes a token0
-        // deposit cost more token1 than the average implies. The move stays inside the vault's own
-        // tolerance, so it is the caller's allowance that has to catch this, not the guard.
-        _movePriceBps(200);
+        uint256 offer0 = 10_000e6;
+        uint256 offer1 = vault.previewCounterAmount(vault.activeTokenId(), offer0, true);
 
         vm.prank(alice);
-        vm.expectPartialRevert(IUniswapV3PositionVault.SlippageExceeded.selector);
-        vault.deposit(10_000e6, true, 0, block.timestamp);
+        (uint256 shares, uint256 taken0, uint256 taken1) = vault.deposit(offer0, offer1, block.timestamp);
 
-        vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
-        assertGt(shares, 0, "a wide enough allowance lets it through");
+        assertGt(shares, 0, "the deposit went through");
+        assertLe(taken0, offer0, "never more token0 than offered");
+        assertLe(taken1, offer1, "never more token1 than offered");
     }
 
-    function test_deposit_allowanceIsMeasuredAgainstTheAveragePriceNotTheSpot() public {
-        // A narrow range makes the token ratio a steep function of price, which is the case the
-        // allowance exists for: a sub-one-percent move can more than double what the other side
-        // costs, and the average is what nobody can move cheaply.
-        uint256 spot = _spotPrice();
-        uint256 need1 =
-            vault.previewCounterAmountForRange(spot * 9900 / 10_000, spot * 10_100 / 10_000, 200_000e6, true);
-        _seedVault(200_000e6, need1 + 1e18);
-
-        vm.prank(curator);
-        uint256 tokenId = _createNarrowPosition(spot);
-
-        uint256 named = 10_000e6;
-        uint256 quotedBefore = vault.previewCounterAmount(tokenId, named, true);
-
-        _movePriceBps(40);
-
-        assertGt(
-            vault.previewCounterAmount(tokenId, named, true),
-            quotedBefore * 15 / 10,
-            "the ratio really does move that far"
-        );
-
-        // A caller who allowed ten percent over the fair price is turned away rather than charged
-        // the difference, even though the pool's spot price is what moved.
-        vm.prank(alice);
-        vm.expectPartialRevert(IUniswapV3PositionVault.SlippageExceeded.selector);
-        vault.deposit(named, true, 1000, block.timestamp);
-    }
-
-    function test_deposit_canBeNamedInEitherToken() public {
+    function test_deposit_isBoundedByTheTighterOffer() public {
         _openPosition(100_000e6);
 
+        uint256 offer0 = 10_000e6;
+        uint256 matching1 = vault.previewCounterAmount(vault.activeTokenId(), offer0, true);
+
+        // Halve what the caller will spend on token1 and the deposit halves with it, rather than
+        // reverting or reaching past the offer. Both amounts are maxima; the smaller one decides.
         vm.prank(alice);
-        (uint256 sharesFrom0, uint256 spent0,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 halfShares, uint256 halfTaken0, uint256 halfTaken1) =
+            vault.deposit(offer0, matching1 / 2, block.timestamp);
+
+        assertLe(halfTaken1, matching1 / 2, "the tighter offer was respected");
+        assertLt(halfTaken0, offer0, "and the looser side was not fully spent");
 
         vm.prank(bob);
-        (uint256 sharesFrom1,, uint256 spent1) = vault.deposit(3e18, false, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 fullShares,,) = vault.deposit(offer0, matching1, block.timestamp);
+
+        assertApproxEqRel(halfShares * 2, fullShares, 1e16, "half the token1 buys about half the shares");
+    }
+
+    function test_deposit_cannotBeMadeToSpendTheWholeOtherSide() public {
+        // The case an offer expressed as a percentage could not catch. A rebalance leaves the
+        // position wholly on one side, so the vault holds token0 and effectively no token1. What a
+        // deposit costs is not a function of price here: naming token1 buys a share of the vault set
+        // by how little token1 it holds, and is charged the matching share of a large token0
+        // balance. A percentage off the fair price is no protection, because that fair price is the
+        // fair price of a much larger purchase than the caller thought they were making.
+        _openPosition(200_000e6);
+
+        uint256 spot = _spotPrice();
+        vm.prank(curator);
+        vault.rebalanceWithSwap(spot * 14_000 / 10_000, spot * 18_000 / 10_000, 1000, 0, 0, block.timestamp);
+
+        (uint256 total0, uint256 total1) = vault.totalAssets();
+        assertEq(total1, 0, "the position sits wholly on one side");
+
+        // Anyone can turn the clean revert this would otherwise give into a live deposit by sending
+        // the vault a dust amount of the side it holds none of.
+        address griefer = makeAddr("griefer");
+        deal(address(token1), griefer, 0.01e18);
+        vm.prank(griefer);
+        token1.transfer(address(vault), 0.01e18);
+
+        uint256 walletBefore = token0.balanceOf(alice);
+
+        // Alice offers 0.1 WETH and is willing to spend 400 USDC alongside it. She is charged at
+        // most that, and gets the shares it buys.
+        vm.prank(alice);
+        (, uint256 taken0,) = vault.deposit(400e6, 0.1e18, block.timestamp);
+
+        assertLe(taken0, 400e6, "the token0 offer is the cap, whatever the ratio wants");
+        assertLe(walletBefore - token0.balanceOf(alice), 400e6, "and that is all that left her wallet");
+        assertLt(taken0, total0 / 100, "nowhere near the whole vault");
+    }
+
+    function test_deposit_pricesTheSameWhicheverSideBinds() public {
+        _openPosition(100_000e6);
+
+        vm.prank(alice);
+        (uint256 sharesFrom0, uint256 spent0,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
+
+        vm.prank(bob);
+        (uint256 sharesFrom1,, uint256 spent1) = vault.deposit(UNBOUNDED, 3e18, block.timestamp);
 
         // Each names its own side. The share count is floored, so the amount actually committed can
         // fall a hair short of what was named, but it can never exceed it.
@@ -486,7 +502,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         uint256 balance0Before = token0.balanceOf(alice);
         uint256 balance1Before = token1.balanceOf(alice);
@@ -508,7 +524,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 before1 = token1.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         vm.prank(alice);
         vault.redeem(shares, 500, block.timestamp);
@@ -522,7 +538,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         vm.prank(curator);
         vault.unwindPosition();
@@ -540,7 +556,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         _openPosition(100_000e6);
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         // A three percent move is a routine day, and it is when holders most want out.
         _movePriceBps(300);
@@ -559,7 +575,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     function test_redeem_isNotGuardedWhenThereIsNoPosition() public {
         _openPosition(100_000e6);
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         vm.prank(curator);
         vault.unwindPosition();
@@ -603,7 +619,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(alice);
         vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
-        vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
     }
 
     function test_redeem_neverTrapsTheLastHolders() public {
@@ -666,7 +682,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         vm.prank(alice);
-        vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(10_000e6, UNBOUNDED, block.timestamp);
 
         (,, uint128 trimmed,,) = vault.activePosition();
         vm.prank(curator);
@@ -699,7 +715,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint256 idleBefore = token1.balanceOf(address(vault));
 
         vm.prank(alice);
-        vault.deposit(1000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        vault.deposit(1000e6, UNBOUNDED, block.timestamp);
 
         (,, uint128 afterwards,,) = vault.activePosition();
         uint256 grew = afterwards - before;
@@ -720,7 +736,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _openPosition(100_000e6);
 
         vm.prank(alice);
-        (uint256 aliceShares,,) = vault.deposit(50_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 aliceShares,,) = vault.deposit(50_000e6, UNBOUNDED, block.timestamp);
 
         _accrueFees();
 
@@ -731,7 +747,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         (uint256 aliceValue0Before, uint256 aliceValue1Before) = vault.previewRedeem(aliceShares);
 
         vm.prank(bob);
-        (uint256 bobShares,,) = vault.deposit(50_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
+        (uint256 bobShares,,) = vault.deposit(50_000e6, UNBOUNDED, block.timestamp);
 
         (uint256 aliceValue0After, uint256 aliceValue1After) = vault.previewRedeem(aliceShares);
         (uint256 bobValue0, uint256 bobValue1) = vault.previewRedeem(bobShares);
