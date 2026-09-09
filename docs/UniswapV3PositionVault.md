@@ -175,6 +175,16 @@ position rebalanced wholly onto one side and a dust donation of the other, a 0.1
 old percentage bound was charged **4,202,800 USDC** at the tightest setting that bound allowed. Two
 absolute amounts refuse it; `test_deposit_cannotBeMadeToSpendTheWholeOtherSide` pins that.
 
+**The two amounts bound the spend; `minShares` bounds the fill.** They are different questions. A
+deposit takes what the ratio needs at the price when the transaction lands, not when it was signed,
+so a caller who offered generously on both sides has left the size of their purchase entirely to the
+pool — both offers can be respected while the fill comes in well under what was quoted. Nothing else
+constrains that: shares are priced on the liquidity actually added, and the only other check is that
+it is non-zero. Quote it with `previewLiquidity`, which reports the liquidity an amount opens, and
+pass zero to accept any fill. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
+inside the vault's own tolerance, so its guard never fires, and shows both offers holding while the
+fill lands short.
+
 Quote the pairing with `previewCounterAmount` against the active position and allow a little over for
 the price moving between the quote and the transaction. Pass amounts you actually hold rather than a
 sentinel: each offer is turned into a share count by multiplying by the supply, so a very large value

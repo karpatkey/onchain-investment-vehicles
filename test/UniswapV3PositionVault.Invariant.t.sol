@@ -69,7 +69,7 @@ contract VaultHandler is Test {
         uint256 supplyPricedAgainst = vault.totalSupply();
 
         vm.prank(actor);
-        try vault.deposit(offer0, offer1, block.timestamp) {
+        try vault.deposit(offer0, offer1, 0, block.timestamp) {
             deposits++;
             if (supplyPricedAgainst < smallestSupplyADepositWasPricedAgainst) {
                 smallestSupplyADepositWasPricedAgainst = supplyPricedAgainst;

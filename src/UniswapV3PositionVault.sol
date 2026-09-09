@@ -254,13 +254,25 @@ contract UniswapV3PositionVault is
     ///         Pass what you actually hold rather than a sentinel; a very large value for both sides
     ///         has no meaningful answer and the share arithmetic will revert rather than return one.
     ///         previewCounterAmount quotes one side against the other for the active position.
+    ///
+    ///         The two amounts bound what leaves the caller's wallet. They say nothing about what
+    ///         comes back, so minShares bounds that: it is the only limit on the rate at which the
+    ///         deposit is filled. It matters because a deposit takes what the ratio needs at the
+    ///         pool's price when the transaction lands, not when it was signed, so a caller who
+    ///         offered generously on both sides could be filled at a size they did not intend.
+    ///         Quote it with previewLiquidity, which reports the liquidity an amount opens, and the
+    ///         opening share supply is that liquidity. Zero accepts any fill.
+    ///
+    ///         The vault's own manipulation guard runs regardless, so this is a bound the caller
+    ///         chooses on top of one they do not.
     /// @param amount0Desired The most token0 to spend.
     /// @param amount1Desired The most token1 to spend.
+    /// @param minShares      The fewest shares the caller will accept. Zero to accept any.
     /// @param deadline       Latest timestamp at which the deposit may execute.
     /// @return shares  Shares minted to the caller.
     /// @return amount0 Token0 actually taken.
     /// @return amount1 Token1 actually taken.
-    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 deadline)
+    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 minShares, uint256 deadline)
         external
         nonReentrant
         checkDeadline(deadline)
@@ -315,6 +327,7 @@ contract UniswapV3PositionVault is
         shares = UniswapV3VaultMath.sharesForLiquidity(supply, mintedLiquidity, liquidity);
         if (shares > targetShares) shares = targetShares;
         if (shares == 0) revert ZeroShares();
+        if (shares < minShares) revert InsufficientShares(shares, minShares);
 
         amount0 += UniswapV3VaultMath.idleShare(idle0, shares, supply);
         amount1 += UniswapV3VaultMath.idleShare(idle1, shares, supply);

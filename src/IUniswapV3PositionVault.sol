@@ -79,6 +79,11 @@ interface IUniswapV3PositionVault {
     /// @notice The operation would mint or burn zero shares.
     error ZeroShares();
 
+    /// @notice A deposit would mint fewer shares than the caller was willing to accept.
+    /// @param received The shares the deposit would have minted.
+    /// @param minimum  The fewest the caller would accept.
+    error InsufficientShares(uint256 received, uint256 minimum);
+
     /// @notice Thrown when a share supply is too small to price a deposit against: either the vault
     ///         is being opened with a negligible position, or a deposit is being made into a vault
     ///         whose supply has been redeemed down to a residue. Redemptions themselves are never
@@ -236,11 +241,12 @@ interface IUniswapV3PositionVault {
     /// @notice Buys into the position with both token amounts, in the shape of increaseLiquidity.
     /// @param amount0Desired The most token0 to spend.
     /// @param amount1Desired The most token1 to spend.
+    /// @param minShares      The fewest shares the caller will accept. Zero to accept any.
     /// @param deadline       Latest timestamp at which the call may execute.
     /// @return shares  Shares minted to the caller.
     /// @return amount0 Token0 actually taken.
     /// @return amount1 Token1 actually taken.
-    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 deadline)
+    function deposit(uint256 amount0Desired, uint256 amount1Desired, uint256 minShares, uint256 deadline)
         external
         returns (uint256 shares, uint256 amount0, uint256 amount1);
 

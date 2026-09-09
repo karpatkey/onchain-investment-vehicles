@@ -103,17 +103,17 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         // While the vault is inside deposit and has handed control to the position manager, try to
         // start a second deposit.
         manager.armIncreaseAttack(
-            address(vault), abi.encodeCall(vault.deposit, (100e18, UNBOUNDED, block.timestamp + 1))
+            address(vault), abi.encodeCall(vault.deposit, (100e18, UNBOUNDED, 0, block.timestamp + 1))
         );
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
-        vault.deposit(1000e18, UNBOUNDED, block.timestamp);
+        vault.deposit(1000e18, UNBOUNDED, 0, block.timestamp);
     }
 
     function test_reentrancy_redeemCannotReenterFromThePositionManager() public {
         vm.prank(alice);
-        (uint256 shares,,) = vault.deposit(1000e18, UNBOUNDED, block.timestamp);
+        (uint256 shares,,) = vault.deposit(1000e18, UNBOUNDED, 0, block.timestamp);
 
         // A redemption collects fees before it burns, so the manager gets control while the vault's
         // supply and balances still say the caller owns what they are about to give up.
@@ -138,7 +138,7 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
 
     function test_reentrancy_rebalanceCannotReenterFromTheSwap() public {
         vm.prank(alice);
-        vault.deposit(1000e18, UNBOUNDED, block.timestamp);
+        vault.deposit(1000e18, UNBOUNDED, 0, block.timestamp);
 
         // Leave the vault holding only token0, so the rebalance has to swap.
         vm.prank(curator);
