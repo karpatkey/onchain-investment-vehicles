@@ -86,8 +86,7 @@ INVESTOR
 | `createPosition` | | ✅ | ✅ | |
 | `rebalance` / `rebalanceWithSwap` | | ✅ | | |
 | `unwindPosition` | | ✅ | | |
-| `addLiquidity` / `removeLiquidity` | | ✅ | | |
-| `collectFees` | | ✅ | | |
+| `compound` / `removeLiquidity` | | ✅ | | |
 | `setTwapConfig` | ✅ | | | |
 | `setAssetRecoverer` | ✅ | | | |
 | `upgradeToAndCall` | ✅ | | | |
@@ -236,7 +235,12 @@ that same side.
 
 ### 5. Maintenance
 
-`collectFees` collects and reinvests in one step. `addLiquidity` puts idle balances back to work.
+`compound` collects the position's fees and folds every idle balance back into it, in one step. It
+folds more than fees: the residue a trim or a non-trading rebalance left behind, and anything
+donated. It returns zero, rather than reverting, when a one-sided balance cannot be paired into a
+range that straddles the price — the fees are collected before the pairing is attempted, so refusing
+would throw away a collection that had already happened. This was two functions, `collectFees` and
+`addLiquidity`, with identical bodies apart from that revert.
 `removeLiquidity` trims the position into idle balances. `unwindPosition` closes it entirely,
 leaving everything idle and `activeTokenId()` at zero.
 
@@ -374,7 +378,7 @@ on fees earned before they arrived and a redeemer always takes their share of fe
 moment they leave. Collecting is price-independent, so it is safe to do on a call anyone can make.
 
 **Folding the idle balance into the position is a curator action only**, reachable through
-`collectFees`, `addLiquidity` and either `rebalance`, all of which run behind the manipulation guard.
+`compound` and either `rebalance`, both of which run behind the manipulation guard.
 The asymmetry is not arbitrary. Releasing a position is concave in price, which is why
 `unwindPosition` and `removeLiquidity` need no guard at all: a composition released at a moved price
 is worth at least as much at the true price as the position itself would have been. Acquiring one is
@@ -413,7 +417,7 @@ An allowance measured against a live reference does not.
 
 Every operation that takes or derives a price compares the pool's spot price against its own
 time-weighted average over an admin-configured window and refuses to proceed beyond an
-admin-configured tolerance. That is `createPosition`, both rebalances, `collectFees`, `addLiquidity`,
+admin-configured tolerance. That is `createPosition`, both rebalances, `compound`,
 `deposit` and `redeem`.
 
 **`unwindPosition` and `removeLiquidity` are deliberately outside it, and need no deadline either.**

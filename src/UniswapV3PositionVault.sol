@@ -471,13 +471,23 @@ contract UniswapV3PositionVault is
 
     /// @notice Collects the position's fees and folds every idle balance back into it.
     /// @dev    Fees are compounded rather than distributed, and this is where that happens. The
-    ///         investor paths collect but never fold, so the idle balance a trim or a non-trading
-    ///         rebalance leaves behind waits for this call, addLiquidity, or a rebalance.
-    /// @param deadline Latest timestamp at which the call may execute. It folds the idle balance
-    ///                 into the position at the pool's current price, so a stale one compounds at a
-    ///                 ratio the curator never chose.
-    /// @return liquidity Liquidity added back into the position.
-    function collectFees(uint256 deadline)
+    ///         investor paths collect without folding, because buying liquidity at a price the
+    ///         caller arrived at is a way to take value out of the vault; folding is therefore a
+    ///         curator action, behind the manipulation guard.
+    ///
+    ///         It folds more than fees. Anything sitting idle goes in: the residue a trim or a
+    ///         non-trading rebalance left behind, and anything donated. That is why it is not called
+    ///         compoundFees.
+    ///
+    ///         Returning zero is a normal outcome, not a failure. A one-sided idle balance cannot be
+    ///         paired into a range that straddles the price, so nothing is added. The fees are
+    ///         collected before that pairing is attempted, so reverting on a zero result would throw
+    ///         away a collection that had already happened — which is what the old addLiquidity did,
+    ///         and why the two were merged rather than one being renamed.
+    /// @param deadline Latest timestamp at which the call may execute. It folds at the pool's
+    ///                 current price, so a stale one compounds at a ratio the curator never chose.
+    /// @return liquidity Liquidity added back into the position, zero when nothing could be paired.
+    function compound(uint256 deadline)
         external
         nonReentrant
         isCurator
@@ -487,25 +497,6 @@ contract UniswapV3PositionVault is
         if (activeTokenId == 0) revert NoActivePosition();
         _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
         liquidity = _compound();
-    }
-
-    /// @notice Adds the vault's idle balances to the active position.
-    /// @dev    Only the part of the idle balances that matches the position's ratio can be added;
-    ///         a one-sided remainder stays idle until a rebalance swaps it.
-    /// @param deadline Latest timestamp at which the call may execute, for the same reason as
-    ///                 collectFees: it adds at the pool's current price.
-    /// @return liquidity Liquidity added.
-    function addLiquidity(uint256 deadline)
-        external
-        nonReentrant
-        isCurator
-        checkDeadline(deadline)
-        returns (uint128 liquidity)
-    {
-        if (activeTokenId == 0) revert NoActivePosition();
-        _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
-        liquidity = _compound();
-        if (liquidity == 0) revert NothingToAdd();
     }
 
     /// @notice Withdraws part of the position's liquidity into the vault's idle balances.

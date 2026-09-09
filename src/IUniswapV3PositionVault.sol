@@ -70,9 +70,6 @@ interface IUniswapV3PositionVault {
     /// @param available Amount the vault holds.
     error InsufficientIdleBalance(address token, uint256 required, uint256 available);
 
-    /// @notice No idle balance could be added to the active position.
-    error NothingToAdd();
-
     /// @notice The vault holds nothing that could fund a new position.
     error NothingToRebalance();
 
@@ -283,10 +280,10 @@ interface IUniswapV3PositionVault {
     function unwindPosition() external returns (uint256 amount0, uint256 amount1);
 
     /// @notice Collects the position's fees and folds every idle balance back into it.
-    function collectFees(uint256 deadline) external returns (uint128 liquidity);
-
-    /// @notice Folds the vault's idle balances into the active position.
-    function addLiquidity(uint256 deadline) external returns (uint128 liquidity);
+    /// @dev    Folds more than fees: the residue a trim or a non-trading rebalance left, and
+    ///         anything donated. Returns zero when a one-sided balance cannot be paired, which is a
+    ///         normal outcome — the fees were still collected.
+    function compound(uint256 deadline) external returns (uint128 liquidity);
 
     /// @notice Trims liquidity out of the position, leaving the tokens idle in the vault.
     function removeLiquidity(uint128 liquidity) external returns (uint256 amount0, uint256 amount1);

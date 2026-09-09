@@ -223,10 +223,10 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         assertGt(_positionLiquidity(), before, "the deposit's own liquidity went in");
 
         // Putting the residue itself to work is a curator call, and a one-sided residue needs the
-        // trading rebalance rather than addLiquidity, which has nothing it can pair.
+        // trading rebalance: compound has nothing to pair it with, so it adds nothing and says so
+        // by returning zero rather than by reverting.
         vm.prank(curator);
-        vm.expectRevert(IUniswapV3PositionVault.NothingToAdd.selector);
-        vault.addLiquidity(block.timestamp);
+        assertEq(vault.compound(block.timestamp), 0, "a one-sided residue cannot be folded in");
     }
 
     function test_rebalanceWithSwap_keepsShareholdersWholeAcrossTheMove() public {

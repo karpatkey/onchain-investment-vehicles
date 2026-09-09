@@ -173,7 +173,7 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
         uint128 before = _positionLiquidity();
 
         vm.prank(curator);
-        uint128 added = vault.collectFees(block.timestamp);
+        uint128 added = vault.compound(block.timestamp);
 
         assertGt(added, 0, "fees were reinvested");
         assertEq(_positionLiquidity(), before + added, "position grew by the reinvested amount");

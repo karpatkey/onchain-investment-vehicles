@@ -114,9 +114,9 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.unwindPosition();
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.collectFees(block.timestamp);
+        vault.compound(block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.addLiquidity(block.timestamp);
+        vault.compound(block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.removeLiquidity(1);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
@@ -915,7 +915,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         uint128 before = _positionLiquidity();
 
         vm.prank(curator);
-        uint128 added = vault.collectFees(block.timestamp);
+        uint128 added = vault.compound(block.timestamp);
 
         assertGt(added, 0, "fees were reinvested");
         assertEq(_positionLiquidity(), before + added, "position grew by the reinvested amount");
@@ -924,7 +924,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     function test_collectFees_revertsWithoutAPosition() public {
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.NoActivePosition.selector);
-        vault.collectFees(block.timestamp);
+        vault.compound(block.timestamp);
     }
 
     //
@@ -983,18 +983,21 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _seedVault(10_000e6, 5e18);
 
         vm.prank(curator);
-        uint128 added = vault.addLiquidity(block.timestamp);
+        uint128 added = vault.compound(block.timestamp);
 
         assertGt(added, 0, "liquidity added");
         assertEq(_positionLiquidity(), before + added, "position grew");
     }
 
-    function test_addLiquidity_revertsWhenThereIsNothingToAdd() public {
+    function test_compound_addsNothingRatherThanRevertingWhenNothingCanBePaired() public {
+        // Opening a position leaves a one-sided token1 remainder, which cannot be paired into a
+        // range that straddles the price. addLiquidity used to revert here, and reverting is wrong:
+        // the fees are collected before the pairing is attempted, so refusing throws away a
+        // collection that already happened rather than declining to do anything.
         _openPosition(100_000e6);
 
         vm.prank(curator);
-        vm.expectRevert(IUniswapV3PositionVault.NothingToAdd.selector);
-        vault.addLiquidity(block.timestamp);
+        assertEq(vault.compound(block.timestamp), 0, "nothing could be paired, and that is not a failure");
     }
 
     //
@@ -1015,7 +1018,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         // Ordinary curator work is blocked too, not just the path that swaps.
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.collectFees(block.timestamp);
+        vault.compound(block.timestamp);
     }
 
     function test_setTwapConfig_refusesAWindowThePoolCannotAnswer() public {
