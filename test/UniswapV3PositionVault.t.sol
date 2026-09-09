@@ -66,13 +66,6 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         params.fee = 1234;
         _expectInitRevert(params, IUniswapV3PositionVault.PoolNotFound.selector);
         params.fee = FEE;
-
-        params.twapPeriod = 0;
-        _expectInitRevert(params, IUniswapV3PositionVault.InvalidArguments.selector);
-        params.twapPeriod = TWAP_PERIOD;
-
-        params.maxTwapDeviationBps = 10_001;
-        _expectInitRevert(params, IUniswapV3PositionVault.InvalidArguments.selector);
     }
 
     /// @notice Deploys a proxy with the given parameters and expects initialization to revert.
@@ -131,8 +124,6 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
     function test_adminFunctions_rejectEveryOtherCaller() public {
         vm.startPrank(curator);
-        vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.setTwapConfig(600, 100);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.setAssetRecoverer(stranger);
         vm.stopPrank();
@@ -585,20 +576,17 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     }
 
     function test_redeem_cannotBeLockedOutByOrdinaryVolatility() public {
-        // The configuration the deploy template ships with.
-        vm.prank(admin);
-        vault.setTwapConfig(600, 200);
-
         _openPosition(100_000e6);
         vm.prank(alice);
         (uint256 shares,,) = vault.deposit(10_000e6, UNBOUNDED, 0, block.timestamp);
 
-        // A three percent move is a routine day, and it is when holders most want out.
-        _movePriceBps(300);
+        // A move past the vault's own tolerance is a routine day, and it is exactly when holders
+        // most want out.
+        _movePriceBps(700);
 
         vm.prank(alice);
         vm.expectPartialRevert(IUniswapV3PositionVault.PriceDeviationTooHigh.selector);
-        vault.redeem(shares, 200, block.timestamp);
+        vault.redeem(shares, MAX_DEVIATION_BPS, block.timestamp);
 
         // What a redemption pays is a share of the liquidity and of the idle balances, and neither
         // depends on price, so waiving the bound costs the redeemer nothing but an unchosen split.
@@ -1021,20 +1009,6 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vault.compound(block.timestamp);
     }
 
-    function test_setTwapConfig_refusesAWindowThePoolCannotAnswer() public {
-        // Every guarded path asks the pool for this window, so accepting one the pool has no history
-        // for would leave the vault unable to take a deposit or move its position until somebody
-        // else grew the pool's observation buffer. The window is checked where it is set instead.
-        vm.prank(admin);
-        vm.expectPartialRevert(IUniswapV3PositionVault.TwapUnavailable.selector);
-        vault.setTwapConfig(type(uint32).max, 200);
-
-        // A window the pool can answer is still accepted.
-        vm.prank(admin);
-        vault.setTwapConfig(600, 200);
-        assertEq(vault.twapPeriod(), 600, "a window with history behind it is fine");
-    }
-
     function test_initialize_refusesAWindowThePoolCannotAnswer() public {
         IUniswapV3PositionVault.InitParams memory params = IUniswapV3PositionVault.InitParams({
             name: "n",
@@ -1053,20 +1027,6 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         address implementation = address(new UniswapV3PositionVault());
         vm.expectPartialRevert(IUniswapV3PositionVault.TwapUnavailable.selector);
         UnsafeUpgrades.deployUUPSProxy(implementation, abi.encodeCall(UniswapV3PositionVault.initialize, (params)));
-    }
-
-    function test_setTwapConfig_validatesAndEmits() public {
-        vm.startPrank(admin);
-        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
-        vault.setTwapConfig(0, 100);
-        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
-        vault.setTwapConfig(600, 0);
-
-        vault.setTwapConfig(600, 250);
-        vm.stopPrank();
-
-        assertEq(vault.twapPeriod(), 600, "period updated");
-        assertEq(vault.maxTwapDeviationBps(), 250, "tolerance updated");
     }
 
     function test_swapCallback_rejectsCallsFromOutsideARebalance() public {

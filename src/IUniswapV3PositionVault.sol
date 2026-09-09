@@ -222,11 +222,6 @@ interface IUniswapV3PositionVault {
         uint256 leftover1
     );
 
-    /// @notice Emitted when the admin changes the manipulation guard's configuration.
-    /// @param twapPeriod          The new window, in seconds.
-    /// @param maxTwapDeviationBps The new deviation cap, in basis points.
-    event TwapConfigUpdate(uint32 twapPeriod, uint16 maxTwapDeviationBps);
-
     /// @notice Emitted when the admin changes the recipient of recovered tokens.
     /// @param assetRecoverer The new recipient.
     event AssetRecovererUpdate(address indexed assetRecoverer);
@@ -306,9 +301,6 @@ interface IUniswapV3PositionVault {
     //
     // Administration
     //
-
-    /// @notice Sets the window and tolerance the manipulation guard uses.
-    function setTwapConfig(uint32 newTwapPeriod, uint16 newMaxTwapDeviationBps) external;
 
     /// @notice Sets the address stray tokens can be recovered to.
     function setAssetRecoverer(address newAssetRecoverer) external;

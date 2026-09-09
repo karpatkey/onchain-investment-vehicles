@@ -65,6 +65,14 @@ contract DeployUniswapV3PositionVault is Script {
         require(params.curator != address(0), "curator must be set in the config");
         require(params.assetRecoverer != address(0), "assetRecoverer must be set in the config");
 
+        // The vault does not police these: how tight or loose the guard should be is a judgement
+        // about the pool, and one implementation serves pools with very different characters. What
+        // it cannot survive is a value that is not a setting at all, and the config is now the only
+        // place either is ever written, so a typo here is permanent short of an upgrade.
+        require(params.twapPeriod != 0, "twapPeriod of zero divides by zero in the guard");
+        require(params.maxTwapDeviationBps != 0, "a zero deviation cap refuses every guarded call");
+        require(params.maxTwapDeviationBps <= 10_000, "a deviation cap above 100% is not a bound");
+
         // The deployer holds the admin role only for as long as it takes to grant the real one.
         params.admin = deployer;
 

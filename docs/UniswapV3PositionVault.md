@@ -87,7 +87,6 @@ INVESTOR
 | `rebalance` / `rebalanceWithSwap` | | ✅ | | |
 | `unwindPosition` | | ✅ | | |
 | `compound` / `removeLiquidity` | | ✅ | | |
-| `setTwapConfig` | ✅ | | | |
 | `setAssetRecoverer` | ✅ | | | |
 | `upgradeToAndCall` | ✅ | | | |
 | `grantRole` / `revokeRole` | ✅ | | | |
@@ -395,11 +394,21 @@ then it stays owned pro-rata by every holder, claimed in full by anyone who rede
 
 ### 0. A window the pool can answer
 
-`twapPeriod` is checked against the pool when it is set, at `initialize` and at `setTwapConfig`, not
-only when it is first used. Every guarded path asks the pool to average over that window, so one the
-pool has no observation history for would leave the vault unable to take a deposit or move its
-position until somebody else grew the pool's observation buffer. Checking it where it is set turns
-that into a rejected transaction instead of a vault that has to be waited out.
+**The guard's configuration is immutable.** `twapPeriod` and `maxTwapDeviationBps` are set once, at
+`initialize`, and there is no setter. Changing them means upgrading, which is a loud, visible act —
+whereas a parameter tweak is a quiet one, and the parameters in question are the only thing standing
+between the curator and an unguarded position. Making them immutable does not reduce what the admin
+*can* do, since the admin can already replace the implementation; it raises what they have to do in
+public to weaken the guard.
+
+The one thing still checked is that the pool can answer the window. Every guarded path asks the pool
+to average over it, so a window the pool has no observation history for would leave the vault unable
+to take a deposit or move its position until somebody else grew the pool's buffer. That is a
+usability failure with no recovery short of an upgrade, so it is refused at `initialize`. How tight
+or loose the tolerance should be is a judgement about the pool, and is not second-guessed on chain:
+one implementation serves pools of very different character, so any constant baked in would be wrong
+for some of them. The deploy script rejects values that are not settings at all — a zero window
+divides by zero in the guard, a zero cap refuses every guarded call — where it costs no bytecode.
 
 ### 0.1 Staleness
 

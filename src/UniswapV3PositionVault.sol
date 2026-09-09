@@ -170,7 +170,6 @@ contract UniswapV3PositionVault is
                 || params.positionManager == address(0)
         ) revert ZeroAddress();
         if (params.token0 >= params.token1) revert TokensNotSorted();
-        _validateTwapConfig(params.twapPeriod, params.maxTwapDeviationBps);
 
         address poolAddress = IUniswapV3Factory(INonfungiblePositionManager(params.positionManager).factory())
             .getPool(params.token0, params.token1, params.fee);
@@ -186,6 +185,10 @@ contract UniswapV3PositionVault is
         positionManager = INonfungiblePositionManager(params.positionManager);
         fee = params.fee;
         tickSpacing = IUniswapV3Pool(poolAddress).tickSpacing();
+        // The one thing still checked about the guard's configuration, because getting it wrong
+        // does not weaken the vault, it stops it: a window the pool has no history for makes every
+        // guarded call revert until somebody else grows the pool's observation buffer. How tight or
+        // loose the tolerance should be is the deployer's judgement and is not second-guessed here.
         UniswapV3VaultMath.requireTwapAvailable(pool, params.twapPeriod);
         twapPeriod = params.twapPeriod;
         maxTwapDeviationBps = params.maxTwapDeviationBps;
@@ -635,17 +638,6 @@ contract UniswapV3PositionVault is
     //
     // Admin Functions
     //
-
-    /// @notice Updates the manipulation guard's window and tolerance.
-    /// @param newTwapPeriod          The new window, in seconds.
-    /// @param newMaxTwapDeviationBps The new tolerance, in basis points.
-    function setTwapConfig(uint32 newTwapPeriod, uint16 newMaxTwapDeviationBps) external isAdmin {
-        _validateTwapConfig(newTwapPeriod, newMaxTwapDeviationBps);
-        UniswapV3VaultMath.requireTwapAvailable(pool, newTwapPeriod);
-        twapPeriod = newTwapPeriod;
-        maxTwapDeviationBps = newMaxTwapDeviationBps;
-        emit TwapConfigUpdate(newTwapPeriod, newMaxTwapDeviationBps);
-    }
 
     /// @notice Updates the recipient of tokens swept by recoverAssets.
     /// @param newAssetRecoverer The new recipient.
@@ -1421,12 +1413,5 @@ contract UniswapV3PositionVault is
         if (token.allowance(address(this), address(positionManager)) != 0) {
             token.forceApprove(address(positionManager), 0);
         }
-    }
-
-    /// @notice Validates a manipulation-guard configuration.
-    /// @param period The window, in seconds.
-    /// @param maxBps The tolerance, in basis points.
-    function _validateTwapConfig(uint32 period, uint16 maxBps) internal pure {
-        if (period == 0 || maxBps == 0 || maxBps > _MAX_BPS) revert InvalidArguments();
     }
 }
