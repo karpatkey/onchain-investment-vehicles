@@ -882,17 +882,6 @@ contract UniswapV3PositionVaultMathTest is Test {
         assertApproxEqRel(need0, 1000e18, 1e12, "the pairing round trips");
     }
 
-    function test_createPlan_revertsWhenTheAmountBuysNoLiquidity() public {
-        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
-        UniswapV3VaultMath.createPlan(
-            TickMath.getSqrtRatioAtTick(0),
-            TickMath.getSqrtRatioAtTick(-6000),
-            TickMath.getSqrtRatioAtTick(6000),
-            0,
-            true
-        );
-    }
-
     //
     // Helpers
     //

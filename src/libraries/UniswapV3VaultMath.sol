@@ -924,27 +924,6 @@ library UniswapV3VaultMath {
         if (need1 > balance1) need1 = balance1;
     }
 
-    /// @notice The position a single named amount funds, and what it costs on both sides.
-    /// @param sqrtPriceX96  The current pool price.
-    /// @param sqrtRatioAX96 The range's lower sqrt ratio.
-    /// @param sqrtRatioBX96 The range's upper sqrt ratio.
-    /// @param amount        Amount of the named token.
-    /// @param isAmount0     True when the amount is token0.
-    /// @return liquidity Liquidity that will be minted.
-    /// @return need0     Token0 required.
-    /// @return need1     Token1 required.
-    function createPlan(
-        uint160 sqrtPriceX96,
-        uint160 sqrtRatioAX96,
-        uint160 sqrtRatioBX96,
-        uint256 amount,
-        bool isAmount0
-    ) public pure returns (uint128 liquidity, uint256 need0, uint256 need1) {
-        liquidity = liquidityFromSingleAmount(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
-        if (liquidity == 0) revert IUniswapV3PositionVault.InvalidArguments();
-        (need0, need1) = amountsForLiquidity(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, liquidity, true);
-    }
-
     /// @notice Everything a deposit needs: how many shares the caller's maxima buy and what to take.
     /// @dev    Prices a share as a claim on the position and the idle balances together, so a
     ///         depositor buys into both in the same proportion and neither dilutes the other.

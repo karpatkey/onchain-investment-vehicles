@@ -30,6 +30,9 @@ contract VaultHandler is Test {
 
     address[3] public actors;
 
+    /// @notice An offer high enough not to bind, for the side a call is not about.
+    uint256 internal constant UNBOUNDED = type(uint128).max;
+
     /// @notice The smallest share supply any accepted deposit was priced against.
     uint256 public smallestSupplyADepositWasPricedAgainst = type(uint256).max;
 
@@ -135,7 +138,7 @@ contract VaultHandler is Test {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1500);
 
         vm.prank(curator);
-        try vault.createPosition(lower, upper, amount0, true, block.timestamp) {
+        try vault.createPosition(lower, upper, amount0, UNBOUNDED, block.timestamp) {
             creations++;
         } catch {}
     }

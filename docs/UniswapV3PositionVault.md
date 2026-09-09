@@ -109,9 +109,19 @@ caller up front, so a rejected account is turned away before its tokens are touc
 
 ### 1. Opening a position
 
-`createPosition(priceLower, priceUpper, amount, isAmount0, deadline)` opens the vault's only position. The
-curator names a price range and how much of **one** token to commit; the vault derives the other
-side from the pool's current price. Both amounts must already be sitting in the vault.
+`createPosition(priceLower, priceUpper, amount0Desired, amount1Desired, deadline)` opens the vault's only position. The
+curator names a price range and how much of **each** token to commit, and the vault mints the
+liquidity the tighter of the two funds. Both are maxima; neither is exceeded, and both must already
+be sitting in the vault.
+
+Both are bounded for the same reason a deposit's are. What the second side costs is a steep function
+of price near a range boundary, and the manipulation guard bounds the price only to the vault's own
+tolerance rather than to zero — so someone can move the pool inside that tolerance before the
+curator's transaction lands. Measured on the mainnet USDC/WETH pool with a range five percent wide: a
+190 basis point move, inside the 200 point tolerance the fixture ships, takes what 100,000 USDC needs
+alongside it from **41.9 WETH to 93.6**. Minting is the direction a wrong price punishes, so naming
+one amount and letting the other follow put no ceiling on the commitment except what the vault
+happened to hold. `test_createPosition_cannotBeMadeToCommitMoreThanTheCuratorAllowed` pins it.
 
 When the vault has no shares outstanding, the liquidity minted here becomes the opening share
 supply, credited to the caller. Shares and liquidity therefore start one-to-one.

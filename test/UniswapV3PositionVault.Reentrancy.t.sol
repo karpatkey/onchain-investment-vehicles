@@ -176,6 +176,6 @@ contract UniswapV3PositionVaultReentrancyTest is Test {
         token1.mint(address(vault), 10_000e18);
 
         vm.prank(curator);
-        vault.createPosition(PRICE_LOWER, PRICE_UPPER, 1000e18, true, block.timestamp);
+        vault.createPosition(PRICE_LOWER, PRICE_UPPER, 1000e18, UNBOUNDED, block.timestamp);
     }
 }

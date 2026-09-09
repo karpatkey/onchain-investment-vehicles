@@ -391,24 +391,36 @@ contract UniswapV3PositionVault is
     // Curator Operations
     //
 
-    /// @notice Opens the vault's position, sizing it from one named token amount.
-    /// @dev    The counter amount is derived from the pool's current price, so the caller only has
-    ///         to decide how much of one token to commit. Both amounts must already sit idle in the
-    ///         vault. When the vault has no shares outstanding, the liquidity minted here becomes
-    ///         the initial share supply and is credited to the caller, who must therefore be
-    ///         allowed to hold shares.
-    /// @param priceLower Lower bound of the range, as a 1e18-scaled human price.
-    /// @param priceUpper Upper bound of the range, as a 1e18-scaled human price.
-    /// @param amount     Amount of the named token to commit.
-    /// @param isAmount0  True when the amount is token0, false when it is token1.
-    /// @param deadline   Latest timestamp at which the position may be opened. The range is chosen
-    ///                   against a price the curator saw, so a transaction that sits in the mempool
-    ///                   through a real move would otherwise open a range that is already wrong.
-    /// @return tokenId   The new position NFT id.
+    /// @notice Opens the vault's only position, funded by both token amounts.
+    /// @dev    The curator names a price range and how much of each token to commit, and the vault
+    ///         mints the liquidity the tighter of the two funds. Both amounts are maxima; neither is
+    ///         exceeded, and both must already be sitting in the vault.
+    ///
+    ///         Both are bounded for the same reason a deposit's are. What the second side costs is a
+    ///         steep function of price near a range boundary, and the manipulation guard bounds the
+    ///         price only to the vault's own tolerance, not to zero. Measured on the mainnet
+    ///         USDC/WETH pool with a range five percent wide: a 190 basis point move, inside the
+    ///         two hundred point tolerance the fixture ships, takes what 100,000 USDC needs
+    ///         alongside it from 41.9 WETH to 93.6. Minting is the direction a wrong price
+    ///         punishes — buying liquidity at P' and valuing it at P costs the difference — so a
+    ///         curator who named one amount and let the other follow could be made to commit more
+    ///         than twice what they quoted, bounded only by what the vault happens to hold.
+    /// @param priceLower     Lower bound of the range, as a 1e18-scaled human price.
+    /// @param priceUpper     Upper bound of the range.
+    /// @param amount0Desired The most token0 to commit.
+    /// @param amount1Desired The most token1 to commit.
+    /// @param deadline       Latest timestamp at which the call may execute.
+    /// @return tokenId   The new position's NFT id.
     /// @return liquidity Liquidity minted.
-    /// @return amount0   Token0 consumed.
-    /// @return amount1   Token1 consumed.
-    function createPosition(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0, uint256 deadline)
+    /// @return amount0   Token0 actually committed.
+    /// @return amount1   Token1 actually committed.
+    function createPosition(
+        uint256 priceLower,
+        uint256 priceUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 deadline
+    )
         external
         nonReentrant
         isCurator
@@ -416,15 +428,16 @@ contract UniswapV3PositionVault is
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
     {
         if (activeTokenId != 0) revert PositionAlreadyActive();
-        if (amount == 0) revert InvalidArguments();
+        if (amount0Desired == 0 && amount1Desired == 0) revert InvalidArguments();
         _checkPriceDeviation(twapPeriod, maxTwapDeviationBps);
 
         (int24 tickLower, int24 tickUpper) = priceRangeToTicks(priceLower, priceUpper);
         (uint160 sqrtRatioAX96, uint160 sqrtRatioBX96) = UniswapV3VaultMath.sqrtRatiosForTicks(tickLower, tickUpper);
         uint160 sqrtPriceX96 = _spotSqrtPrice();
 
-        (, uint256 need0, uint256 need1) =
-            UniswapV3VaultMath.createPlan(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount, isAmount0);
+        (uint128 fundable, uint256 need0, uint256 need1) =
+            UniswapV3VaultMath.positionPlan(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0Desired, amount1Desired);
+        if (fundable == 0) revert InvalidArguments();
         _requireIdle(token0, need0);
         _requireIdle(token1, need1);
 

@@ -259,10 +259,19 @@ interface IUniswapV3PositionVault {
     // Curator operations
     //
 
-    /// @notice Opens the vault's only position.
-    function createPosition(uint256 priceLower, uint256 priceUpper, uint256 amount, bool isAmount0, uint256 deadline)
-        external
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    /// @notice Opens the vault's only position, funded by both token amounts.
+    /// @param priceLower     Lower bound of the range, as a 1e18-scaled human price.
+    /// @param priceUpper     Upper bound of the range.
+    /// @param amount0Desired The most token0 to commit.
+    /// @param amount1Desired The most token1 to commit.
+    /// @param deadline       Latest timestamp at which the call may execute.
+    function createPosition(
+        uint256 priceLower,
+        uint256 priceUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 deadline
+    ) external returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
 
     /// @notice Closes the position, leaving everything it held idle in the vault.
     function unwindPosition() external returns (uint256 amount0, uint256 amount1);

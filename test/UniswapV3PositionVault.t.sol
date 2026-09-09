@@ -110,7 +110,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.startPrank(stranger);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
-        vault.createPosition(lower, upper, 1e6, true, block.timestamp);
+        vault.createPosition(lower, upper, 1e6, UNBOUNDED, block.timestamp);
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
         vault.unwindPosition();
         vm.expectRevert(IUniswapV3PositionVault.NotAuthorized.selector);
@@ -199,7 +199,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         (uint256 tokenId, uint128 liquidity, uint256 used0, uint256 used1) =
-            vault.createPosition(lower, upper, amount0, true, block.timestamp);
+            vault.createPosition(lower, upper, amount0, UNBOUNDED, block.timestamp);
 
         assertGt(tokenId, 0, "position minted");
         assertEq(vault.activeTokenId(), tokenId, "recorded as active");
@@ -223,7 +223,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         _seedVault(need0, amount1);
 
         vm.prank(curator);
-        (, uint128 liquidity,, uint256 used1) = vault.createPosition(lower, upper, amount1, false, block.timestamp);
+        (, uint128 liquidity,, uint256 used1) = vault.createPosition(lower, upper, UNBOUNDED, amount1, block.timestamp);
 
         assertGt(liquidity, 0, "position opened from token1");
         assertApproxEqRel(used1, amount1, 1e15, "consumes the named amount");
@@ -236,7 +236,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         vm.expectRevert(
             abi.encodeWithSelector(IUniswapV3PositionVault.InsufficientIdleBalance.selector, USDC, 100_000e6, 0)
         );
-        vault.createPosition(lower, upper, 100_000e6, true, block.timestamp);
+        vault.createPosition(lower, upper, 100_000e6, UNBOUNDED, block.timestamp);
     }
 
     function test_createPosition_refusesAStaleTransaction() public {
@@ -247,7 +247,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         // a range that may already be wrong.
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.DeadlineExpired.selector);
-        vault.createPosition(lower, upper, 10_000e6, true, block.timestamp - 1);
+        vault.createPosition(lower, upper, 10_000e6, UNBOUNDED, block.timestamp - 1);
     }
 
     function test_createPosition_revertsWhenOneIsAlreadyOpen() public {
@@ -256,7 +256,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         vm.expectRevert(IUniswapV3PositionVault.PositionAlreadyActive.selector);
-        vault.createPosition(lower, upper, 1e6, true, block.timestamp);
+        vault.createPosition(lower, upper, 1e6, UNBOUNDED, block.timestamp);
     }
 
     function test_previewCounterAmount_matchesWhatTheDepositConsumes() public {
@@ -353,7 +353,42 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     /// @notice Opens a deliberately narrow position around a given price.
     function _createNarrowPosition(uint256 spot) internal returns (uint256 tokenId) {
         (tokenId,,,) =
-            vault.createPosition(spot * 9900 / 10_000, spot * 10_100 / 10_000, 200_000e6, true, block.timestamp);
+            vault.createPosition(spot * 9900 / 10_000, spot * 10_100 / 10_000, 200_000e6, UNBOUNDED, block.timestamp);
+    }
+
+    function test_createPosition_cannotBeMadeToCommitMoreThanTheCuratorAllowed() public {
+        // The range is chosen against a price the curator saw. What the second side costs is a steep
+        // function of price near a range boundary, and the manipulation guard bounds the price only
+        // to the vault's own tolerance rather than to zero, so someone can move the pool inside that
+        // tolerance before the transaction lands. Naming one amount and letting the other follow put
+        // no ceiling on what the vault committed except what it happened to hold.
+        uint256 spot = _spotPrice();
+        uint256 lower = spot * 9500 / 10_000;
+        uint256 upper = spot * 10_500 / 10_000;
+        uint256 amount0 = 100_000e6;
+
+        uint256 quoted1 = vault.previewCounterAmountForRange(lower, upper, amount0, true);
+
+        // The vault holds three times the quote, which under the old shape was the only limit.
+        _seedVault(amount0, quoted1 * 3);
+
+        _movePriceBps(190);
+
+        uint256 allowed1 = quoted1 * 105 / 100;
+        vm.prank(curator);
+        (,, uint256 used0, uint256 used1) = vault.createPosition(lower, upper, amount0, allowed1, block.timestamp);
+
+        assertLe(used1, allowed1, "never more token1 than the curator allowed");
+        assertLe(used0, amount0, "never more token0 either");
+    }
+
+    function test_createPosition_refusesAmountsThatBuyNoLiquidity() public {
+        _seedVault(1000e6, 1e18);
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
+
+        vm.prank(curator);
+        vm.expectRevert(IUniswapV3PositionVault.InvalidArguments.selector);
+        vault.createPosition(lower, upper, 0, 0, block.timestamp);
     }
 
     //
@@ -670,7 +705,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         (uint256 lower, uint256 upper) = _rangeAroundSpot(1000);
         vm.prank(curator);
         vm.expectPartialRevert(IUniswapV3PositionVault.SupplyTooSmall.selector);
-        vault.createPosition(lower, upper, 1, true, block.timestamp);
+        vault.createPosition(lower, upper, 1, UNBOUNDED, block.timestamp);
     }
 
     function test_redeem_neverBuysLiquidityAtAPriceTheCallerChose() public {

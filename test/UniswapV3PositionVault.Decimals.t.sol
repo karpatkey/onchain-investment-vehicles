@@ -115,7 +115,7 @@ contract UniswapV3PositionVaultDecimalsTest is UniswapV3PositionVaultTestBase {
 
         vm.prank(curator);
         (uint256 tokenId, uint128 liquidity, uint256 used0, uint256 used1) =
-            vault.createPosition(lower, upper, amount0, true, block.timestamp);
+            vault.createPosition(lower, upper, amount0, UNBOUNDED, block.timestamp);
 
         assertGt(tokenId, 0, "position minted");
         assertGt(liquidity, 0, "liquidity minted");
