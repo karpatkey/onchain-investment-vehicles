@@ -984,7 +984,8 @@ contract UniswapV3PositionVault is
     /// @param tickLower The range's lower tick.
     /// @param tickUpper The range's upper tick.
     /// @param move      The settings this rebalance is being carried out under.
-    /// @return trade What was traded, or zeros when the balances already fitted the range.
+    /// @return trade What was traded, or zeros when no trade would have funded more liquidity than
+    ///               the balances already do.
     function _swapIntoRange(int24 tickLower, int24 tickUpper, Move memory move) internal returns (Trade memory trade) {
         uint160 sqrtPriceX96 = _spotSqrtPrice();
         (trade.zeroForOne, trade.amountIn) = _solveSwap(sqrtPriceX96, tickLower, tickUpper);

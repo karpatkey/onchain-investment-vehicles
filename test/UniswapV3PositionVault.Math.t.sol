@@ -674,6 +674,27 @@ contract UniswapV3PositionVaultMathTest is Test {
         );
     }
 
+    function testFuzz_liquidityForAmount_neverRevertsAnywhereUniswapCanPrice(
+        uint256 amountSeed,
+        int256 lowSeed,
+        int256 highSeed,
+        bool isAmount0
+    ) public view {
+        // The saturation threshold is itself a mulDiv, and a mulDiv reverts when its result does not
+        // fit a uint256. Whether that is reachable is the sort of claim worth pinning rather than
+        // arguing: this sweeps the whole tick range Uniswap can represent, at every balance from one
+        // wei to a trillion tokens, and requires an answer every time.
+        int24 lower = int24(bound(lowSeed, TickMath.MIN_TICK, TickMath.MAX_TICK - 1));
+        int24 upper = int24(bound(highSeed, int256(lower) + 1, TickMath.MAX_TICK));
+        uint256 amount = bound(amountSeed, 1, 1e30);
+
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(lower);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(upper);
+
+        if (isAmount0) harness.liquidityForAmount0Saturating(sqrtA, sqrtB, amount);
+        else harness.liquidityForAmount1Saturating(sqrtA, sqrtB, amount);
+    }
+
     function testFuzz_liquidityForAmount_matchesUpstreamWhereverUpstreamAnswers(
         uint256 amountSeed,
         uint16 widthSeed,

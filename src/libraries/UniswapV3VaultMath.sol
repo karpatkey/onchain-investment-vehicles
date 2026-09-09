@@ -221,8 +221,10 @@ library UniswapV3VaultMath {
     ///         mintable liquidity materially — so the price a chosen amount really reaches can mint
     ///         a little less than the probe said. Everything the search returns is therefore checked
     ///         once more against the price the amount genuinely reaches, and dropped if it does not
-    ///         beat not swapping. That makes "never worse than doing nothing" true by construction
-    ///         rather than by argument.
+    ///         beat not swapping. Within this model that makes "never worse than doing nothing" a
+    ///         property of the code rather than an argument about it. The model holds the pool's
+    ///         liquidity constant, so a swap that crosses an initialized tick is still bounded the
+    ///         way the note on the endpoint returns describes, not by this check.
     /// @param params      The sizing inputs.
     /// @param zeroForOne  Whether token0 is the side being sold.
     /// @param amountIn    The candidate amount.
