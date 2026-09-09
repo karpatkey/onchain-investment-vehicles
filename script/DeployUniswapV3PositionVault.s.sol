@@ -32,6 +32,13 @@ import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 ///           per-fund instance rather than shared infrastructure, so it deliberately does not use
 ///           the CREATE2 salt scheme in script/base/OivChainDeploy.sol.
 ///
+///           The library is built twice. Restricting the vault to the size-favouring profile pulls
+///           its imports in with it, so out/ carries both UniswapV3VaultMath.json (the repository
+///           default, optimizer_runs = 2000) and UniswapV3VaultMath.vault-size.json (runs = 60).
+///           They behave identically but are different bytecode. Before verifying the deployed
+///           library, compare its on-chain runtime against both artifacts and use the settings of
+///           whichever matches; assuming the repository default will silently fail to verify.
+///
 /// Usage:
 ///   source .env && forge script script/DeployUniswapV3PositionVault.s.sol:DeployUniswapV3PositionVault \
 ///     --rpc-url mainnet --broadcast --sig "run(string)" usdc-weth-mainnet

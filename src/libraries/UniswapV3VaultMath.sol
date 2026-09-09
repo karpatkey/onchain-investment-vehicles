@@ -655,14 +655,10 @@ library UniswapV3VaultMath {
             degenerate = hi <= lo;
         }
 
-        // The price the whole budget would reach, held clear of the edges for the same reason every
-        // other probe is: it is only safe to evaluate the model at a price outside the range, where
-        // one side funds nothing, or at one held off the boundary.
+        // The price the whole budget would reach. It needs no clamping of its own: outside the range
+        // one side funds nothing, at an edge the caps are taken over the whole range, and inside the
+        // range they saturate rather than revert.
         uint160 spentAll = sqrtLimit;
-        if (spentAll > sqrtA && spentAll < sqrtB) {
-            if (spentAll < innerLow) spentAll = innerLow;
-            if (spentAll > innerHigh) spentAll = innerHigh;
-        }
 
         // Every early return below picks between named candidates rather than assuming an extreme,
         // and the comparison is made against this model, in which the pool's liquidity is the

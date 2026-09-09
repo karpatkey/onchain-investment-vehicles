@@ -464,6 +464,17 @@ The vault links `UniswapV3VaultMath`, which forge deploys and links automaticall
 compiled with a size-favouring setting declared in `foundry.toml`; no other contract is affected, so
 no existing CREATE2 address moves.
 
+**That restriction reaches the library too, and it matters when verifying.** Restricting the vault
+pulls its imports into the same profile, so `out/` holds two builds of `UniswapV3VaultMath` — the
+repository default at `optimizer_runs = 2000`, and a `vault-size` build at 60. They behave
+identically and nothing on chain breaks, but they are different bytecode. Measured on this branch:
+`UniswapV3PositionVault.json` carries `runs = 60`, `UniswapV3VaultMath.json` carries 2000 and
+`UniswapV3VaultMath.vault-size.json` carries 60.
+
+Before verifying a deployed library, compare its on-chain runtime bytecode against both artifacts and
+verify with the settings of whichever matches. Assuming the repository default will silently fail,
+and that failure looks like a source mismatch rather than a configuration one.
+
 Simplifying the investor functions to one named amount and one slippage bound also made the vault
 smaller, which bought back some room. It still sits only a few hundred bytes under the EIP-170 limit, and the
 optimizer setting has been lowered as far as it usefully goes. **Before any further external
