@@ -402,7 +402,9 @@ unsolicited NFT is rejected rather than silently custodied.
 
 ### 3. Reentrancy
 
-Every state-changing external function carries `nonReentrant`. Balances are read after the position
+Every state-changing external function carries `nonReentrant`, with one deliberate exception:
+`recoverAssets`, inherited from `RecoverFunds`, does not. It cannot move `token0` or `token1` —
+`_assetRecoverableAmount` returns zero for both — so it cannot reach anything shareholders own. Balances are read after the position
 manager has been called and shares are burned before tokens are paid out.
 
 ### 4. Curator trust

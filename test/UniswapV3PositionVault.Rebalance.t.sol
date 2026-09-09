@@ -199,7 +199,7 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         assertGt(leftoverUnderTightCap, leftoverUnderLooseCap, "a tighter cap converts less");
     }
 
-    function test_rebalanceWithSwap_leavesResidueThatTheNextDepositCompoundsAway() public {
+    function test_rebalanceWithSwap_leavesResidueThatADepositDoesNotFoldAway() public {
         _openPosition(200_000e6);
         (uint256 lower, uint256 upper) = _shiftedRange(2000, 500);
 
@@ -207,12 +207,26 @@ contract UniswapV3PositionVaultRebalanceTest is UniswapV3PositionVaultTestBase {
         vault.rebalanceWithSwap(lower, upper, MAX_IMPACT_BPS, 0, 0, block.timestamp);
 
         uint128 before = _positionLiquidity();
+        uint256 residue0 = token0.balanceOf(address(vault));
+        uint256 residue1 = token1.balanceOf(address(vault));
 
-        // A deposit compounds whatever the rebalance left behind before pricing the new shares.
+        // A deposit does not fold the residue; it pays a pro-rata share of it and leaves it where it
+        // is. Folding buys liquidity at whatever price the caller arrived at, which is why only the
+        // curator's guarded entry points do it.
         vm.prank(alice);
         vault.deposit(10_000e6, true, GENEROUS_SLIPPAGE_BPS, block.timestamp);
 
-        assertGt(_positionLiquidity(), before, "the residue went back to work");
+        assertGe(token0.balanceOf(address(vault)), residue0, "the token0 residue is still idle");
+        assertGe(token1.balanceOf(address(vault)), residue1, "the token1 residue is still idle");
+
+        // The position still grew, by what this depositor funded and by nothing else.
+        assertGt(_positionLiquidity(), before, "the deposit's own liquidity went in");
+
+        // Putting the residue itself to work is a curator call, and a one-sided residue needs the
+        // trading rebalance rather than addLiquidity, which has nothing it can pair.
+        vm.prank(curator);
+        vm.expectRevert(IUniswapV3PositionVault.NothingToAdd.selector);
+        vault.addLiquidity(block.timestamp);
     }
 
     function test_rebalanceWithSwap_keepsShareholdersWholeAcrossTheMove() public {

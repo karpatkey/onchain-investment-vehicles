@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
+import {IUniswapV3Pool} from "./interfaces/IUniswapV3Pool.sol";
+
 /// @title  IUniswapV3PositionVault
 /// @author KPK
 /// @notice The errors, events and structs of UniswapV3PositionVault.
@@ -299,8 +304,62 @@ interface IUniswapV3PositionVault {
     function setAssetRecoverer(address newAssetRecoverer) external;
 
     //
+    // Configuration and state
+    //
+
+    /// @notice Role hash for the curator, who manages the position.
+    function CURATOR() external view returns (bytes32);
+
+    /// @notice Role hash for investors. Granted to address(0), it opens the vault to everyone.
+    function INVESTOR() external view returns (bytes32);
+
+    /// @notice The pool's lower-addressed token.
+    function token0() external view returns (IERC20);
+
+    /// @notice The pool's higher-addressed token.
+    function token1() external view returns (IERC20);
+
+    /// @notice The pool the vault's position lives in.
+    function pool() external view returns (IUniswapV3Pool);
+
+    /// @notice The position manager the vault mints through.
+    function positionManager() external view returns (INonfungiblePositionManager);
+
+    /// @notice The pool's fee tier, in hundredths of a basis point.
+    function fee() external view returns (uint24);
+
+    /// @notice The pool's tick spacing.
+    function tickSpacing() external view returns (int24);
+
+    /// @notice Seconds the manipulation guard averages the price over.
+    function twapPeriod() external view returns (uint32);
+
+    /// @notice How far the spot price may sit from that average, in basis points.
+    function maxTwapDeviationBps() external view returns (uint16);
+
+    /// @notice The NFT id of the active position, or zero when there is none.
+    /// @dev    Read it rather than caching it: it changes every time the position is closed and
+    ///         reopened, which a rebalance does.
+    function activeTokenId() external view returns (uint256);
+
+    /// @notice Where stray tokens can be recovered to.
+    function assetRecoverer() external view returns (address);
+
+    /// @notice `10**decimals1`, cached at initialization for the price conversions.
+    function priceScaleNum() external view returns (uint256);
+
+    /// @notice `1e18 * 10**decimals0`, cached at initialization for the price conversions.
+    function priceScaleDen() external view returns (uint256);
+
+    //
     // Views
     //
+
+    /// @notice Converts a human price, token1 per token0 and 1e18-scaled, into a Q64.96 sqrt ratio.
+    function priceToSqrtPriceX96(uint256 price) external view returns (uint160);
+
+    /// @notice The inverse: a Q64.96 sqrt ratio as a 1e18-scaled human price.
+    function sqrtPriceX96ToPrice(uint160 sqrtPriceX96) external view returns (uint256);
 
     /// @notice Whether an account may hold, buy or sell shares.
     function isInvestor(address account) external view returns (bool);

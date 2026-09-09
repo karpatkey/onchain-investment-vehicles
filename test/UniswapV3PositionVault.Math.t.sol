@@ -22,6 +22,14 @@ contract MathHarness {
         return UniswapV3VaultMath.ceilToSpacing(tick, spacing);
     }
 
+    function upstreamLiquidityForAmount0(uint160 a, uint160 b, uint256 amount0) external pure returns (uint128) {
+        return LiquidityAmounts.getLiquidityForAmount0(a, b, amount0);
+    }
+
+    function upstreamLiquidityForAmount1(uint160 a, uint160 b, uint256 amount1) external pure returns (uint128) {
+        return LiquidityAmounts.getLiquidityForAmount1(a, b, amount1);
+    }
+
     function liquidityForAmount0Saturating(uint160 a, uint160 b, uint256 amount0) external pure returns (uint128) {
         return UniswapV3VaultMath.liquidityForAmount0Saturating(a, b, amount0);
     }
@@ -335,6 +343,21 @@ contract UniswapV3PositionVaultMathTest is Test {
         assertEq(harness.meanTick(int56(0), int56(-7), uint32(2)), int24(-4), "negative rounds down");
         assertEq(harness.meanTick(int56(0), int56(7), uint32(2)), int24(3), "positive truncates");
         assertEq(harness.meanTick(int56(0), int56(-8), uint32(2)), int24(-4), "negative exact");
+    }
+
+    function test_priceDeviationBps_worksAtTheLowEndOfUniswapsRange() public view {
+        // Squaring each sqrt ratio and shifting down by 2**96 threw away everything below the shift.
+        // Uniswap represents sqrt ratios from 2**32, and anything under 2**48 squared to zero, so a
+        // pool of two tokens whose raw price ratio was small enough had every guarded call revert
+        // PriceOutOfRange from the moment it was deployed.
+        uint160 low = 1 << 40;
+
+        assertEq(harness.priceDeviationBps(low, low), 0, "a price equal to its own average deviates by nothing");
+
+        // A one percent move in price is 10000 * (1.01 - 1) = 100 bps, whatever the ratio's scale.
+        uint160 moved = uint160(FullMath.mulDiv(low, 100_499, 100_000));
+        uint256 deviation = harness.priceDeviationBps(moved, low);
+        assertApproxEqAbs(deviation, 100, 1, "one percent reads as one percent down here too");
     }
 
     function test_priceDeviationBps_measuresPriceNotSqrtPrice() public view {
@@ -672,6 +695,43 @@ contract UniswapV3PositionVaultMathTest is Test {
             LiquidityAmounts.getLiquidityForAmount1(sqrtA, sqrtB, 1e18),
             "token1 side matches upstream where upstream has an answer"
         );
+    }
+
+    function testFuzz_liquidityForAmount_onlyEverCapsUpstreamNeverContradictsIt(
+        uint256 amountSeed,
+        int256 lowSeed,
+        int256 highSeed,
+        bool isAmount0
+    ) public view {
+        // The docstring's whole claim is that the formula is Uniswap's and only the ceiling differs.
+        // One branch used to break that, returning the ceiling where upstream returns zero, in the
+        // regime where the two sqrt ratios multiply to less than the Q96 shift. So: wherever upstream
+        // gives an answer below the ceiling, this must give exactly the same number.
+        int24 lower = int24(bound(lowSeed, TickMath.MIN_TICK, TickMath.MAX_TICK - 1));
+        int24 upper = int24(bound(highSeed, int256(lower) + 1, TickMath.MAX_TICK));
+        uint256 amount = bound(amountSeed, 0, 1e30);
+
+        uint160 sqrtA = TickMath.getSqrtRatioAtTick(lower);
+        uint160 sqrtB = TickMath.getSqrtRatioAtTick(upper);
+
+        // Upstream is called through the harness so its overflow revert can be caught rather than
+        // skipped. Skipping on our own ceiling would hide the very case this is here for: the broken
+        // branch returned the ceiling precisely where upstream answers.
+        if (isAmount0) {
+            uint128 mine = harness.liquidityForAmount0Saturating(sqrtA, sqrtB, amount);
+            try harness.upstreamLiquidityForAmount0(sqrtA, sqrtB, amount) returns (uint128 theirs) {
+                assertEq(mine, theirs, "token0 side must match upstream wherever upstream answers");
+            } catch {
+                assertEq(mine, type(uint128).max, "token0 side may only cap where upstream overflows");
+            }
+        } else {
+            uint128 mine = harness.liquidityForAmount1Saturating(sqrtA, sqrtB, amount);
+            try harness.upstreamLiquidityForAmount1(sqrtA, sqrtB, amount) returns (uint128 theirs) {
+                assertEq(mine, theirs, "token1 side must match upstream wherever upstream answers");
+            } catch {
+                assertEq(mine, type(uint128).max, "token1 side may only cap where upstream overflows");
+            }
+        }
     }
 
     function testFuzz_liquidityForAmount_neverRevertsAnywhereUniswapCanPrice(

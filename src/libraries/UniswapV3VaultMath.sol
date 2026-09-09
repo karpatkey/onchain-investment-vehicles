@@ -282,8 +282,13 @@ library UniswapV3VaultMath {
         if (delta == 0) return type(uint128).max;
 
         uint256 intermediate = FullMath.mulDiv(sqrtRatioAX96, sqrtRatioBX96, FixedPoint96.Q96);
-        // A price low enough that the product underflows the Q96 shift funds unbounded liquidity.
-        if (intermediate == 0) return amount0 == 0 ? 0 : type(uint128).max;
+        // The product of the two ratios can fall below the Q96 shift, which makes the factor in
+        // front of the balance smaller than one: the balance funds LESS liquidity than it would at
+        // parity, not more. Upstream floors that to zero, and so does this. Returning the ceiling
+        // here, as an earlier version did, was the one place these helpers disagreed with the
+        // position manager's own arithmetic rather than only capping it. Nothing can be minted in
+        // this regime anyway — getLiquidityForAmounts returns zero, so the mint reverts.
+        if (intermediate == 0) return 0;
 
         if (amount0 > FullMath.mulDiv(type(uint128).max, delta, intermediate)) return type(uint128).max;
         return uint128(FullMath.mulDiv(amount0, intermediate, delta));
@@ -823,12 +828,26 @@ library UniswapV3VaultMath {
     /// @param sqrtTwapX96 The sqrt price implied by the average tick.
     /// @return The absolute deviation, in basis points.
     function priceDeviationBps(uint160 sqrtSpotX96, uint160 sqrtTwapX96) internal pure returns (uint256) {
-        uint256 spot = FullMath.mulDiv(sqrtSpotX96, sqrtSpotX96, 1 << 96);
-        uint256 twap = FullMath.mulDiv(sqrtTwapX96, sqrtTwapX96, 1 << 96);
-        if (twap == 0) revert IUniswapV3PositionVault.PriceOutOfRange();
+        if (sqrtTwapX96 == 0) revert IUniswapV3PositionVault.PriceOutOfRange();
 
-        uint256 difference = spot > twap ? spot - twap : twap - spot;
-        return FullMath.mulDiv(difference, BPS_DENOMINATOR, twap);
+        // Measured as the ratio of the two prices rather than by squaring each one first. Squaring
+        // first and shifting down by 2**96 throws away everything below that shift: a sqrt ratio
+        // under 2**48 squares to zero, and Uniswap represents ratios from 2**32 up, so a pool of two
+        // tokens whose raw price ratio is small enough would have had every guarded call revert.
+        // Well above that threshold the quantisation was still coarse enough to move the answer by
+        // whole percentage points. Taking the ratio first keeps the full precision of both inputs.
+        uint256 ratioX64 = FullMath.mulDiv(sqrtSpotX96, 1 << 64, sqrtTwapX96);
+
+        // Squaring needs ratio**2 / 2**64 to fit. Beyond this the spot price is more than 2**64
+        // times the average, which is past any tolerance this guard accepts, so it is reported as
+        // out of tolerance rather than computed.
+        if (ratioX64 > 1 << 96) return type(uint256).max;
+
+        ratioX64 = FullMath.mulDiv(ratioX64, ratioX64, 1 << 64);
+
+        uint256 one = 1 << 64;
+        uint256 difference = ratioX64 > one ? ratioX64 - one : one - ratioX64;
+        return FullMath.mulDiv(difference, BPS_DENOMINATOR, one);
     }
 
     /// @notice The sqrt-price band a price may move within, given a tolerance in basis points.

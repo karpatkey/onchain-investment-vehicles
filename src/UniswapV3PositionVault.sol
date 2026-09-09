@@ -248,7 +248,17 @@ contract UniswapV3PositionVault is
     ///         ratio is a steep function of price, so a sub-one-percent move can more than double
     ///         it. The allowance is therefore measured against the amount rather than against the
     ///         price, and the reference it is measured from is priced at the pool's own time-weighted
-    ///         average, which nobody can move cheaply. A caller needs no quote of their own to use it.
+    ///         average, which nobody can move cheaply.
+    ///
+    ///         The bound is relative to that reference, so it constrains the price the counter amount
+    ///         is struck at and not its size. Both scale with the caller's share of the vault, and
+    ///         that share is the named amount over the vault's holding of the named token — so
+    ///         depositing into a vault holding almost none of the side you name buys a large
+    ///         fraction of it and is charged the matching fraction of the other side. The charge is
+    ///         pro-rata and the shares are worth what they cost, but it can be far more of the other
+    ///         token than a caller who has not looked would expect, and no value of this bound
+    ///         prevents it. Approve what you mean to spend, and check totalAssets first when the
+    ///         position may be sitting wholly on one side.
     ///
     ///         One part of that reference is movable, and it is worth naming: it is computed from the
     ///         vault's live idle balances, so a donation into the vault raises both the charge and
@@ -1298,9 +1308,10 @@ contract UniswapV3PositionVault is
     ///         donated tokens are claimed pro-rata by every holder rather than by whoever deposits
     ///         next. What that argument needs, and what the floor here supplies, is a supply large
     ///         enough that a deposit's floor division is not itself a way to take a fraction of the
-    ///         deposit: the opening liquidity must be at least _MIN_SHARES, and redeem will not
-    ///         leave a supply below it, so the ratio between shares and assets can never be driven
-    ///         far from where it starts.
+    ///         deposit: the opening liquidity must be at least _MIN_SHARES, and a deposit priced
+    ///         against a supply below it is refused. The ratio itself can be driven far — a
+    ///         redemption may leave whatever it leaves, and the vault can then be refunded — but no
+    ///         deposit is ever priced while it has been, which is where the harm would land.
     /// @param liquidity Liquidity just minted, which becomes the opening supply.
     function _bootstrapShares(uint128 liquidity) internal {
         if (totalSupply() != 0) return;

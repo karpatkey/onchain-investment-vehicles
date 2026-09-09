@@ -716,7 +716,7 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
     // Fees and compounding
     //
 
-    function test_deposit_compoundsFeesBeforePricingTheNewShares() public {
+    function test_deposit_collectsFeesBeforePricingTheNewShares() public {
         _openPosition(100_000e6);
 
         vm.prank(alice);
@@ -724,8 +724,10 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
 
         _accrueFees();
 
-        // Bob buys in after the fees were earned, so they must already be inside the position and
-        // therefore belong to the holders who were there when they accrued.
+        // Bob buys in after the fees were earned, so they must already be counted as the vault's
+        // and therefore belong to the holders who were there when they accrued. Collected into the
+        // idle balance, not folded into the position: what matters for fairness is that they are
+        // owned before the new holder is priced, not where they sit.
         (uint256 aliceValue0Before, uint256 aliceValue1Before) = vault.previewRedeem(aliceShares);
 
         vm.prank(bob);
