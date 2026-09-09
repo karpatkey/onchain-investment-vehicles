@@ -926,6 +926,54 @@ contract UniswapV3PositionVaultTest is UniswapV3PositionVaultTestBase {
         assertTrue(shares != liquidity, "but they are different quantities");
     }
 
+    function test_deposit_zeroOfferIsRefusedOnceTheVaultHoldsAnyOfThatSide() public {
+        // A zero offer caps the deposit at what zero of that token buys. That is only harmless while
+        // the vault holds none of the token at all, and any address can end that with one wei. The
+        // deposit docstring tells callers to bound the side they do not care about rather than zero
+        // it; this is the behaviour that advice exists for.
+        _openPosition(100_000e6);
+        (uint256 lower, uint256 upper) = _rangeAroundSpot(100);
+        vm.prank(curator);
+        vault.rebalance(lower, upper, block.timestamp);
+        vm.prank(curator);
+        vault.compound(block.timestamp);
+
+        _movePriceBps(400);
+        vm.warp(vm.getBlockTimestamp() + 3600);
+
+        (uint256 total0,) = vault.totalAssets();
+        assertEq(total0, 0, "the position has left its range upward and holds no token0");
+
+        uint256 snap = vm.snapshotState();
+        vm.prank(alice);
+        (uint256 shares,,) = vault.deposit(0, 1e18, 0, block.timestamp);
+        assertGt(shares, 0, "the zero offer works while the vault holds none of that side");
+        vm.revertToState(snap);
+
+        deal(address(token0), stranger, 1);
+        vm.prank(stranger);
+        token0.transfer(address(vault), 1);
+
+        vm.expectRevert(IUniswapV3PositionVault.ZeroShares.selector);
+        vault.previewDeposit(0, 1e18);
+
+        vm.prank(alice);
+        vm.expectRevert(IUniswapV3PositionVault.ZeroShares.selector);
+        vault.deposit(0, 1e18, 0, block.timestamp);
+
+        // The rounding headroom is subtracted before the share count, so two wei is still too few.
+        vm.prank(alice);
+        vm.expectRevert(IUniswapV3PositionVault.ZeroShares.selector);
+        vault.deposit(2, 1e18, 0, block.timestamp);
+
+        // Bounding the side rather than zeroing it is what the docstring asks for, and it costs the
+        // pro-rata wei and nothing more.
+        vm.prank(alice);
+        (uint256 shares2, uint256 taken0,) = vault.deposit(3, 1e18, 0, block.timestamp);
+        assertGt(shares2, 0, "a coverable bound on the unwanted side deposits normally");
+        assertEq(taken0, 1, "and is charged only its pro-rata share of the donated wei");
+    }
+
     //
     // Fees and compounding
     //

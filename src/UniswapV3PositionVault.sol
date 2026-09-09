@@ -261,6 +261,17 @@ contract UniswapV3PositionVault is
     ///         has no meaningful answer and the share arithmetic will revert rather than return one.
     ///         previewCounterAmount quotes one side against the other for the active position.
     ///
+    ///         Do not pass zero for a side you simply do not want to spend. Zero does not mean "I
+    ///         hold none of this"; it means "cap my deposit at what zero of it buys", and since the
+    ///         deposit is the smaller of the two sides' share counts, that caps the whole deposit at
+    ///         nothing and reverts ZeroShares. A side is skipped only when the vault holds literally
+    ///         none of it, position amount and idle balance both zero, and that state is not one to
+    ///         build a call on: any address can end it by sending a single wei, after which the zero
+    ///         offer is refused permanently. For a side you do not want to bind, pass an amount you
+    ///         can cover that sits above its pro-rata charge, which is your share of the vault's
+    ///         holding of that token and is a wei when the vault holds a wei. previewDeposit reverts
+    ///         the same way on the same inputs, so quoting first shows this before a deposit does.
+    ///
     ///         The two amounts bound what leaves the caller's wallet. They say nothing about what
     ///         comes back, so minShares bounds that: it is the only limit on the rate at which the
     ///         deposit is filled. It matters because a deposit takes what the ratio needs at the
