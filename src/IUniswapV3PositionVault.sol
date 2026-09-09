@@ -401,8 +401,10 @@ interface IUniswapV3PositionVault {
 
     /// @notice What a deposit of the given amounts would mint and cost.
     /// @dev    The number to put in a deposit's minShares. Shares are not liquidity once the vault
-    ///         has a supply, so previewLiquidity is not a substitute. Indicative: it cannot see
-    ///         uncollected fees, and the executed share count can be a wei or two lower.
+    ///         has a supply, so previewLiquidity is not a substitute. Counts the position's
+    ///         collectable balance, because a deposit collects before it prices. A slight
+    ///         over-estimate still: fees earned since the position was last touched are invisible,
+    ///         and the executed count can be a wei or two lower.
     /// @param amount0Desired The most token0 to spend.
     /// @param amount1Desired The most token1 to spend.
     function previewDeposit(uint256 amount0Desired, uint256 amount1Desired)

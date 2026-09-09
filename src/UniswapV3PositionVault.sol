@@ -263,8 +263,10 @@ contract UniswapV3PositionVault is
     ///         deposit is filled. It matters because a deposit takes what the ratio needs at the
     ///         pool's price when the transaction lands, not when it was signed, so a caller who
     ///         offered generously on both sides could be filled at a size they did not intend.
-    ///         Quote it with previewLiquidity, which reports the liquidity an amount opens, and the
-    ///         opening share supply is that liquidity. Zero accepts any fill.
+    ///         Quote it with previewDeposit, which returns the share count a deposit of these
+    ///         amounts would mint. Not previewLiquidity: shares are supply times added liquidity
+    ///         over the position's liquidity, so the two coincide only while the supply is still
+    ///         the opening liquidity. Zero accepts any fill.
     ///
     ///         The vault's own manipulation guard runs regardless, so this is a bound the caller
     ///         chooses on top of one they do not.
@@ -775,12 +777,19 @@ contract UniswapV3PositionVault is
     ///         position, where the supply is the opening liquidity, do the two coincide — so
     ///         previewLiquidity is not a substitute for this on a vault that has been running.
     ///
-    ///         Indicative in two directions, both small, both toward the caller getting slightly
-    ///         more than quoted. It cannot see fees that have accrued but not yet been collected,
-    ///         and a deposit collects before it prices, so the real deposit is priced against a
-    ///         slightly larger vault. And the share count here is what the plan buys; the executed
-    ///         count is recomputed from the liquidity the pool reports actually minting, which can
-    ///         be a wei or two lower. Leave a little room rather than passing this back verbatim.
+    ///         A deposit collects before it prices, so this counts the position's collectable
+    ///         balance alongside the idle one. Leaving it out would understate the vault, and a
+    ///         smaller vault divides into more shares, so the quote would come out high — the one
+    ///         direction that matters, because a high quote fed back into minShares reverts the
+    ///         deposit it was meant to protect.
+    ///
+    ///         It is still a slight over-estimate, for two reasons pulling the same way. The
+    ///         position manager only refreshes what it owes when the position is touched, so fees
+    ///         earned since the last touch are invisible here and the real deposit collects them.
+    ///         And the count here is what the plan buys, while the executed count is recomputed
+    ///         from the liquidity the pool reports actually minting, which can be a wei or two
+    ///         lower. Both mean the caller receives no more than this, so leave a little room
+    ///         rather than passing the quote back verbatim.
     /// @param amount0Desired The most token0 to spend.
     /// @param amount1Desired The most token1 to spend.
     /// @return shares  Shares the deposit would mint.
