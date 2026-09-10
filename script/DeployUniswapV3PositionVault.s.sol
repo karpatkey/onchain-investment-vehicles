@@ -16,7 +16,7 @@ import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 ///
 /// Purpose:  Stand up a share vault for a single Uniswap v3 pool, with its roles handed to their
 ///           final holders and the deploying key left with no authority over it.
-/// Inputs:   PRIVATE_KEY in the environment, and a named entry in script/uniswap-vaults.json giving
+/// Inputs:   A signer supplied by forge itself, and a named entry in script/uniswap-vaults.json giving
 ///           the token pair, fee tier, position manager, role holders and manipulation-guard
 ///           settings. Set `openToEveryone` to grant INVESTOR to the zero address, which opens
 ///           deposits, redemptions and transfers to anyone.
@@ -40,8 +40,13 @@ import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 ///           whichever matches; assuming the repository default will silently fail to verify.
 ///
 /// Usage:
-///   source .env && forge script script/DeployUniswapV3PositionVault.s.sol:DeployUniswapV3PositionVault \
-///     --rpc-url mainnet --broadcast --sig "run(string)" usdc-weth-mainnet
+///   forge script script/DeployUniswapV3PositionVault.s.sol:DeployUniswapV3PositionVault \
+///     --rpc-url mainnet --account <keystore-name> --sender <that-account-address> \
+///     --broadcast --sig "run(string)" usdc-weth-mainnet
+///
+///   forge prompts for the keystore password on stdin, so run it from an interactive shell and do
+///   not put the password in a file, an environment variable or the command line. Drop --broadcast
+///   first for a dry run: it simulates the whole script, including the post-flight assertions.
 contract DeployUniswapV3PositionVault is Script {
     using stdJson for string;
 
@@ -53,8 +58,12 @@ contract DeployUniswapV3PositionVault is Script {
         bool openToEveryone = _readBool(vaultName, ".openToEveryone");
 
         address finalAdmin = params.admin;
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerKey);
+        // The signer comes from forge rather than from the environment, so this works with an
+        // encrypted keystore (--account), a hardware wallet (--ledger, --trezor) or a raw key
+        // (--private-key) without the script knowing which. msg.sender is the address forge will
+        // broadcast from; pass --sender alongside --account if forge cannot infer it.
+        address deployer = msg.sender;
+        require(deployer != address(0), "no broadcaster: pass --account, --ledger or --private-key");
 
         // The vault's own zero-address check never sees this value, because the line below swaps in
         // the deployer before initialize runs. Without this the shipped template's placeholder admin
@@ -76,7 +85,7 @@ contract DeployUniswapV3PositionVault is Script {
         // The deployer holds the admin role only for as long as it takes to grant the real one.
         params.admin = deployer;
 
-        vm.startBroadcast(deployerKey);
+        vm.startBroadcast();
 
         address implementation = address(new UniswapV3PositionVault());
         proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UniswapV3PositionVault.initialize, (params))));
