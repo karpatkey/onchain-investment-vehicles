@@ -40,9 +40,19 @@ import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 ///           whichever matches; assuming the repository default will silently fail to verify.
 ///
 /// Usage:
+///   First vault on a chain, deploying its implementation too:
+///
 ///   forge script script/DeployUniswapV3PositionVault.s.sol:DeployUniswapV3PositionVault \
 ///     --rpc-url mainnet --account <keystore-name> --sender <that-account-address> \
 ///     --broadcast --sig "run(string)" usdc-weth-mainnet
+///
+///   Every vault after it, reusing the implementation the first one logged. The implementation is
+///   code only — it holds nothing and every call runs against the proxy's own storage — so the
+///   vaults stay independent, and the 6.8M gas and the explorer verification are paid once:
+///
+///   forge script script/DeployUniswapV3PositionVault.s.sol:DeployUniswapV3PositionVault \
+///     --rpc-url mainnet --account <keystore-name> --sender <that-account-address> \
+///     --broadcast --sig "run(string,address)" usdc-weth-mainnet 0xTheImplementation
 ///
 ///   forge prompts for the keystore password on stdin, so run it from an interactive shell and do
 ///   not put the password in a file, an environment variable or the command line. Drop --broadcast
@@ -50,10 +60,38 @@ import {UniswapV3PositionVault} from "../src/UniswapV3PositionVault.sol";
 contract DeployUniswapV3PositionVault is Script {
     using stdJson for string;
 
-    /// @notice Deploys the vault named by `vaultName` in script/uniswap-vaults.json.
+    /// @notice Deploys the vault named by `vaultName`, on a fresh implementation of its own.
+    /// @dev    Equivalent to passing the zero address to the two-argument form. Use that one for the
+    ///         second and later vaults on a chain, so they share the implementation this deploys.
     /// @param vaultName Key of the configuration entry to deploy.
     /// @return proxy The deployed vault proxy.
     function run(string memory vaultName) external returns (address proxy) {
+        return _deploy(vaultName, address(0));
+    }
+
+    /// @notice Deploys the vault named by `vaultName` behind an implementation that already exists.
+    /// @dev    The implementation is code and nothing else: it holds no funds, no roles and no
+    ///         storage, because every call a proxy forwards executes against the PROXY's storage.
+    ///         So several vaults sharing one costs them no independence — different pools, different
+    ///         balances, separate admins, and each upgradeable on its own later — while the 6.8M gas
+    ///         to deploy it, and the work of verifying it on the explorer, are paid once.
+    ///
+    ///         Pass the zero address to deploy a fresh one. Anything else is checked for code and
+    ///         interrogated below, because the one way this argument goes badly wrong is a proxy
+    ///         pointed at an address that is not this contract: initialize would revert, or worse
+    ///         succeed against something else's code.
+    /// @param vaultName      Key of the configuration entry to deploy.
+    /// @param implementation Existing UniswapV3PositionVault implementation, or zero to deploy one.
+    /// @return proxy The deployed vault proxy.
+    function run(string memory vaultName, address implementation) external returns (address proxy) {
+        return _deploy(vaultName, implementation);
+    }
+
+    /// @notice The deployment itself, shared by both entry points.
+    /// @param vaultName        Key of the configuration entry to deploy.
+    /// @param existingImplementation Implementation to reuse, or zero to deploy a fresh one.
+    /// @return proxy The deployed vault proxy.
+    function _deploy(string memory vaultName, address existingImplementation) internal returns (address proxy) {
         IUniswapV3PositionVault.InitParams memory params = _readConfig(vaultName);
         bool openToEveryone = _readBool(vaultName, ".openToEveryone");
 
@@ -85,9 +123,37 @@ contract DeployUniswapV3PositionVault is Script {
         // The deployer holds the admin role only for as long as it takes to grant the real one.
         params.admin = deployer;
 
+        // Checked before broadcasting, so a wrong address costs nothing. Code alone is too weak a
+        // test — any contract has code — so the candidate is asked for two constants this contract
+        // defines. A UUPS implementation also answers proxiableUUID; a PROXY deliberately does not,
+        // which is what catches the likeliest mistake of all, pasting another vault's proxy address
+        // here and chaining one vault's storage behind another.
+        if (existingImplementation != address(0)) {
+            require(existingImplementation.code.length != 0, "implementation has no code");
+            _requireReturns(
+                existingImplementation,
+                bytes4(keccak256("CURATOR()")),
+                keccak256("CURATOR"),
+                "not a UniswapV3PositionVault: CURATOR"
+            );
+            _requireReturns(
+                existingImplementation,
+                bytes4(keccak256("INVESTOR()")),
+                keccak256("INVESTOR"),
+                "not a UniswapV3PositionVault: INVESTOR"
+            );
+            _requireReturns(
+                existingImplementation,
+                bytes4(keccak256("proxiableUUID()")),
+                0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc,
+                "that address is a proxy, not an implementation"
+            );
+        }
+
         vm.startBroadcast();
 
-        address implementation = address(new UniswapV3PositionVault());
+        address implementation =
+            existingImplementation == address(0) ? address(new UniswapV3PositionVault()) : existingImplementation;
         proxy = address(new ERC1967Proxy(implementation, abi.encodeCall(UniswapV3PositionVault.initialize, (params))));
 
         UniswapV3PositionVault vault = UniswapV3PositionVault(proxy);
@@ -103,11 +169,28 @@ contract DeployUniswapV3PositionVault is Script {
 
         _assertEndState(vault, finalAdmin, params.curator, deployer, openToEveryone);
 
+        console.log(existingImplementation == address(0) ? "implementation:  (new)" : "implementation:  (reused)");
         console.log("implementation:", implementation);
         console.log("vault proxy:   ", proxy);
         console.log("admin:         ", finalAdmin);
         console.log("curator:       ", params.curator);
         console.log("pool:          ", address(vault.pool()));
+    }
+
+    /// @notice Reverts with a readable message unless a static call returns exactly `expected`.
+    /// @dev    A plain typed call cannot do this job. Calling CURATOR() on something that does not
+    ///         have it reverts, or returns nothing, and the ABI decoder fails on the empty return
+    ///         before any require of ours runs — so the operator sees "EvmError: Revert" with no
+    ///         indication of which address was wrong or why. Measured against this chain's pool and
+    ///         its Safe, both plausible things to paste by mistake. The low-level call keeps the
+    ///         failure ours to describe.
+    /// @param target   Address to interrogate.
+    /// @param selector Zero-argument, bytes32-returning function to call.
+    /// @param expected The only acceptable answer.
+    /// @param message  What to say when it is not the answer.
+    function _requireReturns(address target, bytes4 selector, bytes32 expected, string memory message) internal view {
+        (bool ok, bytes memory ret) = target.staticcall(abi.encodeWithSelector(selector));
+        require(ok && ret.length == 32 && abi.decode(ret, (bytes32)) == expected, message);
     }
 
     /// @notice Reads one vault's configuration out of script/uniswap-vaults.json.
