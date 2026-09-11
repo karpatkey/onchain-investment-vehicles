@@ -94,6 +94,7 @@ ink        = "${INK_URL}"
 bob        = "${BOB_URL}"
 berachain  = "${BERACHAIN_URL}"
 katana     = "${KATANA_URL}"
+robinhood  = "${ROBINHOOD_URL}"
 
 [etherscan]
 # Etherscan v2 multichain API key (keyed by chainid). Only used with --verify (opt-in); chains not
