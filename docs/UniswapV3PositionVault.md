@@ -1,0 +1,626 @@
+# UniswapV3PositionVault
+
+## Overview
+
+`UniswapV3PositionVault` is an ERC-20 share token whose entire backing is a single Uniswap v3
+liquidity position on a single pool. A **curator** opens, moves and closes that position. **Investors**
+buy in at the position's own token ratio and redeem for a pro-rata slice of it, paid out in both
+tokens. Fees earned by the position are compounded back into it rather than distributed.
+
+The vault is deliberately narrow: one pool, one position at a time, no swaps except the one that a
+rebalance needs, and no path by which the curator can move value out of the vault.
+
+## Contract Architecture
+
+### Inheritance chain
+
+```
+UniswapV3PositionVault
+├── Initializable, UUPSUpgradeable        upgrade mechanism, admin-gated
+├── AccessControlUpgradeable              ADMIN / CURATOR / INVESTOR roles
+├── ERC20Upgradeable                      the share token
+├── ReentrancyGuardUpgradeable            every state-changing entry point
+├── IUniswapV3PositionVault               errors, events, structs
+├── IUniswapV3SwapCallback                pays for the rebalance swap
+├── IERC721Receiver                       rejects every NFT it did not mint
+└── RecoverFunds                          sweeps stray tokens, never the pool's two
+```
+
+### Key components
+
+| Component | Role |
+|---|---|
+| `src/UniswapV3PositionVault.sol` | State, roles, and every interaction with the pool and position manager. |
+| `src/IUniswapV3PositionVault.sol` | The error, event and struct surface, declared once for callers. |
+| `src/libraries/UniswapV3VaultMath.sol` | All pure math. Deployed as a linked library. |
+| `src/libraries/uniswap/` | Uniswap's own libraries, vendored verbatim. |
+| `src/interfaces/` | Minimal hand-written interfaces for the pool, factory and position manager. |
+
+## Dependencies
+
+### Vendored Uniswap libraries
+
+`TickMath`, `SqrtPriceMath`, `LiquidityAmounts`, `FullMath`, `FixedPoint96`, `SafeCast` and
+`UnsafeMath` are copied verbatim from the upstream `0.8` branches of `Uniswap/v3-core` and
+`Uniswap/v3-periphery`. Each file records its source repository and commit in a header, and the
+only edit is the import paths in `LiquidityAmounts`.
+
+They are vendored rather than installed as a dependency because this repository leaves
+`bytecode_hash` at its default. Every remapping therefore feeds into solc metadata, and adding one
+would move the pinned CREATE2 addresses that `test/FactoryAddressSync.t.sol` guards. The vendored
+directory is excluded from `forge fmt` so it stays byte-identical to upstream and can be diffed
+against the pinned commit.
+
+### External contracts
+
+The Uniswap v3 `NonfungiblePositionManager` custodies the position NFT. The pool itself is resolved
+at initialization through the position manager's own factory, never by computing a CREATE2 address,
+because the pool init-code hash is not identical on every chain hosting a v3 deployment.
+
+## Access Control and Authorities
+
+### Role hierarchy
+
+```
+DEFAULT_ADMIN_ROLE
+├── grants and revokes every role, including its own
+├── sets the recipient of recovered tokens
+└── authorises upgrades
+
+CURATOR
+└── opens, moves, tops up, trims and closes the position
+
+INVESTOR
+└── may hold, receive, buy and redeem shares
+    (granting it to address(0) opens the vault to everyone)
+```
+
+### Permission matrix
+
+| Function | ADMIN | CURATOR | INVESTOR | Public |
+|---|:---:|:---:|:---:|:---:|
+| `deposit` | | | ✅ | |
+| `redeem` | | | ✅ | |
+| `transfer` / `transferFrom` | | | ✅ | |
+| `createPosition` | | ✅ | ✅ | |
+| `rebalance` / `rebalanceWithSwap` | | ✅ | | |
+| `unwindPosition` | | ✅ | | |
+| `compound` / `removeLiquidity` | | ✅ | | |
+| `setAssetRecoverer` | ✅ | | | |
+| `upgradeToAndCall` | ✅ | | | |
+| `grantRole` / `revokeRole` | ✅ | | | |
+| `recoverAssets` | | | | ✅ |
+| all view functions | | | | ✅ |
+
+`createPosition` needs both roles when it opens the vault's first position, because the opening share
+supply is minted to the caller and a mint is a transfer the investor gate checks. The deploy script
+grants the curator `INVESTOR` for that reason. On any later position the vault already has a supply,
+nothing is minted, and CURATOR alone is enough.
+
+The admin does not inherit the curator's powers, and the curator has no admin powers. The investor
+gate is enforced in a single place, the ERC-20 `_update` hook, so minting checks the recipient,
+burning checks the holder and a transfer checks both. `deposit` and `redeem` additionally check the
+caller up front, so a rejected account is turned away before its tokens are touched.
+
+## Core Capabilities
+
+### 1. Opening a position
+
+`createPosition(priceLower, priceUpper, amount0Desired, amount1Desired, deadline)` opens the vault's only position. The
+curator names a price range and how much of **each** token to commit, and the vault mints the
+liquidity the tighter of the two funds. Both are maxima; neither is exceeded, and both must already
+be sitting in the vault.
+
+Both are bounded for the same reason a deposit's are. What the second side costs is a steep function
+of price near a range boundary, and the manipulation guard bounds the price only to the vault's own
+tolerance rather than to zero — so someone can move the pool inside that tolerance before the
+curator's transaction lands. Measured on the mainnet USDC/WETH pool with a range five percent wide: a
+190 basis point move, inside the 200 point tolerance the fixture ships, takes what 100,000 USDC needs
+alongside it from **41.9 WETH to 93.6**. Minting is the direction a wrong price punishes, so naming
+one amount and letting the other follow put no ceiling on the commitment except what the vault
+happened to hold. `test_createPosition_cannotBeMadeToCommitMoreThanTheCuratorAllowed` pins it.
+
+When the vault has no shares outstanding, the liquidity minted here becomes the opening share
+supply, credited to the caller. Shares and liquidity therefore start one-to-one.
+
+**The supply is never allowed to be small.** A deposit's share count is a floor division by the
+supply, so the truncation is a fraction of the deposit set by how many shares exist relative to what
+stands behind them, and existing holders keep whatever is truncated away. Starting the supply at the
+opening liquidity makes that fraction negligible, but only if the ratio stays where it started, and
+there are two ways to drive it: open the vault with a negligible position, or redeem down to a
+residue and then fund the vault again. The opening liquidity must therefore be at least a million
+units, and a deposit into a vault whose supply has fallen below that is refused.
+
+**The floor sits on deposits, not on redemptions.** Leaving is never blocked by what it leaves
+behind. Putting the floor on the way out instead reads as the tighter rule and is in fact a trap:
+two holders of six hundred thousand shares each could bring the supply to the floor, and then
+neither could leave, because neither holds the whole supply and any partial exit would break the
+floor. Refusing the deposit puts the check where the harm would actually land — nobody can be
+diluted by a dust supply if nobody can buy into one.
+
+What a deposit loses to the truncation is at most one share's worth, so the floor holds that loss at
+or below a millionth of everything the vault holds. Read the bound that way round: it is a bound on
+the vault, not a percentage of the deposit. A deposit worth less than one share still rounds to
+nothing, and is rejected rather than accepted for no shares.
+
+This is the same failure the virtual-offset trick addresses in vaults that price shares off a
+balance, reached from the other end. A donation into this vault cannot be turned against the next
+depositor, because donated tokens are claimed pro-rata by every holder rather than by whoever
+deposits next. What that argument assumes, and what the floor supplies, is that the share supply is
+large enough for the pro-rata arithmetic to be fine-grained.
+
+### 2. Depositing
+
+`deposit(amount0Desired, amount1Desired, minShares, deadline)` takes the shape of Uniswap's own
+`increaseLiquidity`: the investor offers as much of each token as they are willing to spend, and the
+vault takes what the position's current ratio needs, bounded by whichever offer is the tighter of the
+two. Neither is ever exceeded — the remainder is simply not taken — and the wei-level remainder left
+by the pool's rounding is returned in the same call.
+
+**Both bounds are amounts, not percentages, and that is the point.** A percentage bound expresses
+"do not let the price move more than this against me", which is the right shape when what a deposit
+costs is a function of price. Here it is not. What the second side costs scales with the caller's
+share of the vault, and that share is their amount over the vault's holding of *that token* — so
+offering a token the vault holds almost none of buys a large fraction of the whole vault and is
+charged the matching fraction of the other side.
+
+The charge in that case is exactly pro-rata and the shares are worth what they cost, so nobody is
+robbed. But it can be enormously more of the other token than the caller intended, and a percentage
+bound cannot catch it, because the charge is not *off* the fair price — it is the fair price of a
+much larger purchase than the caller thought they were making. Measured on the pinned fork: with the
+position rebalanced wholly onto one side and a dust donation of the other, a 0.1 WETH offer under the
+old percentage bound was charged **4,202,800 USDC** at the tightest setting that bound allowed. Two
+absolute amounts refuse it; `test_deposit_cannotBeMadeToSpendTheWholeOtherSide` pins that.
+
+**The two amounts bound the spend; `minShares` bounds the fill.** They are different questions. A
+deposit takes what the ratio needs at the price when the transaction lands, not when it was signed,
+so a caller who offered generously on both sides has left the size of their purchase entirely to the
+pool — both offers can be respected while the fill comes in well under what was quoted. Nothing else
+constrains that: shares are priced on the liquidity actually added, and the only other check is that
+it is non-zero. Quote it with **`previewDeposit(amount0Desired, amount1Desired)`**, which returns the
+shares and the two amounts the deposit would take, and pass zero to accept any fill.
+
+`previewLiquidity` is *not* a substitute here. Shares are `supply × addedLiquidity /
+positionLiquidity`, and a deposit is also charged a pro-rata share of the idle balances, so the two
+quantities only coincide at the very first position, where the supply is the opening liquidity.
+`previewDeposit` counts the position's collectable balance alongside the idle one, because a deposit
+collects before it prices. Leaving it out would understate the vault, and a smaller vault divides
+into more shares, so the quote would come out high — the direction that makes `minShares` revert.
+
+It is still a slight over-estimate, for two reasons pulling the same way: the position manager only
+refreshes what it owes when the position is *touched*, so fees earned since the last touch are
+invisible and the real deposit will collect them; and the executed count is recomputed from the
+liquidity the pool reports actually minting. Both mean the caller receives no more than the quote, so
+leave a little room rather than passing it back verbatim. `test_deposit_minSharesCatchesWhatTheAmountsCannot` moves the price
+inside the vault's own tolerance, so its guard never fires, and shows both offers holding while the
+fill lands short.
+
+Quote the pairing with `previewCounterAmount` against the active position and allow a little over for
+the price moving between the quote and the transaction. Pass amounts you actually hold rather than a
+sentinel: each offer is turned into a share count by multiplying by the supply, so a very large value
+on both sides has no representable answer and reverts rather than meaning "no limit".
+
+Nothing else here needs a separate price guard. Shares are issued in proportion to the liquidity the
+deposit adds, and liquidity does not depend on price, so the split between a new depositor and the
+existing holders is fair whatever the pool is doing.
+
+### 3. Redeeming
+
+`redeem(shares, maxSlippageBps, deadline)` burns shares and withdraws the caller's share of the
+position's liquidity plus their share of any idle balance, paying out in both tokens. The split
+between the two depends on the pool's price, so the same price bound protects the redeemer. Only the
+principal released by this redemption is collected from the position, so a redemption can never
+sweep fees belonging to the remaining holders.
+
+### 4. Rebalancing
+
+Two variants, differing only in whether the balances are traded into the new range's ratio first.
+Both collect fees, close the current position and mint the largest position the balances then
+support, and both work whether or not a position is already open.
+
+`rebalance(priceLower, priceUpper, deadline)` does not trade. Whichever token the new range needs less of is
+left over: the mint consumes one side entirely and the surplus of the other stays idle. This avoids
+the swap's price impact and fee, at the cost of leaving part of the vault unproductive.
+
+`rebalanceWithSwap(priceLower, priceUpper, maxPriceImpactBps, twapWindow, maxDeviationBps, deadline)`
+swaps inside the same pool so that almost the whole balance ends up as liquidity.
+
+The impact cap is how far the curator will let that trade move the pool's price, in basis points of
+the price it starts at, so 100 is one percent. It must be between 1 and 10000. A swap that would
+move the price further stops at the cap and fills partially, leaving the rest idle, rather than
+reverting.
+
+The last two arguments set the manipulation guard for this call: the seconds of history it averages
+over, and how far the price may sit from that average. **Neither can weaken the vault's own
+configuration.** A longer window and a tighter tolerance are both harder to fool, so each side takes
+whichever value is stricter, and zero on either means the vault's own setting. This lets a curator
+demand more protection on a particular rebalance without letting anyone demand less than the admin
+configured, which matters because this is the one path that trades shareholder assets against the
+pool. See **Rebalance algorithm** below.
+
+Choosing between them is a real trade-off. Trading costs the pool fee and moves the price against
+the vault; not trading leaves capital idle. The surplus a no-swap rebalance leaves behind cannot be
+put back to work on its own, because adding to a position in range needs both tokens, so it sits
+until the curator trades it or the price moves far enough that the position becomes single-sided on
+that same side.
+
+### 5. Maintenance
+
+`compound` collects the position's fees and folds every idle balance back into it, in one step. It
+folds more than fees: the residue a trim or a non-trading rebalance left behind, and anything
+donated. It returns zero, rather than reverting, when a one-sided balance cannot be paired into a
+range that straddles the price — the fees are collected before the pairing is attempted, so refusing
+would throw away a collection that had already happened. This was two functions, `collectFees` and
+`addLiquidity`, with identical bodies apart from that revert.
+`removeLiquidity` trims the position into idle balances. `unwindPosition` closes it entirely,
+leaving everything idle and `activeTokenId()` at zero.
+
+### 6. Reading
+
+`activeTokenId()` returns the current NFT id, or zero when there is none; it changes every time a
+position is opened or closed, so integrators must read it rather than cache it. `activePosition()`
+returns the range and liquidity. `previewCounterAmount(amount, isAmount0)` answers "if I
+supply this much of one token, how much of the other does the position need?" for the open position,
+and `previewCounterAmountForRange` does the same for a range that does not exist yet.
+`previewRedeem` prices a redemption.
+
+None of these take a position id. The vault holds one position at a time, so an id was redundant —
+and worse than redundant: the range came from the id while the price came from this vault's own pool,
+so an id belonging to a position on any other pool returned a number computed at the wrong price
+instead of reverting. With no parameter there is nothing to get wrong, and with no position open they
+revert `NoActivePosition` rather than answering against nothing. Use `previewCounterAmountForRange`
+for a range that does not exist yet.
+
+Two functions convert between liquidity and token amounts against the position's range at the pool's
+current price. `liquidityToAmounts(liquidity)` says what a liquidity amount is worth, and
+`amountsToLiquidity(amount0, amount1)` says what a pair of amounts could mint. Both round
+down, so they are near-inverses that never overstate what is reachable, and only the binding side
+counts: outside the range one token funds nothing, and inside it the smaller of the two caps the
+result. For a range that does not exist yet, the same arithmetic is reachable on the deployed
+`UniswapV3VaultMath` library, whose `positionValue` and `mintableLiquidity` are public.
+
+`previewLiquidity(amount, isAmount0)` composes the two: it takes one amount, pairs it at the
+position's current ratio the way `previewCounterAmount` would, and returns the liquidity the pair
+opens. Sizing a commitment is what it is for — the opening share supply equals the opening liquidity,
+and a deposit's share count is proportional to the liquidity it adds, so this is the quantity worth
+comparing before committing. It is exactly the composition and not an approximation of it, because
+the counter quote rounds up and so never binds tighter than the amount it came from;
+`test_previewLiquidity_matchesQuotingThenConverting` checks that against both sides, and fails on a
+one-wei difference.
+
+## Accounting model
+
+A share is a pro-rata claim on **everything the vault owns**: the position's liquidity *and* any
+idle token balances. Both move together on every deposit and redemption, so tokens waiting to be
+folded back into the position are never given to, or taken from, a single investor.
+
+Every deposit and redemption begins by collecting the position's fees into the idle balance. That is
+what makes fees accrue to the holders who were present when they were earned: a new holder is priced
+against a vault that already owns them, and pays for a share of them. Folding those balances back
+into the position is a separate, curator-only step, for the reason in "Who folds, and why it is not
+the investor" below.
+
+### Rounding
+
+| Quantity | Direction | Why |
+|---|---|---|
+| Shares minted | down | The depositor never receives more claim than they paid for. |
+| Tokens taken on deposit | up | The vault is never short of what the pool charges. |
+| Tokens paid on redemption | down | The vault never pays out more than the position releases. |
+| Liquidity burned on redemption | down | Same. |
+| Preview counter amount | up | Supplying exactly the preview is always enough. |
+| Snapped tick lower / upper | down / up | The range always covers the prices that were asked for. |
+
+A deposit's cost has two components that each round up, so the share count is sized against the
+caller's maximum less that headroom. A final check refuses any deposit that would still take more
+than the caller authorised.
+
+## Price format
+
+Ranges are given as **human prices**: token1 per token0, decimal-adjusted, scaled by 1e18. For the
+mainnet USDC/WETH pool, token0 is USDC and token1 is WETH, so a price of 3000 USDC per ETH is
+supplied as roughly `3.33e14`, being one three-thousandth of a WETH per USDC.
+
+Conversion to Uniswap's Q64.96 sqrt ratio uses two regimes. Below a raw ratio of 2^64 the shift is
+applied before the square root, which is exact to the last bit. Above it, where pairs of very
+differently priced tokens live, the shift is split around the square root, costing at most 64 low
+bits of a result larger than 2^128 and so keeping the relative error under 2^-64.
+
+Ticks are snapped outward: the lower bound rounds down and the upper bound rounds up, so the minted
+position always contains the requested range rather than a subset of it.
+
+## Rebalance algorithm
+
+Steps 1 to 3 and step 7 are shared by both variants; only `rebalanceWithSwap` runs steps 4 to 6.
+
+1. Check the pool's spot price against its own time-weighted average.
+2. Snap the requested range to the pool's tick spacing.
+3. Collect fees, burn all liquidity, collect the principal and burn the NFT.
+4. Size the swap that maximises mintable liquidity in the new range.
+5. Execute it against the pool, paying through `uniswapV3SwapCallback`.
+6. Check the price against the average again.
+7. Re-read the pool and mint the largest position the balances now support.
+
+The no-swap variant still checks the price in step 1, because step 7 prices both sides at the
+current price even though nothing is traded.
+
+### Sizing the swap
+
+The search runs over the **post-swap price**, not the input amount. Within the current
+initialized-tick interval the pool's liquidity is constant, so the input needed to reach any
+candidate price has a closed form, and the two liquidity caps move strictly in opposite directions
+as that price slides across the range: the cap funded by the token being sold falls while the cap
+funded by the token being bought rises. Their crossing is the optimum, which makes a monotone
+predicate and a plain bisection sufficient rather than a search for a maximum.
+
+The interval is clipped to the prices reachable with the balances at hand and to the range's own
+boundaries, so an optimum outside it becomes the corresponding endpoint: sell everything when the
+range sits wholly on one side of the price, sell nothing when the balances are already in ratio. The
+result is compared against not swapping at all, so a swap cannot be worse than doing nothing **under
+this model**. The model holds the pool's liquidity constant, which is true only inside the current
+initialized-tick interval. A swap that crosses a tick trades against a different liquidity than was
+modelled and can end up marginally worse than not swapping, bounded by the pool fee on what was
+traded within the price-impact cap. The shortfall stays idle rather than being lost, because the
+mint runs against the balances actually held afterwards.
+
+The search may probe anywhere strictly inside the range. Uniswap's `getLiquidityForAmount0/1` end in
+a `uint128` cast that reverts with no error data once a balance would fund more liquidity than that,
+which happens for any price close enough to the edge that balance funds — exactly where the crossing
+sits when the balances are lopsided. This library's saturating counterparts return "more than a
+`uint128` holds" instead, so the only prices excluded are the two edges themselves, where the interval
+closes completely and the division has no answer. A saturated result is a boundary marker rather than
+a magnitude, so it is never allowed to win the comparison it appears in.
+
+Whatever the search picks is then checked once more at the price that amount genuinely reaches, and
+dropped if it does not beat leaving the balances alone. The amount needed to reach a price and the
+price reached by an amount are inverses only up to rounding, and on a range a tick or two wide a price
+off by one wei changes the mintable liquidity materially. That final check is what makes "a swap is
+never worse than doing nothing" true by construction rather than by argument.
+
+The model is exact while the swap stays inside the current tick interval, which is the normal case.
+If it crosses an initialized tick the realised price differs slightly, which is why step 7 re-reads
+the pool and mints against the balances actually held. The residue stays idle, is still owned
+pro-rata, and is folded back in by the next curator compounding.
+
+### Who folds, and why it is not the investor
+
+Fees are collected on every path, including the two investor ones, so a depositor never buys a claim
+on fees earned before they arrived and a redeemer always takes their share of fees earned up to the
+moment they leave. Collecting is price-independent, so it is safe to do on a call anyone can make.
+
+**Folding the idle balance into the position is a curator action only**, reachable through
+`compound` and either `rebalance`, both of which run behind the manipulation guard.
+The asymmetry is not arbitrary. Releasing a position is concave in price, which is why
+`unwindPosition` and `removeLiquidity` need no guard at all: a composition released at a moved price
+is worth at least as much at the true price as the position itself would have been. Acquiring one is
+the convex direction, and liquidity bought at `P'` and valued at the true price `P` costs an excess of
+`(sqrt(P') - sqrt(P))^2 / sqrt(P')` per unit. Since `removeLiquidity` and the non-trading `rebalance`
+both leave a large one-sided balance idle on purpose, an investor path that folded would let anyone
+holding a single share choose the price at which the vault bought back in — and a redemption can be
+made with the price bound waived, because a redemption's payout does not depend on the price.
+
+So the idle balance waits for a curator call that is both guarded and deliberately timed, and until
+then it stays owned pro-rata by every holder, claimed in full by anyone who redeems.
+
+## Safety Considerations
+
+### 0. A window the pool can answer
+
+**The guard's configuration is immutable.** `twapPeriod` and `maxTwapDeviationBps` are set once, at
+`initialize`, and there is no setter. Changing them means upgrading, which is a loud, visible act —
+whereas a parameter tweak is a quiet one, and the parameters in question are the only thing standing
+between the curator and an unguarded position. Making them immutable does not reduce what the admin
+*can* do, since the admin can already replace the implementation; it raises what they have to do in
+public to weaken the guard.
+
+The one thing still checked is that the pool can answer the window. Every guarded path asks the pool
+to average over it, so a window the pool has no observation history for would leave the vault unable
+to take a deposit or move its position until somebody else grew the pool's buffer. That is a
+usability failure with no recovery short of an upgrade, so it is refused at `initialize`. How tight
+or loose the tolerance should be is a judgement about the pool, and is not second-guessed on chain:
+one implementation serves pools of very different character, so any constant baked in would be wrong
+for some of them. The deploy script rejects values that are not settings at all — a zero window
+divides by zero in the guard, a zero cap refuses every guarded call — where it costs no bytecode.
+
+### 0.1 Staleness
+
+Every function that takes a price as an argument also takes a deadline, and the guards below cannot
+stand in for one. Both the manipulation guard and a deposit's slippage allowance are measured against the pool's
+own recent average, and after a genuine move the spot price and that average agree with each other
+at the new level. A transaction that sat in the mempool through the move therefore passes every
+check and executes on terms nobody intended. Only the deadline stops it.
+
+That is worth stating plainly because the more familiar pattern hides it. A minimum-output figure of
+the kind a DEX takes is fixed when the caller signs, so it protects a stale transaction on its own.
+An allowance measured against a live reference does not.
+
+### 1. Price manipulation
+
+Every operation that takes or derives a price compares the pool's spot price against its own
+time-weighted average over an admin-configured window and refuses to proceed beyond an
+admin-configured tolerance. That is `createPosition`, both rebalances, `compound`,
+`deposit` and `redeem`.
+
+**`unwindPosition` and `removeLiquidity` are deliberately outside it, and need no deadline either.**
+Neither trades: the vault receives exactly its share of the pool's reserves at no spread, so there is
+no counterparty to extract anything. The spot price sets only the token *split* released, and because
+the position's payoff is concave in price, a composition released at a moved price is worth at least
+as much at the true price as the position itself would have been. There is no sandwich to run against
+them. Guarding them would buy nothing and would block the curator from exiting during exactly the
+volatility that most warrants exiting, so the exit path is always open. A
+rebalance checks before **and** after its swap. A pool whose observation history is too short to
+answer the window reverts rather than proceeding unguarded.
+
+The swap carries a second, separate bound: the curator's price-impact cap. The two do different
+jobs. The impact cap is the curator's own limit on how far this particular trade may move the pool,
+measured from the price the swap starts at, and a swap that would move further simply stops there
+and fills partially. The manipulation guard is the vault's limit, measured against the pool's own
+recent average, and it reverts outright. One is slippage control, the other is a defence against
+acting on a price someone else has moved.
+
+### 2. Callbacks
+
+`uniswapV3SwapCallback` requires both that the caller is the vault's own pool and that the vault is
+inside its own swap, so it cannot be invoked out of band even by the real pool.
+`onERC721Received` accepts a token only from the position manager and only during a mint, so an
+unsolicited NFT is rejected rather than silently custodied.
+
+### 3. Reentrancy
+
+Every state-changing external function carries `nonReentrant`, with one deliberate exception:
+`recoverAssets`, inherited from `RecoverFunds`, does not. It cannot move `token0` or `token1` —
+`_assetRecoverableAmount` returns zero for both — so it cannot reach anything shareholders own. Balances are read after the position
+manager has been called and shares are burned before tokens are paid out.
+
+### 4. Curator trust
+
+The curator chooses ranges and when to move, so a careless or hostile curator can lose value to
+impermanent loss, swap fees and repeated rebalancing. The curator **cannot** move tokens out of the
+vault: the position is always minted to the vault, collected amounts always land in the vault, and
+the only transfer to an outside address is a swap payment to the vault's own pool.
+
+### 5. Recovery
+
+`recoverAssets` reports zero recoverable for both pool tokens, so they can never be swept away from
+shareholders. Any other token that reaches the vault has no claim against it and can be swept in
+full to the admin-configured recipient.
+
+### 6. Upgrades
+
+Upgrades are authorised by the admin alone. Storage is plain and append-only, followed by a
+50-slot gap.
+
+### 7. Unsupported tokens
+
+Tokens that do not transfer their full stated amount, such as fee-on-transfer and rebasing tokens,
+are not supported and must not be configured. The exact-pull accounting means such a token makes the
+position manager call revert rather than silently mis-accounting.
+
+## Configuration Parameters
+
+| Parameter | Set at | Notes |
+|---|---|---|
+| `token0`, `token1`, `fee` | initialization | Immutable in practice; the pool is resolved from them. |
+| `twapPeriod` | initialization | Manipulation-guard window in seconds. A floor: a caller may ask for a longer one. No setter — see the note below. |
+| `maxTwapDeviationBps` | initialization | Tolerance in basis points. A ceiling: a caller may ask for a tighter one. No setter — see the note below. |
+| `assetRecoverer` | initialization, admin | Recipient of swept tokens. |
+
+Both pool tokens must report 18 decimals or fewer, which the price scaling relies on.
+
+The two guard parameters are fixed for the life of the vault: there is no setter, deliberately, so
+that no role can widen the manipulation guard on a vault investors have already funded. Choosing
+them is therefore a deployment decision that cannot be walked back, and the deploy script
+range-checks the configured values before it will build a vault from them.
+
+## Events
+
+| Event | Emitted when |
+|---|---|
+| `Deposit` | An investor mints shares. |
+| `Redeem` | An investor burns shares. |
+| `PositionCreated` | A position is opened, by `createPosition` or `rebalance`. |
+| `PositionUnwound` | A position is closed and its NFT burned. |
+| `Compounded` | Fees are collected and idle balances folded back in. Curator paths only; the investor paths collect without folding. |
+| `LiquidityRemoved` | The curator trims the position. |
+| `Rebalanced` | A rebalance completes, reporting the swap, if any, and the residue. The no-swap variant reports zero amounts. |
+| `AssetRecovererUpdate` | The admin changes the recipient of recovered tokens. |
+
+## Deployment
+
+`script/DeployUniswapV3PositionVault.s.sol` deploys the implementation and an ERC-1967 proxy from a
+named entry in `script/uniswap-vaults.json`. The deploying key holds the admin role only long enough
+to grant the configured one, then renounces; a post-flight block asserts that end state.
+
+The vault links `UniswapV3VaultMath`, which forge deploys and links automatically. Because
+`optimizer_runs` is tuned repository-wide for runtime gas rather than code size, this one file is
+compiled with a size-favouring setting declared in `foundry.toml`; no other contract is affected, so
+no existing CREATE2 address moves.
+
+**That restriction reaches the library too, and it matters when verifying.** Restricting the vault
+pulls its imports into the same profile, so `out/` holds two builds of `UniswapV3VaultMath` — the
+repository default at `optimizer_runs = 2000`, and a `vault-size` build at 60. They behave
+identically and nothing on chain breaks, but they are different bytecode. Measured on this branch:
+`UniswapV3PositionVault.json` carries `runs = 60`, `UniswapV3VaultMath.json` carries 2000 and
+`UniswapV3VaultMath.vault-size.json` carries 60.
+
+Before verifying a deployed library, compare its on-chain runtime bytecode against both artifacts and
+verify with the settings of whichever matches. Assuming the repository default will silently fail,
+and that failure looks like a source mismatch rather than a configuration one.
+
+Giving `deposit` two absolute amounts instead of a named amount and a percentage also made the vault
+smaller, because the reference price the percentage was measured against is no longer computed at
+all. It still sits some hundreds of bytes under the EIP-170 limit, and the
+optimizer setting has been lowered as far as it usefully goes. **Before any further external
+function is added, the read surface should move to a separate lens contract** that reads the vault's
+public state, which is why Uniswap ships its own quoting and position-valuation helpers separately.
+Shaving the optimizer further costs runtime gas on every operation and buys only tens of bytes.
+`forge build --sizes` reports the current margin.
+
+When changing that setting, edit it by hand. A careless global search and replace on
+`optimizer_runs` will also rewrite the repository-wide value, which changes every contract's
+bytecode and moves the pinned CREATE2 addresses; `test/FactoryAddressSync.t.sol` catches it.
+
+Set `openToEveryone` to grant `INVESTOR` to the zero address at deployment, which opens deposits,
+redemptions and transfers to anyone.
+
+## Testing
+
+| Suite | Needs a fork | Covers |
+|---|---|---|
+| `UniswapV3PositionVault.Math.t.sol` | no | Price conversion, tick snapping, share accounting, the price band and swap sizing, including fuzz tests that sweep the solver against every alternative. |
+| `UniswapV3PositionVault.Reentrancy.t.sol` | no | Genuine re-entry attempts against every guarded entry point, driven by hostile stand-ins for the pool and position manager. |
+| `UniswapV3PositionVault.t.sol` | yes | Initialization, access control, the investor gate, position operations, deposits, redemptions, compounding, callbacks, recovery, upgrades. |
+| `UniswapV3PositionVault.Rebalance.t.sol` | yes | Both rebalance variants: in and out of range, single-sided balances, the surplus the non-trading one leaves, price-impact caps, residue bounds, holder value across a move. |
+| `UniswapV3PositionVault.Decimals.t.sol` | yes | The same core flows against WBTC/WETH, where token0 has 8 decimals rather than 6. |
+| `UniswapV3PositionVault.Invariant.t.sol` | yes | Properties that must survive any reachable sequence of deposits, redemptions, rebalances, trims, donations and pool trades. |
+
+The fork suites pin a mainnet block, unlike the factory suites. Every assertion depends on a pool's
+price, tick and observation history, so an unpinned fork would make expected amounts drift with
+mainnet and turn real regressions into noise. They read `MAINNET_URL` from the environment.
+
+### Why reentrancy needs mocks
+
+A standard ERC-20 never calls back into its sender, so against the real USDC, WETH and WBTC there is
+no way to attempt reentrancy at all. The stand-ins in `test/mocks/ReentrantUniswap.sol` create the
+opportunity: each can be told to call back into the vault at the exact moment the vault has handed
+over control, inside the position manager while liquidity is being added and inside the pool during
+a rebalance swap. That is what turns `nonReentrant` from an assertion by inspection into a tested
+property.
+
+### Invariants
+
+Each holds after any reachable sequence the handler can produce:
+
+- The vault owns the position it reports as active.
+- Shares outstanding are never a claim on nothing.
+- No allowance is ever left standing to the position manager.
+- Every share in existence is held by an account permitted to hold shares.
+- Redeeming the entire supply never claims more than the vault owns.
+
+A run also prints how many deposits, redemptions, rebalances, unwinds and creations it actually
+reached, because an invariant suite whose calls all revert passes without testing anything.
+
+### Coverage
+
+Measured over the vault's own suites:
+
+| File | Lines | Branches | Functions |
+|---|---|---|---|
+| `src/UniswapV3PositionVault.sol` | 85.99% | 71.01% | 93.88% |
+| `src/libraries/UniswapV3VaultMath.sol` | 48.86% | 32.61% | 48.48% |
+
+Reproduce with:
+
+```bash
+forge coverage --ir-minimum --match-path 'test/UniswapV3PositionVault*' \
+  --no-match-coverage '(^script/|^test/|libraries/uniswap/)' --report summary
+```
+
+The library figure understates reality and should not be read as a gap. The vault cannot be compiled
+for coverage without `--ir-minimum`, which fails with a stack-too-deep error otherwise, and that
+mode produces degraded source maps; the library is also reached by delegatecall, which coverage
+attributes poorly. Every one of the library's external entry points is exercised, several of them by
+fuzz tests. The vault's own figures are the meaningful ones.
+
+The uncovered branches in the vault are dominated by defensive paths that a correct counterparty
+never triggers, such as the clamps applied when the pool charges less than the plan allowed for.

@@ -89,6 +89,16 @@ Full reference: **[docs/KpkShares.md](docs/KpkShares.md)**.
 
 ---
 
+## `UniswapV3PositionVault` — a single-position liquidity vault
+
+`UniswapV3PositionVault` is a separate product from `kpkShares`: an ERC-20 share token whose entire backing is one Uniswap v3 liquidity position on one fixed pool. A curator opens, moves and closes that position; investors deposit both tokens at the position's current ratio and redeem for a pro-rata slice paid out in both. Fees are compounded back into the position rather than distributed, and every price-sensitive action is checked against the pool's own time-weighted average.
+
+Ranges are given as human prices, and a rebalance sizes the swap that maximises the liquidity the vault can mint in its new range. All Uniswap arithmetic comes from Uniswap's own libraries, vendored under `src/libraries/uniswap`.
+
+Full reference: **[docs/UniswapV3PositionVault.md](docs/UniswapV3PositionVault.md)**.
+
+---
+
 ## Deploying a fund
 
 You don't need to write Solidity. The **`/deploy-oiv`** Claude Code skill walks you through configuration and writes a JSON config; the Foundry script `script/DeployOiv.s.sol` reads it and calls the factory:
@@ -116,18 +126,24 @@ src/
   KpkSharesDeployer.sol    deploys a per-fund kpkShares implementation
   kpkShares.sol            the fund's ERC-20 shares token (audited)
   IkpkShares.sol           kpkShares interface
+  UniswapV3PositionVault.sol  single-position Uniswap v3 liquidity vault
+  IUniswapV3PositionVault.sol vault errors, events and structs
   FeeModules/              WatermarkFee (perf fee) + IPerfFeeModule
-  interfaces/              Safe + Zodiac interfaces used by the factory
+  interfaces/              Safe + Zodiac + Uniswap v3 interfaces
+  libraries/               UniswapV3VaultMath + vendored Uniswap v3 libraries
   utils/                   Empty (Avatar Safe signer), RecoverFunds
 script/
   DeployOiv.s.sol          deploy a fund via the factory
   DeployKpkOivFactory.s.sol deterministic factory + deployer deployment
   DeployCcipOivDeployer.s.sol deterministic orchestrator deployment
+  DeployUniswapV3PositionVault.s.sol  deploy one Uniswap v3 position vault
   ccip-networks.json       CCIP router / LINK / selector registry (23 chains)
+  uniswap-vaults.json      per-vault configuration for the position vault
   README.md                script usage guide (kpkShares management scripts)
 docs/
   KpkShares.md             kpkShares contract reference
   KpkOivFactory.md         factory reference
+  UniswapV3PositionVault.md  position vault reference
   CCIP_CROSS_CHAIN_DEPLOY.md cross-chain deployment design + networks
   FUND_DEPLOYMENT_FLOW.md  fund deployment flow diagrams (direct, per-chain)
   CCIP_FUND_DEPLOYMENT_FLOW.md fund deployment flow diagrams (one-tx multichain)

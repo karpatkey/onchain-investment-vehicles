@@ -1,0 +1,76 @@
+{
+  "usdc-weth-mainnet": {
+    "name": "kpk USDC/WETH Position Vault",
+    "symbol": "kpkUSDCWETH",
+    "admin": "0x0000000000000000000000000000000000000000",
+    "curator": "0x0000000000000000000000000000000000000000",
+    "assetRecoverer": "0x0000000000000000000000000000000000000000",
+    "positionManager": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "fee": 500,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  },
+
+  "weth-usdg-robinhood-100": {
+    "name": "kpk WETH/USDG 0.01% Position Vault",
+    "symbol": "kpkWUSDG1",
+    "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "positionManager": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+    "token0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "token1": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    "fee": 100,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  },
+
+  "weth-usdg-robinhood-500": {
+    "name": "kpk WETH/USDG 0.05% Position Vault",
+    "symbol": "kpkWUSDG5",
+    "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "positionManager": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+    "token0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "token1": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    "fee": 500,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  },
+
+  "weth-usdg-robinhood-3000": {
+    "name": "kpk WETH/USDG 0.3% Position Vault",
+    "symbol": "kpkWUSDG30",
+    "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "positionManager": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+    "token0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "token1": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    "fee": 3000,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  },
+
+  "weth-usdg-robinhood-10000": {
+    "name": "kpk WETH/USDG 1% Position Vault",
+    "symbol": "kpkWUSDG100",
+    "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
+    "positionManager": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+    "token0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "token1": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    "fee": 10000,
+    "twapPeriod": 600,
+    "maxTwapDeviationBps": 200,
+    "openToEveryone": false
+  }
+}
