@@ -1998,6 +1998,32 @@ contract KpkOivFactoryTest is OivTestConstants {
         factory.deployOiv(oivConfig);
     }
 
+    /// @notice Exercises the OWNER half of the adopted-Safe comparison, which every other adoption
+    ///         test leaves as a no-op by using a single-owner Safe. A mutation sweep found that
+    ///         flipping its ordering flag changed nothing in the suite — yet a production Manager
+    ///         Safe is multi-owner, so a backwards assumption there would reject every legitimate
+    ///         multi-owner adoption. (Safe's `setupOwners` appends, so `getOwners()` returns config
+    ///         order; modules are the reversed case, because `enableModule` prepends.)
+    function test_adopt_verifiesOwnerOrderOnAMultiOwnerSafe() public {
+        address[] memory owners = new address[](2);
+        owners[0] = managerSigner;
+        owners[1] = makeAddr("secondManagerSigner");
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: owners, threshold: 2});
+
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(cfg, address(this));
+
+        address[] memory mods = new address[](1);
+        mods[0] = predicted.managerRolesModifier;
+        address squatted = _squatSafe(makeAddr("multiOwnerSquatter"), owners, 2, mods, _stackSalt(address(this), 4));
+        assertEq(squatted, predicted.managerSafe, "the squat lands on the fund's Manager Safe");
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(cfg);
+        assertEq(inst.managerSafe, squatted, "a two-owner Safe is adopted, not rejected");
+        _assertFullyWired(inst);
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —

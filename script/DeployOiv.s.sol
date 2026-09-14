@@ -34,7 +34,7 @@ contract DeployOiv is OivConfigReader {
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
     ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
     ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
-    address public constant FACTORY = 0x631e60cF13bE20Fb317eCFB4aEBE2E7640C7fB1f;
+    address public constant FACTORY = 0x78939f7EdcBce835D9fCF8A12152D05d1d50b22F;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 
@@ -100,10 +100,12 @@ contract DeployOiv is OivConfigReader {
 
     /// @dev `.oiv.sharesParams.asset` holds the MAINNET token by convention, so a chain added to
     ///      `.sharesChains` without a matching `.oiv.assetOverrides` entry silently inherits it.
-    ///      Nothing downstream rejects that: `_validateOivConfig` only refuses the zero address, and
-    ///      the Avatar Safe's `approve` succeeds against a codeless address — so the fund would go
-    ///      live denominated in a token that does not exist on its chain. Checked here rather than in
-    ///      `OivConfigReader` because the reader is a pure parser, unit-tested without a fork.
+    ///      A CODELESS asset is already rejected on-chain — `KpkShares.initialize` reads `symbol()`
+    ///      and `decimals()`, and decoding empty returndata reverts — so this check buys a legible
+    ///      error, not a control. What it does NOT cover is the case that actually bites: an address
+    ///      that HAS code on the target chain but is a different contract there. Checked here rather
+    ///      than in `OivConfigReader` because the reader is a pure parser, unit-tested without a fork.
+    ///      Note the multi-chain path (`CcipDeployEverywhere`) does not route through here.
     function _requireAssetIsLive(KpkOivFactory.OivConfig memory config) internal view {
         require(
             config.sharesParams.asset.code.length != 0,
