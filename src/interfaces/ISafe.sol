@@ -47,6 +47,10 @@ interface ISafe {
         view
         returns (address[] memory array, address next);
 
+    /// @notice Raw storage read. Used to inspect an adopted Safe's guard and fallback handler, which
+    ///         Safe exposes through no getter but which are as dangerous as an extra module.
+    function getStorageAt(uint256 offset, uint256 length) external view returns (bytes memory);
+
     /// @notice Executes a call or delegatecall on behalf of this Safe without collecting signatures.
     /// @dev    Callable only by an enabled module.
     ///         `operation` 0 = CALL, 1 = DELEGATECALL.

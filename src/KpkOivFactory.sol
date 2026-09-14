@@ -101,6 +101,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      recently enabled to oldest: SENTINEL → newest → … → oldest → SENTINEL.
     address private constant SENTINEL_MODULES = address(0x1);
 
+    /// @dev `keccak256("guard_manager.guard.address")` — Safe v1.4.1's guard slot.
+    uint256 private constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+
+    /// @dev `keccak256("fallback_manager.handler.address")` — Safe v1.4.1's fallback-handler slot.
+    uint256 private constant FALLBACK_HANDLER_STORAGE_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+
     /// @notice Gnosis Safe v1.4.1 `MultiSend`, registered for unwrapping on every Roles Modifier
     ///         this factory deploys.
     address public constant MULTI_SEND = OivInfraConstants.MULTI_SEND;
@@ -1053,6 +1060,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
+        // Validated exactly as `deployOiv` would validate it. Without this, a prediction succeeds
+        // for a config `deployOiv` rejects — and `CcipOivDeployer` relies on prediction as its
+        // source-chain pre-check, so a fan-out originating from a STACK-ONLY chain (whose local
+        // branch runs `deployStack`, which validates only the stack half) would spend every lane's
+        // non-refundable fee and only then fail on the shares half. The shares half is salt-bound,
+        // so correcting it afterwards moves every address and orphans the stacks already landed.
+        _validateOivConfig(config);
+
         // Guarded exactly as `deployOiv` and `deployShares` are. Without it an unwired factory
         // predicted the proxy from `impl == address(0)` and returned a plausible-looking address
         // that no deployment can ever produce — the same class of answer the timelock guard below
@@ -1448,6 +1463,24 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             ISafe(safe).getModulesPaginated(SENTINEL_MODULES, modulesToEnable.length + 1);
         if (next != SENTINEL_MODULES) revert AdoptedSafeMismatch(safe);
         if (!_matches(live, modulesToEnable, true)) revert AdoptedSafeMismatch(safe);
+
+        // Guard and fallback handler, which the initializer leaves unset and which Safe exposes
+        // through no getter. Reachable by exactly the adversary the owner/threshold/module checks
+        // above exist for: a signer of a squatted Manager Safe, at a configured threshold that is
+        // routinely 1, can `setGuard(hostile)` — after which every manager transaction reverts and
+        // the guard cannot be removed without those same signatures — or `setFallbackHandler`, whose
+        // handler answers `isValidSignature` however it likes. Both are as dangerous as the extra
+        // module the module check already refuses, so leaving them uninspected would have made that
+        // check a half-measure.
+        if (_safeSlot(safe, GUARD_STORAGE_SLOT) != address(0)) revert AdoptedSafeMismatch(safe);
+        if (_safeSlot(safe, FALLBACK_HANDLER_STORAGE_SLOT) != safeFallbackHandler) {
+            revert AdoptedSafeMismatch(safe);
+        }
+    }
+
+    /// @dev Reads one address-sized storage slot from a Safe.
+    function _safeSlot(address safe, uint256 slot) private view returns (address) {
+        return address(uint160(uint256(bytes32(ISafe(safe).getStorageAt(slot, 1)))));
     }
 
     /// @dev Element-wise comparison, optionally against `expected` read backwards.
