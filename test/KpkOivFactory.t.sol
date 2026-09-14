@@ -1964,6 +1964,40 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertGt(inst.kpkSharesProxy.code.length, 0, "a non-writing stub asset deploys");
     }
 
+    /// @notice A squatted Safe can be poisoned in ways the owner/threshold/module checks do not see.
+    ///         Safe stores its guard and fallback handler in dedicated slots with no getter, and the
+    ///         same adversary those checks exist for — a signer of a squatted Manager Safe, at a
+    ///         configured threshold that is routinely 1 — can set either. A hostile guard makes every
+    ///         manager transaction revert and cannot be removed without those signatures.
+    function test_adopt_rejectsASafeWithAHostileGuard() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatted =
+            _squatManagerSafe(makeAddr("guardSquatter"), predicted.managerRolesModifier, _stackSalt(address(this), 4));
+
+        // Constructed on its own line: inline in the argument list it would consume the prank.
+        address hostileGuard = address(new MockSafeGuard());
+        vm.prank(squatted);
+        ISafeModules(squatted).setGuard(hostileGuard);
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.AdoptedSafeMismatch.selector, squatted));
+        factory.deployOiv(oivConfig);
+    }
+
+    /// @notice The same for the fallback handler, which answers `isValidSignature` on the Safe's
+    ///         behalf — so a hostile one can validate signatures the owners never made.
+    function test_adopt_rejectsASafeWithASwappedFallbackHandler() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatted = _squatManagerSafe(
+            makeAddr("handlerSquatter"), predicted.managerRolesModifier, _stackSalt(address(this), 4)
+        );
+
+        vm.prank(squatted);
+        ISafeModules(squatted).setFallbackHandler(makeAddr("hostileHandler"));
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.AdoptedSafeMismatch.selector, squatted));
+        factory.deployOiv(oivConfig);
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
@@ -2113,6 +2147,10 @@ interface ISafeModules {
 
     /// @dev Self-authorized on a Safe, so pranking as the Safe stands in for an owner executing it.
     function enableModule(address module) external;
+
+    function setGuard(address guard) external;
+
+    function setFallbackHandler(address handler) external;
 }
 
 /// @dev An ERC-20 whose `symbol()` attempts a STATE WRITE. `KpkShares.initialize` reads `symbol()`
@@ -2166,4 +2204,29 @@ contract StateWritingAsset {
     function allowance(address, address) external pure returns (uint256) {
         return type(uint256).max;
     }
+}
+
+/// @dev Safe v1.4.1's `setGuard` probes the candidate with `supportsInterface` and reverts GS300 if
+///      it does not answer, so a bare address cannot be installed as a guard. This is the minimum
+///      that can be — which is the point: installing it is cheap for an attacker.
+contract MockSafeGuard {
+    function supportsInterface(bytes4) external pure returns (bool) {
+        return true;
+    }
+
+    function checkTransaction(
+        address,
+        uint256,
+        bytes memory,
+        uint8,
+        uint256,
+        uint256,
+        uint256,
+        address,
+        address payable,
+        bytes memory,
+        address
+    ) external {}
+
+    function checkAfterExecution(bytes32, bool) external {}
 }

@@ -784,6 +784,68 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.dispatchTo{value: _fee(1)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
     }
 
+    /// @notice A fund with additional assets cannot span two shares chains, and must be refused
+    ///         BEFORE the fan-out spends anything. `_effectiveConfig` zeroes the base asset before
+    ///         hashing because the topology commits to it per chain — but `additionalAssets[i].asset`
+    ///         is equally chain-specific and `SharesChain` has nowhere to put it, so it stays in the
+    ///         salt. On the second shares chain you would then have to pass either that chain's token
+    ///         (a different salt, so `deployLocal` silently builds a separate fund at non-canonical
+    ///         addresses) or the first chain's token (codeless there, so registration and approval
+    ///         both revert). Neither is a deployment, so the configuration is refused up front.
+    function test_effectiveConfig_refusesAdditionalAssetsAcrossTwoSharesChains() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: true
+        });
+
+        CcipOivDeployer.SharesChain[] memory two = new CcipOivDeployer.SharesChain[](2);
+        two[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        two[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        vm.expectRevert(CcipOivDeployer.AdditionalAssetsNeedASingleSharesChain.selector);
+        orchestrator.predictOiv(cfg, two);
+    }
+
+    /// @dev The control: the same additional asset on a SINGLE shares chain is fine, so the refusal
+    ///      is about the combination rather than about additional assets at all.
+    function test_effectiveConfig_allowsAdditionalAssetsOnOneSharesChain() public view {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: true
+        });
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(cfg, _topology());
+        assertTrue(pred.kpkSharesProxy != address(0), "one shares chain with additional assets is fine");
+    }
+
+    /// @notice A fan-out originating from a STACK-ONLY chain must still validate the shares half of
+    ///         the config before spending anything. That branch runs `deployStack` locally, which
+    ///         validates only the stack half — but the shares half is salt-bound, so discovering a
+    ///         zero `feeReceiver` after the fan-out means every remote stack has landed, every
+    ///         non-refundable fee is spent, and correcting the field moves every address and orphans
+    ///         them.
+    function test_deployEverywhere_fromAStackOnlyChainStillValidatesTheSharesHalf() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.sharesParams.feeReceiver = address(0);
+
+        // Gnosis-only topology: this chain carries no shares, so the local branch is deployStack.
+        vm.expectRevert();
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(cfg, _gnosisOnlyTopology(), GAS_LIMIT);
+    }
+
+    /// @notice A destination named twice is a mistake in the list, and one that costs a second
+    ///         non-refundable fee for a message that reverts on arrival.
+    function test_dispatchTo_rejectsADuplicateDestination() public {
+        uint256[] memory dests = new uint256[](2);
+        dests[0] = OPTIMISM_CHAIN_ID;
+        dests[1] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.DuplicateDestination.selector, OPTIMISM_CHAIN_ID));
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
     function test_ccipReceive_revertsForWrongRouter() public {
         // Build the message first — it makes an external call (factory.oivToStackConfig) that would
         // otherwise consume the prank/expectRevert.

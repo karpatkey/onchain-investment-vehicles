@@ -205,6 +205,18 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @param  asset The base asset whose allowance is missing.
     error ApprovalNotGranted(address asset);
 
+    /// @notice Thrown when a fund declares more than one shares chain AND any `additionalAssets`.
+    /// @dev    Those asset addresses are chain-specific but salt-bound, and `SharesChain` has no
+    ///         field to express them per chain — so the fund could not be deployed on its second
+    ///         shares chain by any means. Lifting this needs the topology to carry the additional
+    ///         assets too, which would change every fund address.
+    error AdditionalAssetsNeedASingleSharesChain();
+
+    /// @notice Thrown when an explicit destination list names the same chain twice. The duplicate
+    ///         would be priced and dispatched twice, spending a second non-refundable fee on a
+    ///         message whose delivery reverts.
+    error DuplicateDestination(uint256 chainId);
+
     /// @notice Thrown when `promoteShares` is called by anyone other than the fund's `admin` or its
     ///         exec timelock. The base asset is the one field the salt deliberately does not bind, so
     ///         an open promotion would let anyone holding the true config land a hostile-denominated
@@ -562,6 +574,16 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         uint256 gasLimit
     ) internal returns (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) {
         if (destSelectors.length == 0) revert NoDestinations();
+
+        // Validate the WHOLE config before pricing, whichever branch runs locally. The stack branch
+        // below calls `deployStack`, which validates only the stack half — yet the shares half is
+        // salt-bound, so a fan-out originating from a stack-only chain with (say) a zero
+        // `feeReceiver` would land every remote stack, spend every non-refundable fee, and only then
+        // fail on the first `deployLocal`. Correcting the field afterwards changes the salt, so every
+        // stack already landed is orphaned. `predictOivAddresses` validates exactly what `deployOiv`
+        // would, which is the same pre-check `dispatchTo` uses.
+        factory.predictOivAddresses(config, address(this));
+
         (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
             _price(config, destSelectors, sharesChainIds, gasLimit);
         if (msg.value < totalFee) revert InsufficientFee(totalFee, msg.value);
@@ -834,7 +856,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     {
         eff = config;
 
-        // The base asset is the ONE field that legitimately differs per chain, so hashing it verbatim
+        // The base asset is the one field the TOPOLOGY can express per chain, so hashing it verbatim
         // made the same config file produce different addresses on different chains — silently
         // breaking the invariant this whole design exists to provide. It is zeroed for the hash and
         // committed to through `sharesChains` instead, which is identical everywhere.
@@ -845,6 +867,18 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // addresses with a hostile `feeReceiver`, hostile fee rates, or no `sharesTimelock`. Binding
         // the whole config is what keeps a hostile replay an availability problem rather than a
         // capture of the fund's economics.
+        // `additionalAssets[i].asset` is just as chain-specific as the base asset, and unlike the
+        // base asset the topology has nowhere to put it — `SharesChain` carries one address per
+        // chain. It therefore stays in the salt, which makes the combination undeployable rather
+        // than merely awkward: on a second shares chain you must either pass that chain's token
+        // (a different salt, so `deployLocal` silently builds a SEPARATE fund at non-canonical
+        // addresses) or the first chain's token (codeless there, so `updateAsset`'s `symbol()` call
+        // and `_grantApprovals`' `approve` both revert). Refused here rather than discovered after
+        // the fan-out has spent every lane's fee. A single shares chain is unaffected.
+        if (sharesChains.length > 1 && config.additionalAssets.length != 0) {
+            revert AdditionalAssetsNeedASingleSharesChain();
+        }
+
         eff.sharesParams.asset = address(0);
         eff.salt = uint256(keccak256(abi.encode(eff, sharesChains)));
         eff.sharesParams.asset = config.sharesParams.asset;
@@ -1052,6 +1086,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             if (chainIds[i] == block.chainid) continue;
             if (_assetFor(sharesChains, chainIds[i]) != address(0)) {
                 revert SharesChainNotAStackDestination(chainIds[i]);
+            }
+            // A repeated chain id would otherwise be priced and sent twice: the second fee is spent
+            // non-refundably and its delivery reverts `StackAlreadyDeployedHere` on arrival. Rejected
+            // rather than silently de-duplicated, because a duplicate in an explicit destination list
+            // is a mistake in the list, and quietly accepting it hides the mistake.
+            for (uint256 k = 0; k < i; k++) {
+                if (chainIds[k] == chainIds[i]) revert DuplicateDestination(chainIds[i]);
             }
             count++;
         }

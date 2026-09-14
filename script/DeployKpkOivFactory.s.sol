@@ -41,20 +41,6 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("Final owner (post-deploy):  ", finalOwner);
         console.log("==========================================");
 
-        // PRE-flight, deliberately: this script wires the shares mastercopy but NOT
-        // `timelockDeployer`, which only the per-chain `script/chains/Deploy_<Chain>.s.sol` scripts
-        // (via OivChainDeploy) deploy and set. The equivalent post-flight `require` below sits after
-        // `transferOwnership(finalOwner)` and `vm.stopBroadcast()`, so on a fresh chain it can only
-        // fail once the factory is already live and owned by the Safe — and a run resumed with
-        // `--resume` replays the saved transactions WITHOUT re-running this body, so the abort never
-        // happens at all and recovery needs a Safe transaction to call the `onlyOwner` setter.
-        // Refusing here costs nothing and cannot half-land.
-        if (predictedFactory.code.length == 0) {
-            revert(
-                "pre-flight: this script cannot wire timelockDeployer on a fresh chain - use script/chains/Deploy_<Chain>.s.sol"
-            );
-        }
-
         vm.startBroadcast();
 
         // Same preflight `_runChain` performs. This standalone path is documented in README.md as a
@@ -90,6 +76,24 @@ contract DeployKpkOivFactory is OivChainDeploy {
             revert("factory.kpkSharesMastercopy is set to an unexpected address");
         }
 
+        // Checked BEFORE the handover, which is the only irreversible step here. This script wires
+        // the shares mastercopy but never `timelockDeployer` — only the per-chain
+        // `script/chains/Deploy_<Chain>.s.sol` scripts (via OivChainDeploy) do — so a chain onboarded
+        // through this script alone looks healthy and then reverts `TimelockDeployerNotSet` on every
+        // timelocked fund, and in a CCIP fan-out the destination reverts with the source-chain fee
+        // already spent.
+        //
+        // Position matters more than it looks. A plain `forge script --broadcast` simulates the whole
+        // body first, so a revert anywhere aborts before anything is sent; but a run whose BROADCAST
+        // phase fails part-way and is resumed with `--resume` replays the saved transactions without
+        // re-running this body. Placing the refusal ahead of `transferOwnership` means that in that
+        // case the saved set cannot contain the handover, so ownership never reaches the Safe and
+        // `setTimelockDeployer` — `onlyOwner` — is still reachable from the deployer EOA.
+        require(
+            factory.timelockDeployer() != address(0),
+            "timelockDeployer not wired - use script/chains/Deploy_<Chain>.s.sol, not this script"
+        );
+
         if (factory.owner() == eoaOwner && eoaOwner != finalOwner) {
             factory.transferOwnership(finalOwner);
             console.log("[OK]   transferOwnership ->", finalOwner);
@@ -102,12 +106,8 @@ contract DeployKpkOivFactory is OivChainDeploy {
         vm.stopBroadcast();
 
         require(KpkOivFactory(predictedFactory).owner() == finalOwner, "post-flight: owner mismatch");
-        // This script wires the shares deployer but NOT `timelockDeployer`, which only the per-chain
-        // `script/chains/Deploy_<Chain>.s.sol` scripts (via OivChainDeploy) deploy and set. A chain
-        // onboarded through this script alone would look healthy and then revert
-        // `TimelockDeployerNotSet` on every timelocked fund — and in a CCIP fan-out the SOURCE chain
-        // validates only its own deployer, so the message dispatches and the destination reverts with
-        // the fee already spent. Fail here instead, pointing at the script that does the whole job.
+        // Backstop only — the in-broadcast check above fires first and before the handover. Kept
+        // because this one also covers a run that reached here by some path the other did not.
         require(
             KpkOivFactory(predictedFactory).timelockDeployer() != address(0),
             "post-flight: timelockDeployer not wired - use script/chains/Deploy_<Chain>.s.sol, not this script"
