@@ -529,9 +529,19 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         initializer produced. Two of the three kinds cannot drift: the Roles Modifiers are
     ///         factory-owned with no modules, and the Avatar Safe's sole owner is the always-
     ///         reverting `Empty`. The MANAGER Safe can: its owners are live keys from the config, so
-    ///         a squatted one is a working multisig from the moment it exists, and a single
-    ///         compromised signer could lower its threshold or enable a module on it before the fund
-    ///         ever reaches that chain. Adopting that silently would hand `MANAGER_ROLE` and the
+    ///         a squatted one is a working multisig from the moment it exists, and its signers can
+    ///         mutate it — at the configured threshold, which is routinely 1 — before the fund ever
+    ///         reaches that chain.
+    ///
+    ///         Read the limit precisely. This catches accidental drift and anything an OUTSIDER can
+    ///         do, which is nothing: the initializer fixes the owners, so only the config's own
+    ///         signers can act. It does NOT bind a malicious manager quorum, because every read here
+    ///         goes through the Safe's own mutable `singleton` pointer — signers who can enable a
+    ///         module can equally DELEGATECALL a slot-0 writer (Safe ships `SafeMigration` for
+    ///         exactly that) and make all of these reads answer whatever the config expects. No
+    ///         on-chain read of a proxy survives that. Those signers are already trusted at `admin`
+    ///         level by this contract's own security note, so it is inside the documented model —
+    ///         but it was a LOUD revert before adoption existed, and it is silent now. Adopting that silently would hand `MANAGER_ROLE` and the
     ///         shares `OPERATOR` role to a multisig the config never described — where before
     ///         adoption existed, the same squat merely reverted the deployment.
     error AdoptedSafeMismatch(address safe);
@@ -727,7 +737,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Deploys a complete fund: operational stack + KpkShares UUPS proxy.
     ///         In addition to the stack, this function:
-    ///         - Deploys a fresh KpkShares implementation (isolated upgrade surface per fund).
+    ///         - Points the fund's proxy at the chain's shared KpkShares mastercopy. Upgrades stay
+    ///         isolated per fund regardless: `upgradeToAndCall` writes the calling proxy's own slot.
     ///         - Deploys an ERC-1967 proxy and initializes it.
     ///         - Registers any additional assets on the shares proxy.
     ///         - Grants `type(uint256).max` allowance from the Avatar Safe to the shares proxy
@@ -1028,6 +1039,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         view
         returns (StackInstance memory inst)
     {
+        // Validated exactly as `deployStack` would. `CcipOivDeployer.dispatchTo` uses this as its
+        // source-chain pre-check, and without this it validated only the TIMELOCK: duplicate or zero
+        // manager owners, a threshold of zero or above the owner count, all dispatched, burnt every
+        // lane's non-refundable fee, and reverted on arrival — the exact failure the pre-check exists
+        // to prevent.
+        _validateStackConfig(config);
+
         inst = _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
         if (config.execTimelock.minDelay != 0) {

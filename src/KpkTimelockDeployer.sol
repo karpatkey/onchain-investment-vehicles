@@ -168,7 +168,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         fund's canonical addresses by calling `deployStack` directly. The fund could never
     ///         exist on those chains at its canonical addresses at all.
     ///
-    ///         10 leaves ~445k of margin (~15%). Pinned by
+    ///         10 leaves ~360k of margin (~12%) against the full `ccipReceive` frame the destination
+    ///         actually pays for — 2,639,682 measured; `deployStack` alone is 2.56M, which is the
+    ///         narrower figure the test below asserts. Pinned by
     ///         `test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap`, which measures the
     ///         largest set this constant permits rather than a typical one. This is a ceiling only —
     ///         there is deliberately no floor on either array.

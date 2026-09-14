@@ -846,6 +846,26 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
     }
 
+    /// @notice The source-chain pre-check must cover the STACK half too, not just the timelock.
+    ///         `dispatchTo` runs no local deploy, so duplicate manager owners — or a threshold above
+    ///         the owner count — used to dispatch to every lane, spend every non-refundable fee, and
+    ///         revert `DuplicateOwner` on arrival: the exact failure the pre-check exists to prevent,
+    ///         one validator over.
+    function test_dispatchTo_rejectsADuplicateManagerOwnerBeforeSpendingFees() public {
+        address[] memory dupes = new address[](2);
+        dupes[0] = managerSigner;
+        dupes[1] = managerSigner;
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: dupes, threshold: 1});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert(KpkOivFactory.DuplicateOwner.selector);
+        orchestrator.dispatchTo{value: _fee(1)}(cfg, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
     function test_ccipReceive_revertsForWrongRouter() public {
         // Build the message first — it makes an external call (factory.oivToStackConfig) that would
         // otherwise consume the prank/expectRevert.
