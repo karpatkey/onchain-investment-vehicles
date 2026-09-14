@@ -411,19 +411,50 @@ Compiler settings, which differ per contract and fail **silently** if mismatched
 both profiles, so `--show-standard-json-input` needs `--compilation-profile default` for it or forge
 refuses with `Ambiguous compilation profiles found in cache`.
 
-Verified on **Sourcify v2**, confirmed by read (`GET /v2/contract/4663/<address>`), not by submit
-result. The implementation is a `match` rather than `exact_match` because verifying it requires
+All six verified on **Sourcify v2** and **Etherscan V2**, every cell below from a read
+(`GET /v2/contract/4663/<address>`; `getsourcecode`) rather than a submit result:
+
+| Contract | Sourcify | Etherscan V2 |
+|---|---|---|
+| `UniswapV3VaultMath` | `exact_match` | VERIFIED |
+| `UniswapV3PositionVault` | `match` | VERIFIED |
+| `KPKWETHUSDG100` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG500` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG3000` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG10000` | `exact_match` | VERIFIED |
+
+The implementation is a `match` rather than `exact_match` on Sourcify because verifying it requires
 injecting the library link into `settings.libraries`, which changes the metadata hash. Without that
 link the recompiled code carries a `__$…$__` placeholder and matches nothing; the link is not pinned
 in `foundry.toml` because that would break the fork tests, which deploy their own library. Its chain
 bytecode also carries the contract's own address at offset 17128 — the UUPS `__self` immutable, which
 is zero in any local compile.
 
-**No other backend covers chain 4663**, each established by probe rather than assumption:
+### Etherscan V2 on this chain: two traps
+
+**4663 IS on Etherscan V2.** An earlier round of this deployment recorded it as unsupported and wrote
+that into this file; the claim was wrong. `https://api.etherscan.io/v2/chainlist` is the keyless
+check that settles it, and a `getsourcecode` probe with a dummy key does NOT — the key is validated
+first, so an invalid-key error masks the question entirely.
+
+**forge cannot drive Etherscan for this chain**, because forge 1.7.1's built-in chain list predates
+it. `--verifier etherscan` fails with `No known Etherscan API URL for chain 4663`, and supplying
+`--verifier-url` changes the failure to `ETHERSCAN_API_KEY must be set` — which is a red herring: it
+persists with the key exported AND passed as `--etherscan-api-key`. Both are the same inability to
+construct a verifier for an unknown chain. The route that works is a raw POST to
+`https://api.etherscan.io/v2/api?chainid=4663` with `chainid` in the QUERY (in the body alone it
+silently defaults to chain 1).
+
+Only the library and implementation needed submitting there. The four proxies were **already
+VERIFIED** on the first read: Sourcify's propagation had carried them across. That propagation is
+also what exposed the wrong classification — a Sourcify job returned an Etherscan `verificationId`
+for a chain this file claimed Etherscan did not support, which was the system reporting the error
+rather than an anomaly.
+
+### Backends that genuinely do not cover 4663
 
 | Backend | Result |
 |---|---|
-| Etherscan V2 | `Missing or unsupported chainid parameter` — 4663 is not on V2 |
 | Routescan | `chain not supported` |
 | OKLink | no `chainShortName` for this chain |
 | Tenderly | chain post-dates its supported list |
@@ -434,7 +465,10 @@ identical 403 from a different network origin. A JS challenge cannot be answered
 Blockscout can only be done through the browser UI. That is worth doing, since it is the explorer
 anyone looking these contracts up will actually open.
 
-Runner: `script/verify/sourcify_verify.py`, which reads before it submits and is safe to re-run.
+Re-probe this table rather than trusting it. Chain support changes — Etherscan's did, between two
+rounds of this same deployment a few days apart.
+
+Runners: `script/verify/sourcify_verify.py` (reads before it submits, safe to re-run).
 
 ## Operational note
 
