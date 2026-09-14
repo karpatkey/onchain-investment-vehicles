@@ -323,12 +323,27 @@ Independent on-chain verification (post-deploy):
 
 # UniswapV3PositionVault — Robinhood Chain (WETH/USDG)
 
-Deployed 2026-09-11 on Robinhood Chain (chain id **4663**, an Arbitrum Orbit L2, ArbOS 61). Four
-vaults, one per WETH/USDG fee tier, sharing a single implementation and a single linked library.
+Robinhood Chain (chain id **4663**, an Arbitrum Orbit L2, ArbOS 61). Four vaults, one per WETH/USDG
+fee tier, sharing a single implementation and a single linked library.
 
-These are **not** part of the OIV factory infrastructure and are not in `script/deployed-infra.json`,
-which records the salt-v3 cross-chain stack only. Plain `CREATE`, so the addresses come from the
-deployer's nonce and cannot be recomputed — they exist only here and in `broadcast/`.
+Only the current addresses are recorded here, matching how this file treats the factory: superseded
+deployments are not listed, so anything below is live. These are **not** part of the OIV factory
+infrastructure and are not in `script/deployed-infra.json`, which records the salt-v3 cross-chain
+stack only. Plain `CREATE`, so the addresses come from the deployer's nonce and cannot be
+recomputed — outside `broadcast/` this record is the only place they exist.
+
+## Vaults
+
+| Fee | Vault (ERC-1967 proxy) | Symbol | Uniswap v3 pool |
+|---|---|---|---|
+| 0.01% | `0x443Acee79BCF6e7A5E5E4C8f419aeD4Ac0173eA1` | `KPKWETHUSDG100` | `0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca` |
+| 0.05% | `0x81313b5F492D56dEB77504cdA0c8e0fa0A7e285f` | `KPKWETHUSDG500` | `0x69BfaF19C9f377BB306a89aEd9F6B07e2c1a8d9a` |
+| 0.3% | `0x0e464611bEb25a6D98AFC6122E97D68F948c38Ca` | `KPKWETHUSDG3000` | `0xa9188730Fe85Be88ad499D7d52B099e800fB0334` |
+| 1% | `0xc21Bdf3f5D138b5849E503A2aF13d2651D1d0F38` | `KPKWETHUSDG10000` | `0x5f009E071F07e92B6C624e83F52F17bBDa34680D` |
+
+Each vault's `pool()` and `symbol()` were read back on chain and match the row above. The symbol
+suffix is the **Uniswap fee tier**, not basis points, so it maps directly onto the pool: a basis-point
+suffix would have made the 1% vault `…100`, which is Uniswap's name for the 0.01% tier.
 
 ## Shared code
 
@@ -338,19 +353,13 @@ deployer's nonce and cannot be recomputed — they exist only here and in `broad
 | `UniswapV3PositionVault` (implementation) | `0xed93fc3b31206f3778163a5ad29b50bf7eeb8948` |
 
 The implementation holds no funds, roles or storage; all four proxies execute its code against their
-own storage, so they stay independent and each upgrades separately. Sharing it took the second,
-third and fourth deployments from ~11.2M gas to ~952k each.
+own storage, so they stay independent and each upgrades separately. Sharing it costs a vault ~800k
+gas instead of ~11.2M, and leaves one implementation to verify rather than four.
 
-## Vaults
-
-| Fee | Vault (ERC-1967 proxy) | Uniswap v3 pool | Pool TVL at deploy |
-|---|---|---|---|
-| 0.01% | `0x769b7288280a846c3ce0a19c6187c8111f3e6884` | `0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca` | ~$28.7M |
-| 0.05% | `0x096F31D7616b7dc4a1097805c7fc0e59899036a1` | `0x69BfaF19C9f377BB306a89aEd9F6B07e2c1a8d9a` | ~$4.8M |
-| 0.3% | `0x483D16CC55998a0b1572C0961E40d87F7AE914B1` | `0xa9188730Fe85Be88ad499D7d52B099e800fB0334` | ~$2.0M |
-| 1% | `0xbC05cFfE0aF35fa9132aC42fC6cbc09c0328B802` | `0x5f009E071F07e92B6C624e83F52F17bBDa34680D` | ~$14k |
-
-Each vault's `pool()` was read back on chain and matches the tier above.
+Name and symbol are set at `initialize` and there is no setter — deliberately, and also because one
+does not fit: a minimal implementation measured **1,547 bytes** against 635 of EIP-170 headroom,
+putting the contract 912 bytes over the limit. Renaming therefore means new proxies against this same
+implementation, which is cheap while a vault is empty and is how the current set came to be.
 
 ## Chain infrastructure
 
@@ -365,7 +374,7 @@ contracts that are not there, so both were read off chain rather than assumed, a
 | WETH — token0, 18 decimals | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
 | USDG — token1, 6 decimals | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` |
 
-WETH sorts below USDG, so a vault's price reads as USDG per WETH — about 2,508 at deploy
+WETH sorts below USDG, so a vault's price reads as USDG per WETH — about 2,508 at deployment
 (tick −198,011), expressed to the contract scaled by 1e18.
 
 ## Configuration and roles
@@ -374,11 +383,10 @@ WETH sorts below USDG, so a vault's price reads as USDG per WETH — about 2,508
 guard values are **fixed for the life of each vault** — there is no setter, so no role can widen the
 manipulation guard on a vault investors have already funded.
 
-All four pools answered a 600 s `observe()` at deploy with observation cardinality 2500–3000, so the
-usual young-chain blocker (a fresh pool at cardinality 1, where `initialize` reverts
-`TwapUnavailable`) did not apply. Spot sat 27–51 bps from the TWAP, i.e. already a quarter of the way
-to the 200 bps cap, so the cap is a live constraint on when guarded calls succeed rather than a
-formality.
+All four pools answered a 600 s `observe()` with observation cardinality 2500–3000, so the usual
+young-chain blocker (a fresh pool at cardinality 1, where `initialize` reverts `TwapUnavailable`) did
+not apply. Spot sat 27–51 bps from the TWAP, i.e. already a quarter of the way to the 200 bps cap, so
+the cap is a live constraint on when guarded calls succeed rather than a formality.
 
 `DEFAULT_ADMIN_ROLE`, `CURATOR` and `INVESTOR` are all held by Safe
 `0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7` (v1.4.1). The deploying key renounced its admin role and
@@ -404,18 +412,10 @@ both profiles, so `--show-standard-json-input` needs `--compilation-profile defa
 refuses with `Ambiguous compilation profiles found in cache`.
 
 Verified on **Sourcify v2**, confirmed by read (`GET /v2/contract/4663/<address>`), not by submit
-result:
-
-| Contract | Match |
-|---|---|
-| `UniswapV3VaultMath` | `exact_match` |
-| `UniswapV3PositionVault` | `match` |
-| All four vault proxies | `exact_match` |
-
-The implementation is a `match` rather than `exact_match` because verifying it requires injecting the
-library link into `settings.libraries`, which changes the metadata hash. Without that link the
-recompiled code carries a `__$…$__` placeholder and matches nothing; the link is not pinned in
-`foundry.toml` because that would break the fork tests, which deploy their own library. Its chain
+result. The implementation is a `match` rather than `exact_match` because verifying it requires
+injecting the library link into `settings.libraries`, which changes the metadata hash. Without that
+link the recompiled code carries a `__$…$__` placeholder and matches nothing; the link is not pinned
+in `foundry.toml` because that would break the fork tests, which deploy their own library. Its chain
 bytecode also carries the contract's own address at offset 17128 — the UUPS `__self` immutable, which
 is zero in any local compile.
 
@@ -434,4 +434,11 @@ identical 403 from a different network origin. A JS challenge cannot be answered
 Blockscout can only be done through the browser UI. That is worth doing, since it is the explorer
 anyone looking these contracts up will actually open.
 
-Runner: `script/verify/sourcify_verify.py`.
+Runner: `script/verify/sourcify_verify.py`, which reads before it submits and is safe to re-run.
+
+## Operational note
+
+The public RPC `rpc.mainnet.chain.robinhood.com` sits behind a Cloudflare managed challenge that
+trips under sustained use and then refuses reads and writes alike for several minutes. Robinhood's
+own documentation says it is rate-limited and not for production. A deployment or verification sweep
+of any size wants a dedicated endpoint.

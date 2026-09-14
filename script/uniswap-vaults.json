@@ -1,7 +1,7 @@
 {
   "usdc-weth-mainnet": {
-    "name": "kpk USDC/WETH Position Vault",
-    "symbol": "kpkUSDCWETH",
+    "name": "KPK USDC/WETH Position Vault",
+    "symbol": "KPKUSDCWETH",
     "admin": "0x0000000000000000000000000000000000000000",
     "curator": "0x0000000000000000000000000000000000000000",
     "assetRecoverer": "0x0000000000000000000000000000000000000000",
@@ -15,8 +15,8 @@
   },
 
   "weth-usdg-robinhood-100": {
-    "name": "kpk WETH/USDG 0.01% Position Vault",
-    "symbol": "kpkWUSDG1",
+    "name": "KPK WETH/USDG 0.01% Position Vault",
+    "symbol": "KPKWETHUSDG100",
     "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
@@ -30,8 +30,8 @@
   },
 
   "weth-usdg-robinhood-500": {
-    "name": "kpk WETH/USDG 0.05% Position Vault",
-    "symbol": "kpkWUSDG5",
+    "name": "KPK WETH/USDG 0.05% Position Vault",
+    "symbol": "KPKWETHUSDG500",
     "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
@@ -45,8 +45,8 @@
   },
 
   "weth-usdg-robinhood-3000": {
-    "name": "kpk WETH/USDG 0.3% Position Vault",
-    "symbol": "kpkWUSDG30",
+    "name": "KPK WETH/USDG 0.3% Position Vault",
+    "symbol": "KPKWETHUSDG3000",
     "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
@@ -60,8 +60,8 @@
   },
 
   "weth-usdg-robinhood-10000": {
-    "name": "kpk WETH/USDG 1% Position Vault",
-    "symbol": "kpkWUSDG100",
+    "name": "KPK WETH/USDG 1% Position Vault",
+    "symbol": "KPKWETHUSDG10000",
     "admin": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "curator": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
     "assetRecoverer": "0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7",
