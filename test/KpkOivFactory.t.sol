@@ -1935,6 +1935,35 @@ contract KpkOivFactoryTest is OivTestConstants {
         factory.setKpkSharesMastercopy(makeAddr("notAContract"));
     }
 
+    /// @notice Pins the reentrancy claim in `_deploySharesProxy`'s comment, which until now rested
+    ///         on a trace rather than a test. The claim is that a hostile base asset cannot mutate
+    ///         anything during `initialize`, because the only external calls it can reach —
+    ///         `symbol()` and `decimals()` — are `view`, so solc emits STATICCALL.
+    ///
+    ///         An asset whose `symbol()` merely WRITES STORAGE is enough to demonstrate it: under
+    ///         STATICCALL the write reverts and the revert propagates, so `deployOiv` fails. Under a
+    ///         plain CALL the write would succeed and deployment would proceed — so this test failing
+    ///         to revert is precisely the signal that the window has reopened, which is what would
+    ///         happen if a future `KpkShares` made a non-static call during initialization.
+    function test_deploySharesProxy_hostileAssetCannotMutateDuringInitialize() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.sharesParams.asset = address(new StateWritingAsset());
+
+        vm.expectRevert();
+        factory.deployOiv(cfg);
+    }
+
+    /// @dev The negative control, without which the test above proves nothing: an asset identical in
+    ///      every respect EXCEPT that `symbol()` writes no storage deploys fine. So the revert above
+    ///      is caused by the write being attempted under STATICCALL, not by the asset being a stub.
+    function test_deploySharesProxy_anInertStubAssetDeploysFine() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.sharesParams.asset = address(new InertAsset());
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(cfg);
+        assertGt(inst.kpkSharesProxy.code.length, 0, "a non-writing stub asset deploys");
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
@@ -2084,4 +2113,57 @@ interface ISafeModules {
 
     /// @dev Self-authorized on a Safe, so pranking as the Safe stands in for an owner executing it.
     function enableModule(address module) external;
+}
+
+/// @dev An ERC-20 whose `symbol()` attempts a STATE WRITE. `KpkShares.initialize` reads `symbol()`
+///      and `decimals()` on the base asset, and both are declared `view`, so solc emits STATICCALL —
+///      under which any write reverts and the revert propagates. This token therefore makes
+///      `deployOiv` fail, and that failure is the proof: under a plain CALL the write would succeed
+///      and deployment would sail through, which is exactly the reentrancy window the factory's
+///      comment claims is closed.
+contract InertAsset {
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+
+    function symbol() external pure returns (string memory) {
+        return "INERT";
+    }
+
+    function name() external pure returns (string memory) {
+        return "Inert Asset";
+    }
+
+    function approve(address, uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function allowance(address, address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+}
+
+contract StateWritingAsset {
+    uint256 public poked;
+
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+
+    function symbol() external returns (string memory) {
+        poked += 1; // reverts under STATICCALL
+        return "EVIL";
+    }
+
+    function name() external pure returns (string memory) {
+        return "State Writing Asset";
+    }
+
+    function approve(address, uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function allowance(address, address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
 }
