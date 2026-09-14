@@ -320,3 +320,159 @@ Independent on-chain verification (post-deploy):
 - `factory.owner()` = OIV Safe ✓
 - `factory.kpkSharesDeployer()` = `0xA4B485Ef...75F0` ✓
 - `KpkSharesDeployer.factory()` = `0x0d94255f...d420` ✓
+
+# UniswapV3PositionVault — Robinhood Chain (WETH/USDG)
+
+Robinhood Chain (chain id **4663**, an Arbitrum Orbit L2, ArbOS 61). Four vaults, one per WETH/USDG
+fee tier, sharing a single implementation and a single linked library.
+
+Only the current addresses are recorded here, matching how this file treats the factory: superseded
+deployments are not listed, so anything below is live. These are **not** part of the OIV factory
+infrastructure and are not in `script/deployed-infra.json`, which records the salt-v3 cross-chain
+stack only. Plain `CREATE`, so the addresses come from the deployer's nonce and cannot be
+recomputed — outside `broadcast/` this record is the only place they exist.
+
+## Vaults
+
+| Fee | Vault (ERC-1967 proxy) | Symbol | Uniswap v3 pool |
+|---|---|---|---|
+| 0.01% | `0x443Acee79BCF6e7A5E5E4C8f419aeD4Ac0173eA1` | `KPKWETHUSDG100` | `0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca` |
+| 0.05% | `0x81313b5F492D56dEB77504cdA0c8e0fa0A7e285f` | `KPKWETHUSDG500` | `0x69BfaF19C9f377BB306a89aEd9F6B07e2c1a8d9a` |
+| 0.3% | `0x0e464611bEb25a6D98AFC6122E97D68F948c38Ca` | `KPKWETHUSDG3000` | `0xa9188730Fe85Be88ad499D7d52B099e800fB0334` |
+| 1% | `0xc21Bdf3f5D138b5849E503A2aF13d2651D1d0F38` | `KPKWETHUSDG10000` | `0x5f009E071F07e92B6C624e83F52F17bBDa34680D` |
+
+Each vault's `pool()` and `symbol()` were read back on chain and match the row above. The symbol
+suffix is the **Uniswap fee tier**, not basis points, so it maps directly onto the pool: a basis-point
+suffix would have made the 1% vault `…100`, which is Uniswap's name for the 0.01% tier.
+
+## Shared code
+
+| Contract | Address |
+|---|---|
+| `UniswapV3VaultMath` (linked library) | `0xcabe2683c45855ca7dba5cc2e30186ac7cdb523a` |
+| `UniswapV3PositionVault` (implementation) | `0xed93fc3b31206f3778163a5ad29b50bf7eeb8948` |
+
+The implementation holds no funds, roles or storage; all four proxies execute its code against their
+own storage, so they stay independent and each upgrades separately. Sharing it costs a vault ~800k
+gas instead of ~11.2M, and leaves one implementation to verify rather than four.
+
+Name and symbol are set at `initialize` and there is no setter — deliberately, and also because one
+does not fit: a minimal implementation measured **1,547 bytes** against 635 of EIP-170 headroom,
+putting the contract 912 bytes over the limit. Renaming therefore means new proxies against this same
+implementation, which is cheap while a vault is empty and is how the current set came to be.
+
+## Chain infrastructure
+
+**Neither Uniswap address is the canonical one.** A config copied from another chain would target
+contracts that are not there, so both were read off chain rather than assumed, and
+`positionManager.factory()` was checked to return the factory below.
+
+| | Address |
+|---|---|
+| UniswapV3Factory | `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA` |
+| NonfungiblePositionManager | `0x73991a25c818bf1f1128deaab1492d45638de0d3` |
+| WETH — token0, 18 decimals | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+| USDG — token1, 6 decimals | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` |
+
+WETH sorts below USDG, so a vault's price reads as USDG per WETH — about 2,508 at deployment
+(tick −198,011), expressed to the contract scaled by 1e18.
+
+## Configuration and roles
+
+`twapPeriod` 600 s, `maxTwapDeviationBps` 200, `openToEveryone` false, identical on all four. Both
+guard values are **fixed for the life of each vault** — there is no setter, so no role can widen the
+manipulation guard on a vault investors have already funded.
+
+All four pools answered a 600 s `observe()` with observation cardinality 2500–3000, so the usual
+young-chain blocker (a fresh pool at cardinality 1, where `initialize` reverts `TwapUnavailable`) did
+not apply. Spot sat 27–51 bps from the TWAP, i.e. already a quarter of the way to the 200 bps cap, so
+the cap is a live constraint on when guarded calls succeed rather than a formality.
+
+`DEFAULT_ADMIN_ROLE`, `CURATOR` and `INVESTOR` are all held by Safe
+`0x22d058a5CED2c31b9a36d14b83Af0daB7ce258d7` (v1.4.1). The deploying key renounced its admin role and
+holds nothing, verified on chain. Note that the Safe is **threshold 1 with a single owner**, and that
+owner is the deploying key — so the renounce hands authority to a Safe the same key controls, and the
+separation the deploy script is written to produce does not exist for this deployment.
+
+`INVESTOR` is granted to the curator at deploy time but **not** to the zero address: the vaults are
+closed, and only explicitly granted addresses can deposit, redeem or hold shares.
+
+## State
+
+All four vaults are deployed but **inert**: `activeTokenId` is 0, so deposits revert
+`NoActivePosition` until the curator funds a vault and calls `createPosition` with a price range. The
+opening share supply mints to whoever opens the position, which is why the curator holds `INVESTOR`.
+
+## Verification
+
+Compiler settings, which differ per contract and fail **silently** if mismatched: solc
+`v0.8.34+commit.80d5c536`, `evm_version = osaka`, `optimizer_runs = 60` for the vault and the proxies
+(the `vault-size` profile) and `2000` for the library (the repo default). The library is built under
+both profiles, so `--show-standard-json-input` needs `--compilation-profile default` for it or forge
+refuses with `Ambiguous compilation profiles found in cache`.
+
+All six verified on **Sourcify v2** and **Etherscan V2**, every cell below from a read
+(`GET /v2/contract/4663/<address>`; `getsourcecode`) rather than a submit result:
+
+| Contract | Sourcify | Etherscan V2 |
+|---|---|---|
+| `UniswapV3VaultMath` | `exact_match` | VERIFIED |
+| `UniswapV3PositionVault` | `match` | VERIFIED |
+| `KPKWETHUSDG100` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG500` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG3000` | `exact_match` | VERIFIED |
+| `KPKWETHUSDG10000` | `exact_match` | VERIFIED |
+
+The implementation is a `match` rather than `exact_match` on Sourcify because verifying it requires
+injecting the library link into `settings.libraries`, which changes the metadata hash. Without that
+link the recompiled code carries a `__$…$__` placeholder and matches nothing; the link is not pinned
+in `foundry.toml` because that would break the fork tests, which deploy their own library. Its chain
+bytecode also carries the contract's own address at offset 17128 — the UUPS `__self` immutable, which
+is zero in any local compile.
+
+### Etherscan V2 on this chain: two traps
+
+**4663 IS on Etherscan V2.** An earlier round of this deployment recorded it as unsupported and wrote
+that into this file; the claim was wrong. `https://api.etherscan.io/v2/chainlist` is the keyless
+check that settles it, and a `getsourcecode` probe with a dummy key does NOT — the key is validated
+first, so an invalid-key error masks the question entirely.
+
+**forge cannot drive Etherscan for this chain**, because forge 1.7.1's built-in chain list predates
+it. `--verifier etherscan` fails with `No known Etherscan API URL for chain 4663`, and supplying
+`--verifier-url` changes the failure to `ETHERSCAN_API_KEY must be set` — which is a red herring: it
+persists with the key exported AND passed as `--etherscan-api-key`. Both are the same inability to
+construct a verifier for an unknown chain. The route that works is a raw POST to
+`https://api.etherscan.io/v2/api?chainid=4663` with `chainid` in the QUERY (in the body alone it
+silently defaults to chain 1).
+
+Only the library and implementation needed submitting there. The four proxies were **already
+VERIFIED** on the first read: Sourcify's propagation had carried them across. That propagation is
+also what exposed the wrong classification — a Sourcify job returned an Etherscan `verificationId`
+for a chain this file claimed Etherscan did not support, which was the system reporting the error
+rather than an anomaly.
+
+### Backends that genuinely do not cover 4663
+
+| Backend | Result |
+|---|---|
+| Routescan | `chain not supported` |
+| OKLink | no `chainShortName` for this chain |
+| Tenderly | chain post-dates its supported list |
+| Blockscout | instance exists at `robinhoodchain.blockscout.com`, but its **entire API is Cloudflare-gated** — every route returns 403 with a JS challenge while the site root returns 200 |
+
+The Blockscout block is not a client problem: Sourcify's own propagation attempt recorded the
+identical 403 from a different network origin. A JS challenge cannot be answered by `curl`, so
+Blockscout can only be done through the browser UI. That is worth doing, since it is the explorer
+anyone looking these contracts up will actually open.
+
+Re-probe this table rather than trusting it. Chain support changes — Etherscan's did, between two
+rounds of this same deployment a few days apart.
+
+Runners: `script/verify/sourcify_verify.py` (reads before it submits, safe to re-run).
+
+## Operational note
+
+The public RPC `rpc.mainnet.chain.robinhood.com` sits behind a Cloudflare managed challenge that
+trips under sustained use and then refuses reads and writes alike for several minutes. Robinhood's
+own documentation says it is rate-limited and not for production. A deployment or verification sweep
+of any size wants a dedicated endpoint.
