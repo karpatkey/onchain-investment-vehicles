@@ -252,21 +252,22 @@ contract OivConfigReaderTest is Test {
         script.deployOiv("script/oiv-config.example.json");
     }
 
-    /// @notice The shipped example declares two shares chains and overrides only one — that is
-    ///         CORRECT, because the omitted chain is the one `.oiv.sharesParams.asset` belongs to.
-    ///         This pins that the guard below does not reject it.
-    function test_sharesChains_oneOmittedOverrideIsFine() public view {
+    /// @notice Every declared shares chain must name its own asset, so the shipped example names
+    ///         both — including chain 1, whose asset happens to equal `.oiv.sharesParams.asset`.
+    ///         Repeating an address is legal; leaving it implied is not.
+    function test_sharesChains_everyDeclaredChainNamesItsOwnAsset() public view {
         CcipOivDeployer.SharesChain[] memory t = reader.sharesChains(json);
         assertEq(t.length, 2, "example declares two shares chains");
-        assertEq(t[0].asset, USDC, "chain 1 falls back to the base asset, which is its asset");
-        assertEq(t[1].asset, GNOSIS_ASSET, "chain 100 uses its explicit override");
+        assertEq(t[0].asset, USDC, "chain 1 names its asset explicitly");
+        assertEq(t[1].asset, GNOSIS_ASSET, "chain 100 names its own");
     }
 
-    /// @notice A SECOND omission is necessarily wrong — two chains cannot share one token address —
-    ///         and silently yields a topology naming a token that does not exist on one of them.
-    ///         Because the topology is hashed into the salt, that is unrecoverable once the fan-out
-    ///         has spent its fees, so it must be refused at parse time.
-    function test_sharesChains_refusesASecondMissingOverride() public {
+    /// @notice ANY omission is refused. An earlier rule allowed one, reasoning that the fallback
+    ///         belongs to exactly one chain — but nothing checked WHICH chain omitted, so overriding
+    ///         chain 1 and omitting chain 100 satisfied it while chain 100 silently took the mainnet
+    ///         token. Because the topology is hashed into the salt, that is unrecoverable once the
+    ///         fan-out has spent its fees.
+    function test_sharesChains_refusesAnyMissingOverride() public {
         string memory bad = string.concat(
             '{"sharesChains":[1,10,100],',
             '"oiv":{"sharesParams":{"asset":"',
