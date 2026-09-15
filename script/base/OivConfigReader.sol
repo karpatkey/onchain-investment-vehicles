@@ -49,11 +49,27 @@ abstract contract OivConfigReader is Script {
         }
     }
 
+    /// @dev `.execRolesModFinalOwner` and `.oiv.admin` describe the same role — the factory derives
+    ///      `finalOwner := admin` — so they must agree. Checked from BOTH builders: `deploy` picks a
+    ///      branch per chain, and `CcipDeployEverywhere` only ever calls `_buildOivConfig`, so a
+    ///      check living in `_buildStackConfig` alone would catch the disagreement or not depending
+    ///      on which chain the operator happened to run first.
+    function _requireOwnerMatchesAdmin(string memory json, address finalOwner) internal view {
+        require(vm.keyExists(json, ".oiv.admin"), "config: .oiv block is present but has no admin");
+        require(
+            finalOwner == json.readAddress(".oiv.admin"),
+            "config: .execRolesModFinalOwner must equal .oiv.admin - they are the same role"
+        );
+    }
+
     function _buildOivConfig(string memory json) internal view returns (KpkOivFactory.OivConfig memory config) {
         config.managerSafe.owners = json.readAddressArray(".managerSafe.owners");
         config.managerSafe.threshold = json.readUint(".managerSafe.threshold");
         config.salt = json.readUint(".salt");
         config.admin = json.readAddress(".oiv.admin");
+        if (vm.keyExists(json, ".execRolesModFinalOwner")) {
+            _requireOwnerMatchesAdmin(json, json.readAddress(".execRolesModFinalOwner"));
+        }
 
         config.sharesParams.asset = _assetForThisChain(json);
         config.sharesParams.name = json.readString(".oiv.sharesParams.name");
@@ -80,11 +96,11 @@ abstract contract OivConfigReader is Script {
         // from one config, letting them differ would give the stack-only chains a different exec
         // modifier owner than the shares chains — mixed governance, with every address still
         // matching and nothing on-chain to flag it.
-        if (vm.keyExists(json, ".oiv.admin")) {
-            require(
-                config.execRolesMod.finalOwner == json.readAddress(".oiv.admin"),
-                "config: .execRolesModFinalOwner must equal .oiv.admin - they are the same role"
-            );
+        // Keyed on the `.oiv` BLOCK, not on `.oiv.admin`: keying on the leaf meant a misspelled
+        // `admin` skipped the check entirely, and a config with an `.oiv` block but no `admin` is
+        // malformed regardless — `_buildOivConfig` would revert reading it.
+        if (vm.keyExists(json, ".oiv")) {
+            _requireOwnerMatchesAdmin(json, config.execRolesMod.finalOwner);
         }
         config.salt = json.readUint(".salt");
         // Read from the SAME `.oiv.execTimelock` block `_buildOivConfig` uses. A sidechain configured
@@ -175,12 +191,25 @@ abstract contract OivConfigReader is Script {
         );
 
         uint256[] memory ids = json.readUintArray(".sharesChains");
+        // EMPTY is not a legal topology, and is far worse than it looks. `keyExists` answers true for
+        // `[]`, so it satisfies every presence check; `_shouldDeployShares` then answers false on
+        // every chain, so each one takes the stack-only branch — including the chain meant to carry
+        // the fund. Those stacks are WIRED, so re-running later with a corrected list reverts
+        // `StackAlreadyDeployedHere`, and the canonical addresses are gone for good. There is no
+        // recovery through `promoteShares` either: it lives on the orchestrator and calls the factory
+        // with a different caller AND a different salt, so it cannot reach a fund deployed this way.
+        require(
+            ids.length != 0,
+            "config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to"
+        );
+
         out = new CcipOivDeployer.SharesChain[](ids.length);
         bool sawFallback;
         for (uint256 i = 0; i < ids.length; i++) {
             // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
             // two orderings would be two funds. Fail here with the offending id rather than letting
             // the revert surface from inside the orchestrator.
+            require(ids[i] != 0, "config: .sharesChains contains chain id 0");
             require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
             string memory key = string.concat(".oiv.assetOverrides.", vm.toString(ids[i]));
             // AT MOST ONE declared chain may omit its override. The fallback is
