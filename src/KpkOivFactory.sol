@@ -1104,10 +1104,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         than returning an address no deployment could produce. It also runs
     ///         `_validateStackConfig`, so manager owners, threshold and `finalOwner` are checked here
     ///         exactly as `deployStack` checks them — `CcipOivDeployer.dispatchTo` relies on that as
-    ///         its source-chain pre-check. An earlier version of this line said the opposite and was
-    ///         read by a reviewer as a live gap. It does NOT validate
-    ///         `config` —
-    ///         pass a config that would actually succeed (see `_validateStackConfig`).
+    ///         its source-chain pre-check.
     ///         By design, `predictStackAddresses` and `predictOivAddresses` produce IDENTICAL
     ///         Avatar Safe / Manager Safe / Roles Modifier addresses for the same `(salt,
     ///         caller)` — the factory is always enabled as a setup-time Avatar Safe module
