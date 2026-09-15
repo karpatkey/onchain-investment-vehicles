@@ -130,6 +130,16 @@ def prepare():
     """Regenerate the standard-JSON inputs with forge (optimizer/viaIR live inside)."""
     os.makedirs(STD_DIR, exist_ok=True)
     for name, meta in CONTRACTS.items():
+        # Entries whose source no longer exists in this tree are skipped, not attempted. `forge`
+        # exits non-zero on an unresolvable identifier, and because the output file is opened for
+        # writing FIRST, attempting it truncated the checked-in artifact to zero bytes and then
+        # raised — leaving every later entry unregenerated and a subsequent plain run submitting an
+        # empty standard-JSON body, which passes the existence precondition further down.
+        src = meta["identifier"].split(":")[0]
+        if not os.path.exists(os.path.join(REPO, src)):
+            print("skip %s: %s is not in this tree (kept as a record of what was verified)" % (name, src))
+            continue
+
         with open(std_path(name), "w") as fh:
             subprocess.run(
                 ["forge", "verify-contract",
