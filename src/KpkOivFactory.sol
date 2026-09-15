@@ -421,7 +421,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Emitted when the owner adds an externally-deployed fund to the curated registry.
     /// @param registeredFundId  Zero-based index of this fund in the `registeredFunds` mapping.
-    /// @param instance          The seven fund-component addresses, as supplied by the owner.
+    /// @param instance          The fund's component addresses, as supplied by the owner.
     /// @param registrar         The owner address that registered the fund.
     event FundRegistered(uint256 indexed registeredFundId, OivInstance instance, address indexed registrar);
 
@@ -913,6 +913,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         the fund's own salt-bound admin or its exec timelock.
     /// @param  config   Fund parameters, with THIS chain's base asset and the fund's original salt.
     /// @return instance The fund's addresses on this chain.
+    /// @dev SAFETY GAP, stated because it cannot currently be closed here. This function is
+    ///      PERMISSIONLESS, and it does NOT check that the Avatar Safe has approved the shares proxy
+    ///      to pull redemption assets. `CcipOivDeployer.promoteShares` does (`ApprovalNotGranted`,
+    ///      maximum allowance for the base asset and every `canRedeem` entry) — so that gate is
+    ///      bypassable by calling the factory directly.
+    ///
+    ///      What goes wrong: the fund is subscribable the moment it exists, since
+    ///      `requestSubscription` has no admin, operator or pause gate and pulls from the investor,
+    ///      while redemption settlement pulls `request.asset` from the Avatar Safe and reverts. An
+    ///      investor can be settled in and left unable to get out until an off-chain transaction
+    ///      lands.
+    ///
+    ///      The check belongs here and was written, but it does not fit: this contract is within a
+    ///      few hundred bytes of EIP-170 and the base-asset-only form still overflowed the test
+    ///      harness. Until the factory is split, USE `promoteShares` rather than calling this
+    ///      directly, and grant the approvals first either way — the proxy address is predictable
+    ///      beforehand, so there is no window that requires racing.
     function deployShares(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
         if (
@@ -940,6 +957,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         if (stack.execRolesModifier.code.length == 0) revert StackNotDeployed();
         if (IRoles(stack.execRolesModifier).avatar() != stack.avatarSafe) revert StackNotDeployed();
 
+        // Resolved BEFORE anything is deployed. Left where it was used — inside the struct literal
+        // below — a caller passing exec-timelock params the stack did not use burned the whole proxy
+        // deployment, plus a `TimelockController` clone when `sharesTimelock` was configured, and
+        // only then reverted. That is exactly what the entry-point fail-fast guards above exist to
+        // avoid.
+        address recordedExecTimelock = _recordedExecTimelock(stack.execRolesModifier, config.execTimelock, config.admin);
+
         uint256 id = instanceCount++;
         (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
             config.sharesParams,
@@ -960,12 +984,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             kpkSharesImpl: sharesImpl,
             kpkSharesProxy: sharesProxy,
             // Already deployed on this chain by `deployStack`, so recorded rather than deployed —
-            // and verified before recording. Nothing ties the `execTimelock` params passed HERE to
-            // the ones that earlier `deployStack` actually used, so a caller supplying a
-            // different-but-valid delay or member set would otherwise write an address with no code
-            // into `instances[id]` and emit it in `OivDeployed`, where anything reading the registry
-            // would take it for the fund's governance.
-            execTimelock: _recordedExecTimelock(stack.execRolesModifier, config.execTimelock),
+            // and verified in both directions above.
+            execTimelock: recordedExecTimelock,
             sharesTimelock: sharesTimelock
         });
 
@@ -993,7 +1013,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         on-chain consumer can read a registered fund's seven component addresses directly via the
     ///         `registeredFunds`/`getFund` getter without replaying `FundRegistered` events. The extra
     ///         SSTOREs are paid once per (rare, owner-only) registration.
-    /// @param  instance The seven fund-component addresses to record.
+    /// @param  instance The fund's component addresses to record.
     /// @return registeredFundId Zero-based index assigned in the `registeredFunds` mapping.
     function registerFund(OivInstance calldata instance) external onlyOwner returns (uint256 registeredFundId) {
         if (
@@ -1043,7 +1063,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         slot is empty (never registered, or removed). Safe accessor for indexers/consumers —
     ///         prefer it over the raw `registeredFunds` getter, which silently returns a zero struct.
     /// @param  registeredFundId The `registeredFunds` index to read.
-    /// @return instance The seven fund-component addresses recorded at that id.
+    /// @return instance The fund's component addresses recorded at that id.
     function getFund(uint256 registeredFundId) external view returns (OivInstance memory instance) {
         instance = registeredFunds[registeredFundId];
         if (instance.kpkSharesProxy == address(0)) revert FundNotRegistered();
@@ -1179,12 +1199,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Requires the predicted address to exist and to actually own the exec modifier, so the
     ///      recorded value is the fund's real governance rather than the address some other
     ///      parameter set would have produced.
-    function _recordedExecTimelock(address execRolesModifier, TimelockParams memory params)
+    function _recordedExecTimelock(address execRolesModifier, TimelockParams memory params, address expectedOwner)
         internal
         view
         returns (address)
     {
-        if (params.minDelay == 0) return address(0);
+        // BOTH directions. Recording a timelock the fund does not have is the obvious error; the
+        // inverse is just as wrong and was unguarded. With no timelock configured, `_wireExecModifier`
+        // handed the modifier to `finalOwner` — which `oivToStackConfig` derives from `admin` — so
+        // anything else owning it means the stack IS timelocked and this call would have written
+        // `address(0)` into `instances[id]` and emitted it. `registerFund`'s own NatSpec tells
+        // on-chain consumers to trust the deploy log over the registry, so that reads as "this fund
+        // has no delay" about a fund that does.
+        if (params.minDelay == 0) {
+            if (IRoles(execRolesModifier).owner() != expectedOwner) revert TimelockMismatch(address(0));
+            return address(0);
+        }
 
         address predicted =
             IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(execRolesModifier, params);
