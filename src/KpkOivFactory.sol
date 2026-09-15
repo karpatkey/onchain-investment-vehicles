@@ -1101,7 +1101,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         (factory address, infrastructure addresses, `caller`, `config.salt`, and the
     ///         Manager Safe's owners/threshold). The prediction validates any configured timelock,
     ///         via `predictExecTimelock`, so it reverts on e.g. an unsorted proposer array rather
-    ///         than returning an address no deployment could produce. It does NOT otherwise validate
+    ///         than returning an address no deployment could produce. It also runs
+    ///         `_validateStackConfig`, so manager owners, threshold and `finalOwner` are checked here
+    ///         exactly as `deployStack` checks them — `CcipOivDeployer.dispatchTo` relies on that as
+    ///         its source-chain pre-check. An earlier version of this line said the opposite and was
+    ///         read by a reviewer as a live gap. It does NOT validate
     ///         `config` —
     ///         pass a config that would actually succeed (see `_validateStackConfig`).
     ///         By design, `predictStackAddresses` and `predictOivAddresses` produce IDENTICAL

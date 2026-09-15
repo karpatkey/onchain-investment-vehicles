@@ -316,7 +316,16 @@ abstract contract OivChainDeploy is Script {
             // address. Clones are unaffected — they get their own storage — so an outsider claiming
             // it is not a fund compromise, but it would leave a fully functional
             // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
-            // publishes as kpk infrastructure. Claim the initializer here so nobody else can.
+            // publishes as kpk infrastructure.
+            //
+            // Claim it here — BEST EFFORT, not a guarantee, and the difference matters. The CREATE2
+            // and this `initialize` are separate broadcast transactions, so a searcher watching the
+            // mempool can claim the published address in between; this call then reverts, and a
+            // re-run takes the `[SKIP]` path because code already exists. The post-flight below is
+            // what catches that, and only partially: it detects a claimer who gave themselves a delay
+            // or open execution, not one who claimed it inert while holding PROPOSER_ROLE. Closing it
+            // properly needs a thin wrapper whose CONSTRUCTOR calls `_disableInitializers()`, which
+            // moves the mastercopy address and every timelock address with it.
             //
             // Note WHY the result is inert, because the obvious reason is wrong: OZ does not leave it
             // role-free. `__TimelockController_init_unchained` grants `DEFAULT_ADMIN_ROLE` to the

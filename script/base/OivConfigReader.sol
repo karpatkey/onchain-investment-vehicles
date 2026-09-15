@@ -204,7 +204,6 @@ abstract contract OivConfigReader is Script {
         );
 
         out = new CcipOivDeployer.SharesChain[](ids.length);
-        bool sawFallback;
         for (uint256 i = 0; i < ids.length; i++) {
             // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
             // two orderings would be two funds. Fail here with the offending id rather than letting
@@ -212,26 +211,25 @@ abstract contract OivConfigReader is Script {
             require(ids[i] != 0, "config: .sharesChains contains chain id 0");
             require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
             string memory key = string.concat(".oiv.assetOverrides.", vm.toString(ids[i]));
-            // AT MOST ONE declared chain may omit its override. The fallback is
-            // `.oiv.sharesParams.asset`, which belongs to exactly one chain — so one omission is
-            // unambiguous (that is the chain the base asset is for) and a second is necessarily
-            // wrong, since two chains cannot share one token address. Left silent, the second
-            // omission puts a token that does not exist there into the topology, the topology is
-            // hashed into the salt, and nothing fails until `deployLocal` runs on that chain — by
-            // which point the fan-out has deployed the fund and spent every lane's non-refundable
-            // fee at addresses derived from the wrong topology, and correcting the config moves all
-            // of them.
-            if (!vm.keyExists(json, key)) {
-                require(
-                    !sawFallback,
-                    string.concat(
-                        "config: more than one declared shares chain has no .oiv.assetOverrides entry (",
-                        vm.toString(ids[i]),
-                        ") - only the chain .oiv.sharesParams.asset belongs to may omit it"
-                    )
-                );
-                sawFallback = true;
-            }
+            // EVERY declared chain must name its own asset. An earlier version allowed a single
+            // omission, on the reasoning that the fallback (`.oiv.sharesParams.asset`) belongs to
+            // exactly one chain so one omission is unambiguous. It is not: nothing checked WHICH
+            // chain omitted. Override chain 1 and omit chain 100 and the rule was satisfied while
+            // chain 100 silently took the mainnet token — a token with no code there, bound into the
+            // salt, so nothing fails until `deployLocal` runs on that chain, by which point the
+            // fan-out has spent every lane's non-refundable fee at addresses derived from the wrong
+            // topology and correcting the config moves all of them.
+            //
+            // Repeating the same address across two chains is still expressible, and now has to be
+            // said out loud — which is the point.
+            require(
+                vm.keyExists(json, key),
+                string.concat(
+                    "config: .oiv.assetOverrides has no entry for declared shares chain ",
+                    vm.toString(ids[i]),
+                    " - every shares chain must name its own asset, even if it repeats another"
+                )
+            );
             address asset =
                 vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
             out[i] = CcipOivDeployer.SharesChain({chainId: ids[i], asset: asset});
