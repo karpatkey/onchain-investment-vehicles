@@ -55,4 +55,9 @@ interface IKpkTimelockDeployer {
 
     /// @notice Returns the address `deploySharesTimelock` would produce.
     function predictSharesTimelock(address sharesProxy, TimelockParams calldata params) external view returns (address);
+
+    /// @notice True once `timelock` owns `execRolesModifier`. False — rather than reverting — for a
+    ///         zero `timelock` or a modifier with no code, so it is safe to sweep across every chain
+    ///         a fund may or may not live on.
+    function isExecTimelocked(address execRolesModifier, address timelock) external view returns (bool);
 }

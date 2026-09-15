@@ -2024,6 +2024,38 @@ contract KpkOivFactoryTest is OivTestConstants {
         _assertFullyWired(inst);
     }
 
+    /// @notice `deployShares` RECORDS the exec timelock rather than deploying it, and nothing binds
+    ///         the params passed there to the ones the earlier `deployStack` on this chain actually
+    ///         used. Without a check it would write a merely-predicted address — one that was never
+    ///         deployed — into `instances[id]` and emit it in `OivDeployed`, where anything reading
+    ///         the registry would take it for the fund's governance.
+    function test_deployShares_refusesTimelockParamsTheStackDidNotUse() public {
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        stackConfig.execTimelock = _timelockParams(2 days);
+        factory.deployStack(stackConfig);
+
+        // Same fund, same salt — but a different delay, so a different timelock address.
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.execTimelock = _timelockParams(3 days);
+
+        vm.expectRevert();
+        factory.deployShares(cfg);
+    }
+
+    /// @dev The control: the params the stack really used are accepted, so the guard is about the
+    ///      mismatch rather than about recording a timelock at all.
+    function test_deployShares_acceptsTheTimelockParamsTheStackUsed() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.execTimelock = _timelockParams(2 days);
+
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(cfg);
+        factory.deployStack(stackConfig);
+
+        KpkOivFactory.OivInstance memory inst = factory.deployShares(cfg);
+        assertTrue(inst.execTimelock != address(0), "the real timelock is recorded");
+        assertGt(inst.execTimelock.code.length, 0, "and it exists");
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —

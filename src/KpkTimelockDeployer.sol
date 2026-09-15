@@ -115,6 +115,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         unable to act on it.
     error InvalidMastercopy();
 
+    /// @notice Thrown when deploying a timelock for a `governed` address that has no code.
+    error GovernedHasNoCode(address governed);
+
     /// @param _timelockMastercopy The per-chain `TimelockControllerUpgradeable` mastercopy. It takes no
     ///                            constructor arguments and is deployed through the canonical CREATE2
     ///                            factory, so it is at one address on every chain — which is what keeps
@@ -312,6 +315,17 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @dev    Intended to be swept across every chain a fund lives on: partial adoption leaves a fund
     ///         under mixed governance with nothing on-chain to flag it.
     function isExecTimelocked(address execRolesModifier, address timelock) external view returns (bool) {
+        // Both zero checks matter, and for different reasons.
+        //
+        // `timelock == 0` is what `OivInstance.execTimelock` holds when no timelock was configured,
+        // so a sweep feeding that field straight back in would compare `owner()` against zero — and
+        // a modifier whose ownership was RENOUNCED has exactly that owner. A bricked fund would have
+        // read as correctly timelocked, which is the opposite of what this function is for.
+        //
+        // `execRolesModifier` with no code makes the call below revert rather than answer, which
+        // breaks the cross-chain sweep this function documents itself as being for: a fund is
+        // routinely stack-only on some chains and absent from others.
+        if (timelock == address(0) || execRolesModifier.code.length == 0) return false;
         return IRoles(execRolesModifier).owner() == timelock;
     }
 
@@ -369,14 +383,26 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         //
         // `address(this)` as the initializing admin is what makes canceller provisioning atomic; it is
         // renounced below, in this same call, before control ever returns to the caller.
+        // `governed` must exist. Predicting for a not-yet-deployed modifier is legitimate — the
+        // factory does exactly that — which is why this lives here and not in `_validate`. DEPLOYING
+        // for one is not: on the documented manual path a typo'd address yields a real,
+        // funded-looking timelock that governs nothing, and `isExecTimelocked` against it cannot
+        // flag the mistake because there is nothing there to ask.
+        if (governed.code.length == 0) revert GovernedHasNoCode(governed);
+
         TimelockControllerUpgradeable tl = TimelockControllerUpgradeable(
             payable(Clones.cloneDeterministic(timelockMastercopy, _salt(domain, governed, params)))
         );
         tl.initialize(params.minDelay, params.proposers, executors, address(this));
 
+        // Hoisted, as `_requireLiveConfigMatches` already does with both of its role constants. This
+        // runs inside the destination's `deployStack`, the one path with a hard 3,000,000-gas ceiling
+        // and roughly 12% of margin — re-reading the constant up to `MAX_ROLE_MEMBERS` times spends
+        // that margin for nothing.
+        bytes32 cancellerRole = tl.CANCELLER_ROLE();
         uint256 cancellerCount = params.cancellers.length;
         for (uint256 i; i < cancellerCount; ++i) {
-            tl.grantRole(tl.CANCELLER_ROLE(), params.cancellers[i]);
+            tl.grantRole(cancellerRole, params.cancellers[i]);
         }
 
         tl.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
