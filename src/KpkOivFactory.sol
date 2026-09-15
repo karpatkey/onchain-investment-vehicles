@@ -587,6 +587,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         deployer UI.
     error AdoptedSafeMismatch(address safe);
 
+    /// @notice Thrown when `deployShares` is given `execTimelock` parameters that do not describe the
+    ///         timelock actually governing this chain's exec Roles Modifier.
+    /// @dev    The stack was deployed by an earlier `deployStack`, and nothing binds the parameters
+    ///         passed here to the ones it used — so without this the recorded and emitted
+    ///         `execTimelock` could be an address that was never deployed.
+    error TimelockMismatch(address predicted);
+
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
     error TimelockDeployerNotSet();
@@ -657,9 +664,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     // SECURITY: All setters take effect immediately with no timelock. A malicious or
     //           compromised owner can swap `kpkSharesMastercopy`, `rolesModifierMastercopy`,
     //           `safeSingleton`, or `safeModuleSetup` to backdoor every future `deployOiv` /
-    //           `deployStack` call. Past deployments are unaffected (each fund references its
-    //           own already-deployed implementation), but the blast radius for FUTURE
-    //           deployments is unbounded. The factory `owner` MUST therefore be a
+    //           `deployStack` call. FULLY deployed funds are unaffected — each references its own
+    //           already-deployed implementation — but a fund that is stack-only on some chains is
+    //           NOT: `timelockDeployer` is a CREATE2 deployer, so every timelock address depends on
+    //           it, and a later `deployShares` on such a chain would place that fund's shares
+    //           timelock at a different address than on the chains completed before the swap. That
+    //           is precisely the cross-chain divergence the timelock address fields promise cannot
+    //           happen. The blast radius for FUTURE deployments is unbounded. The factory `owner` MUST therefore be a
     //           TimelockController or governance multisig — never an EOA — and any value
     //           change SHOULD go through a public proposal/timelock cycle.
 
@@ -948,11 +959,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             managerRolesModifier: stack.managerRolesModifier,
             kpkSharesImpl: sharesImpl,
             kpkSharesProxy: sharesProxy,
-            // Already deployed on this chain by `deployStack`, so recorded rather than deployed.
-            execTimelock: config.execTimelock.minDelay == 0
-                ? address(0)
-                : IKpkTimelockDeployer(_requireTimelockDeployer())
-                    .predictExecTimelock(stack.execRolesModifier, config.execTimelock),
+            // Already deployed on this chain by `deployStack`, so recorded rather than deployed —
+            // and verified before recording. Nothing ties the `execTimelock` params passed HERE to
+            // the ones that earlier `deployStack` actually used, so a caller supplying a
+            // different-but-valid delay or member set would otherwise write an address with no code
+            // into `instances[id]` and emit it in `OivDeployed`, where anything reading the registry
+            // would take it for the fund's governance.
+            execTimelock: _recordedExecTimelock(stack.execRolesModifier, config.execTimelock),
             sharesTimelock: sharesTimelock
         });
 
@@ -1160,6 +1173,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             inst.sharesTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
                 .predictSharesTimelock(predictedProxy, config.sharesTimelock);
         }
+    }
+
+    /// @dev Resolves the exec timelock to RECORD for a fund whose stack already exists here.
+    ///      Requires the predicted address to exist and to actually own the exec modifier, so the
+    ///      recorded value is the fund's real governance rather than the address some other
+    ///      parameter set would have produced.
+    function _recordedExecTimelock(address execRolesModifier, TimelockParams memory params)
+        internal
+        view
+        returns (address)
+    {
+        if (params.minDelay == 0) return address(0);
+
+        address predicted =
+            IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(execRolesModifier, params);
+        if (!IKpkTimelockDeployer(_requireTimelockDeployer()).isExecTimelocked(execRolesModifier, predicted)) {
+            revert TimelockMismatch(predicted);
+        }
+        return predicted;
     }
 
     /// @dev Returns `timelockDeployer`, reverting if it has not been wired. Mirrors the

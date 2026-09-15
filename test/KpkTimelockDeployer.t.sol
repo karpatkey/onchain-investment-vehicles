@@ -56,8 +56,10 @@ contract Counter {
 }
 
 /// @notice Unit tests for `KpkTimelockDeployer` — no fork required.
-///         The end-to-end adoption flow against a real fund lives in
-///         `KpkTimelockDeployerFork.t.sol`.
+/// @dev    The end-to-end adoption flow against a real fund is covered by `KpkOivFactoryTest`'s
+///         timelock cases, which run on a mainnet fork. There is no separate fork file for this
+///         contract; an earlier version of this comment named one that does not exist, which
+///         invited a reader to assume coverage of the one-way `transferOwnership` step.
 contract KpkTimelockDeployerTest is Test {
     KpkTimelockDeployer kit;
 
@@ -65,7 +67,11 @@ contract KpkTimelockDeployerTest is Test {
     address superadminSafe = makeAddr("superadminSafe");
     address managerVetoSafe = makeAddr("managerVetoSafe");
     address lpVetoSafe = makeAddr("lpVetoSafe");
-    address execMod = makeAddr("execMod");
+    /// @dev A real contract, not a `makeAddr` placeholder: `_deployTimelock` now refuses to create a
+    ///      timelock for a `governed` address with no code, because on the manual path a typo'd
+    ///      address would otherwise yield a real timelock governing nothing. `MockOwnable` also gives
+    ///      `isExecTimelocked` an `owner()` to read.
+    address execMod;
     address sharesProxy = makeAddr("sharesProxy");
     address randomExecutor = makeAddr("randomExecutor");
 
@@ -73,6 +79,7 @@ contract KpkTimelockDeployerTest is Test {
 
     function setUp() public {
         kit = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
+        execMod = address(new MockOwnable(address(this)));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -528,6 +535,36 @@ contract KpkTimelockDeployerTest is Test {
 
         vm.prank(governanceSafe);
         tl.schedule(address(counter), 0, payload, bytes32(0), bytes32(0), 2 days);
+    }
+
+    /// @notice `isExecTimelocked` must answer FALSE, not revert and not true, for the two inputs a
+    ///         cross-chain sweep actually produces. `OivInstance.execTimelock` is zero when no
+    ///         timelock was configured, and a modifier whose ownership was RENOUNCED also has owner
+    ///         zero — so comparing them would report a bricked fund as correctly timelocked.
+    function test_isExecTimelocked_isFalseForAZeroTimelock() public {
+        MockOwnable renounced = new MockOwnable(address(0));
+        assertFalse(kit.isExecTimelocked(address(renounced), address(0)), "zero must never read as timelocked");
+    }
+
+    /// @notice And a chain where the modifier does not exist must answer false rather than reverting,
+    ///         since the function documents itself as safe to sweep across every chain a fund may or
+    ///         may not live on.
+    function test_isExecTimelocked_isFalseWhereTheModifierDoesNotExist() public view {
+        assertFalse(kit.isExecTimelocked(address(0xdead), address(0xbeef)), "absent modifier must not revert");
+    }
+
+    /// @notice Deploying a timelock for a `governed` address with no code produces a real,
+    ///         funded-looking timelock that governs nothing — and `isExecTimelocked` cannot flag it,
+    ///         because there is nothing there to ask. Predicting for a not-yet-deployed modifier
+    ///         stays legal, which is why the check is on the deploy path only.
+    function test_deployExecTimelock_refusesAGovernedAddressWithNoCode() public {
+        address notAContract = makeAddr("typoedModifier");
+        TimelockParams memory p = _params();
+
+        kit.predictExecTimelock(notAContract, p); // prediction is still fine
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.GovernedHasNoCode.selector, notAContract));
+        kit.deployExecTimelock(notAContract, p);
     }
 
     // ── The mastercopy itself ───────────────────────────────────────────────────
