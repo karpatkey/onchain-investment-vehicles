@@ -2056,6 +2056,36 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertGt(inst.execTimelock.code.length, 0, "and it exists");
     }
 
+    /// @notice THE claim the shared-mastercopy change rests on, which had no test at all: one fund
+    ///         upgrading its shares proxy must not touch another's. Sharing one implementation across
+    ///         every fund on a chain is only acceptable because `upgradeToAndCall` writes the ERC-1967
+    ///         slot of the CALLING proxy — so this asserts exactly that, rather than restating it.
+    function test_sharedMastercopy_upgradingOneFundDoesNotTouchAnother() public {
+        bytes32 IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+        KpkOivFactory.OivInstance memory a = factory.deployOiv(oivConfig);
+
+        KpkOivFactory.OivConfig memory second = _buildOivConfig();
+        second.salt = oivConfig.salt + 77;
+        KpkOivFactory.OivInstance memory b = factory.deployOiv(second);
+
+        assertEq(a.kpkSharesImpl, b.kpkSharesImpl, "both funds share one implementation");
+        assertEq(address(uint160(uint256(vm.load(b.kpkSharesProxy, IMPL_SLOT)))), a.kpkSharesImpl, "and B starts on it");
+
+        // Fund A upgrades, on its own authority.
+        address newImpl = address(new KpkShares());
+        vm.prank(admin);
+        KpkShares(a.kpkSharesProxy).upgradeToAndCall(newImpl, "");
+
+        assertEq(address(uint160(uint256(vm.load(a.kpkSharesProxy, IMPL_SLOT)))), newImpl, "A moved to the new impl");
+        assertEq(
+            address(uint160(uint256(vm.load(b.kpkSharesProxy, IMPL_SLOT)))),
+            a.kpkSharesImpl,
+            "B is untouched - this is the whole basis for sharing a mastercopy"
+        );
+        assertGt(a.kpkSharesImpl.code.length, 0, "and the shared mastercopy itself still exists");
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —

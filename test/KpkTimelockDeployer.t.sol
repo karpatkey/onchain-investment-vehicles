@@ -575,9 +575,16 @@ contract KpkTimelockDeployerTest is Test {
     ///         (own storage), so this is not a fund compromise, but it would hand a stranger
     ///         `DEFAULT_ADMIN_ROLE` over a fully functional `TimelockController` bearing our name.
     ///
-    ///         `OivChainDeploy` therefore claims the initializer immediately after CREATE2, with
-    ///         empty member arrays and `admin == address(0)`. This pins both halves: that the
-    ///         hazard is real, and that the claim closes it.
+    ///         `OivChainDeploy` therefore claims the initializer immediately after CREATE2.
+    ///
+    ///         Be precise about what these two tests pin, because an earlier comment here overclaimed
+    ///         it. They construct `TimelockControllerUpgradeable` directly and touch no repo code, so
+    ///         they pin UPSTREAM behaviour only: that an unclaimed mastercopy is takeable, and that
+    ///         claiming it with empty arrays leaves it inert. That is worth having — it is the
+    ///         regression check for an OZ bump that adds `_disableInitializers`, which would retire
+    ///         the hazard — but it is NOT coverage of our claim logic. The claim lives in a deploy
+    ///         script and is exercised by running one; a round-2 review found that logic had been
+    ///         changed in a way that broke every re-run, and no test noticed.
     function test_timelockMastercopy_unclaimedIsTakeableByAnyone() public {
         TimelockControllerUpgradeable fresh = new TimelockControllerUpgradeable();
         address[] memory none = new address[](0);

@@ -316,11 +316,17 @@ abstract contract OivChainDeploy is Script {
             // address. Clones are unaffected — they get their own storage — so an outsider claiming
             // it is not a fund compromise, but it would leave a fully functional
             // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
-            // publishes as kpk infrastructure. Claim the initializer here with NO roles at all: OZ
-            // grants no admin when `admin == address(0)`, and empty proposer/executor arrays leave
-            // nothing else. Done inside this branch only, so a re-run stays idempotent — a freshly
-            // CREATE2'd contract is definitively uninitialized, which is what makes it safe to
-            // require success.
+            // publishes as kpk infrastructure. Claim the initializer here so nobody else can.
+            //
+            // Note WHY the result is inert, because the obvious reason is wrong: OZ does not leave it
+            // role-free. `__TimelockController_init_unchained` grants `DEFAULT_ADMIN_ROLE` to the
+            // contract ITSELF unconditionally; the `admin == address(0)` branch only skips granting
+            // the extra admin. Inertness comes from the empty arrays alone — no proposer can
+            // schedule, and `EXECUTOR_ROLE` is not open.
+            //
+            // Inside this branch only, which is what keeps a re-run idempotent: a freshly CREATE2'd
+            // contract is definitively uninitialized, so requiring success here is safe, and the
+            // `[SKIP]` path below records no transaction at all.
             address[] memory noMembers = new address[](0);
             (bool claimed,) = timelockMastercopy.call(
                 abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembers, noMembers, address(0)))
@@ -329,19 +335,18 @@ abstract contract OivChainDeploy is Script {
             console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
-            // The claim above runs only in the just-deployed branch, so a run whose CREATE2 landed
-            // but whose `initialize` did not — broadcast aborted mid-sequence, an RPC or nonce
-            // failure, or someone claiming it between the two transactions — would take this branch
-            // forever after and never retry. Attempt it here too; a revert means it is already
-            // claimed, which is the desired end state either way. The post-flight below is what
-            // actually asserts that.
-            address[] memory noMembersRetry = new address[](0);
-            (bool retried,) = timelockMastercopy.call(
-                abi.encodeCall(
-                    TimelockControllerUpgradeable.initialize, (0, noMembersRetry, noMembersRetry, address(0))
-                )
-            );
-            retried; // outcome is not the signal — the post-flight assertion is
+            // NO retry here, deliberately. An earlier version attempted the claim on this path too,
+            // to cover a run whose CREATE2 landed while its `initialize` did not. It was inside
+            // `vm.startBroadcast()`, and forge records a broadcastable transaction at call-entry
+            // whether or not it reverts — so on an ALREADY-claimed mastercopy the recorded
+            // transaction failed simulation and aborted the whole run. That destroyed the idempotence
+            // every per-chain script depends on (each step is a `[SKIP]` branch precisely so a
+            // partial rollout can be resumed), on all 20 lanes, and made the `[ACTION REQUIRED]`
+            // orchestrator-recovery path below unreachable, since it is only ever reached on a
+            // re-run. It repaired a rare partial-broadcast by breaking the common case.
+            //
+            // The post-flight assertion is the right place for this: it runs OUTSIDE the broadcast,
+            // so it observes without recording, and it fails loudly if the mastercopy is unclaimed.
         }
         if (timelockDeployer.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
@@ -407,17 +412,29 @@ abstract contract OivChainDeploy is Script {
             console.log("  link:    ", linkToken);
             return;
         }
-        // The timelock mastercopy's initializer must be claimed before this chain is called ready.
-        // Asserted rather than assumed: the claim is attempted in two places above, and a run whose
-        // CREATE2 landed while its `initialize` did not would otherwise print "Chain ready" over a
-        // canonical, repo-published mastercopy whose initializer is open — or already held by a
-        // stranger — which is the exact condition the claim exists to prevent. Outside the broadcast,
-        // so this probe is simulation-only and sends nothing.
+        // The timelock mastercopy must be claimed AND inert before this chain is called ready. Both
+        // halves are needed, and an earlier version had only the first.
+        //
+        // Re-calling `initialize` shows the initializer is spoken for, but cannot say BY WHOM — a
+        // stranger's claim reverts exactly as ours does. So the shape is checked too: a stranger who
+        // claimed it in order to USE it must have given themselves a delay or open execution, while
+        // one who claimed it exactly as we would has left an inert contract, which is harmless.
+        //
+        // All three reads run outside `vm.startBroadcast`, so they observe without recording a
+        // transaction — which matters here, because recording one against an already-claimed
+        // mastercopy is precisely what broke idempotent re-runs in an earlier version of this file.
         address[] memory noMembersCheck = new address[](0);
         (bool stillOpen,) = timelockMastercopy.call(
             abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembersCheck, noMembersCheck, address(0)))
         );
         require(!stillOpen, "post-flight: timelock mastercopy initializer is still open");
+
+        TimelockControllerUpgradeable mc = TimelockControllerUpgradeable(payable(timelockMastercopy));
+        require(mc.getMinDelay() == 0, "post-flight: timelock mastercopy has a delay - claimed by someone else");
+        require(
+            !mc.hasRole(mc.EXECUTOR_ROLE(), address(0)),
+            "post-flight: timelock mastercopy has open execution - claimed by someone else"
+        );
 
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
     }
