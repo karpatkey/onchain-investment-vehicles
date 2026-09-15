@@ -2086,6 +2086,25 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertGt(a.kpkSharesImpl.code.length, 0, "and the shared mastercopy itself still exists");
     }
 
+    /// @notice The direction the first version of this guard missed. Recording a timelock the fund
+    ///         does NOT have was caught; recording "no timelock" for a fund that HAS one was not.
+    ///         With no timelock configured, wiring hands the exec modifier to `finalOwner` — derived
+    ///         from `admin` — so anything else owning it means the stack is timelocked, and writing
+    ///         `address(0)` would put "this fund has no delay" into the append-only deploy log that
+    ///         `registerFund`'s NatSpec tells on-chain consumers to trust over the registry.
+    function test_deployShares_refusesToRecordNoTimelockForATimelockedStack() public {
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        stackConfig.execTimelock = _timelockParams(2 days);
+        KpkOivFactory.StackInstance memory st = factory.deployStack(stackConfig);
+        assertTrue(st.execTimelock != address(0), "the stack really is timelocked");
+
+        // Same fund, same salt — but claiming there is no timelock.
+        KpkOivFactory.OivConfig memory cfg = oivConfig; // execTimelock.minDelay == 0
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.TimelockMismatch.selector, address(0)));
+        factory.deployShares(cfg);
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
