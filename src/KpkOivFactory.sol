@@ -29,7 +29,8 @@ import {OivInfraConstants} from "./OivInfraConstants.sol";
 ///           Modifiers). Intended for sidechain deployments paired with `deployOiv` on mainnet.
 ///         - `deployOiv` deploys the same five-contract stack PLUS a KpkShares UUPS proxy,
 ///           grants infinite asset allowances from the Avatar Safe to the shares proxy, and
-///           wires the Manager Safe as the shares operator. Typically called on mainnet only.
+///           wires the Manager Safe as the shares operator. Callable on any chain — there is no
+///           chain-id restriction, and the shares proxy lands at one address everywhere.
 ///
 ///         Cross-flow address invariant: for the same `(caller, salt)`, `deployStack` and
 ///         `deployOiv` produce IDENTICAL Avatar Safe / Manager Safe / Roles Modifier addresses.
@@ -99,6 +100,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev Head sentinel of the Gnosis Safe module linked-list. The list is ordered from most
     ///      recently enabled to oldest: SENTINEL → newest → … → oldest → SENTINEL.
     address private constant SENTINEL_MODULES = address(0x1);
+
+    /// @dev Mirror of `KpkShares.MAX_FEE_RATE`. Duplicated rather than read, because reading it costs
+    ///      368 bytes of a contract that is near EIP-170; pinned by `test_maxFeeRateMirrorsKpkShares`.
+    uint256 private constant MAX_FEE_RATE = 2000;
+
+    /// @dev `keccak256("guard_manager.guard.address")` — Safe v1.4.1's guard slot.
+    uint256 private constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+
+    /// @dev `keccak256("fallback_manager.handler.address")` — Safe v1.4.1's fallback-handler slot.
+    uint256 private constant FALLBACK_HANDLER_STORAGE_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     /// @notice Gnosis Safe v1.4.1 `MultiSend`, registered for unwrapping on every Roles Modifier
     ///         this factory deploys.
@@ -284,6 +296,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         uint256 salt;
         /// @notice Address that receives ownership of the exec Roles Modifier and
         ///         `DEFAULT_ADMIN_ROLE` on the KpkShares proxy. Must not be zero.
+        ///
+        ///         Each of those two is superseded INDEPENDENTLY by its timelock: with
+        ///         `execTimelock.minDelay != 0` the exec modifier goes to that timelock instead, and
+        ///         with `sharesTimelock.minDelay != 0` the shares admin role does. With both set,
+        ///         `admin` receives neither and serves only as the fallback each timelock replaces.
         address admin;
         /// @notice KpkShares initialization parameters.
         ///         `sharesParams.safe` is overridden with the deployed Avatar Safe address.
@@ -384,6 +401,18 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
+    /// @notice Emitted when a component was ALREADY at its predicted address and was adopted rather
+    ///         than created.
+    /// @dev    This is the signal the accepted adoption risk depends on. `DEPLOYMENT.md` § "Adopting
+    ///         a pre-existing Safe" asks an operator to verify an adopted Manager Safe off-chain
+    ///         before funding — advice that needs a way to know adoption happened, and the fund path
+    ///         is otherwise silent: both adopt branches return early, and `OivDeployed` looks
+    ///         identical either way. Index it and alert on it; a `component` that is the fund's
+    ///         Manager Safe is the one that warrants the off-chain check.
+    /// @param  component  The adopted address.
+    /// @param  kind       `"safe"` or `"roles-modifier"`.
+    event ComponentAdopted(address indexed component, bytes32 indexed kind);
+
     /// @notice Emitted when `deployStack` successfully deploys an operational stack.
     /// @param stackId   Zero-based index of this stack in the `stacks` mapping.
     /// @param instance  Addresses of all five deployed contracts.
@@ -396,7 +425,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Emitted when the owner adds an externally-deployed fund to the curated registry.
     /// @param registeredFundId  Zero-based index of this fund in the `registeredFunds` mapping.
-    /// @param instance          The seven fund-component addresses, as supplied by the owner.
+    /// @param instance          The fund's component addresses, as supplied by the owner.
     /// @param registrar         The owner address that registered the fund.
     event FundRegistered(uint256 indexed registeredFundId, OivInstance instance, address indexed registrar);
 
@@ -477,13 +506,97 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param  multiSendContract The address whose codehash did not match.
     error MultiSendMissing(address multiSendContract);
 
-    /// @notice Thrown when `deployOiv` is called before `setKpkSharesDeployer` has wired the
+    /// @notice Thrown when `deployOiv` is called before `setKpkSharesMastercopy` has wired the
     ///         deployer post-construction. This is only reachable in the brief window between
-    ///         factory deployment and the post-deploy `setKpkSharesDeployer` call (see the
+    ///         factory deployment and the post-deploy `setKpkSharesMastercopy` call (see the
     ///         constructor NatSpec for the deterministic-CREATE2 deployment flow). `deployStack`
     ///         is unaffected — it does not touch `kpkSharesMastercopy` and remains callable
     ///         regardless of wiring status.
     error KpkSharesMastercopyNotSet();
+
+    /// @notice Thrown when a mastercopy address has no code. Mirrors `KpkTimelockDeployer`'s guard
+    ///         of the same name, for the same reason: the value decides what every future fund on
+    ///         this chain delegates to.
+    error InvalidMastercopy();
+
+    /// @notice Thrown when `deployShares` is called for a fund whose operational stack does not exist
+    ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
+    ///         the stack first is also what turns a pre-landed stack from a denial into a
+    ///         prerequisite: an attacker who occupies those addresses has paid the fund's gas bill.
+    ///         Pinned by `test_adopt_isCheaperThanDeployingFresh`, which asserts the adopted
+    ///         deployment costs strictly less than a fresh one.
+    error StackNotDeployed();
+
+    /// @notice Thrown when a stack deployment targets addresses where a COMPLETED fund already
+    ///         lives. Deployment is otherwise tolerant of pre-existing components — see
+    ///         `_deployRolesModifier` — so this error is the boundary between adopting a squatter's
+    ///         pristine contracts and touching a live fund.
+    /// @dev    `owner()` is the signal because `transferOwnership` is the last act of
+    ///         `_wireExecModifier`, in the same transaction as every other wiring call: it reads as
+    ///         this factory if and only if no wiring has ever completed. Moving it back requires
+    ///         being the owner, where repointing `avatar()` does not — which is why ownership is
+    ///         the signal and the avatar is not.
+    ///         pinned: test_adopt_refusesToTouchACompletedFund
+    error StackAlreadyDeployedHere();
+
+    /// @notice Thrown when a Safe already at a predicted address does not match the configuration
+    ///         that address encodes — different owners, threshold, module set, guard or fallback
+    ///         handler.
+    ///
+    /// @dev    WHAT THIS CATCHES, AND WHAT IT DOES NOT. Stated at length because the honest boundary
+    ///         is narrower than the check looks, and the difference was accepted deliberately
+    ///         (decision recorded 2026-09-15; see `DEPLOYMENT.md`, "Adopting a pre-existing Safe").
+    ///
+    ///         Adoption is sound only while a pre-landed component is still in the state its
+    ///         initializer produced. Two of the three kinds cannot leave it. The Roles Modifiers are
+    ///         factory-owned with no modules enabled, so every mutator is closed to everyone else.
+    ///         The Avatar Safe's sole owner is the codehash-asserted, always-reverting `Empty`, so no
+    ///         signature can ever be produced for it and its only modules are the factory and a
+    ///         role-less exec modifier.
+    ///
+    ///         The MANAGER Safe can. Its owners are live keys from the config, so a squatted one is a
+    ///         working multisig from the moment it exists, and its signers can mutate it — at the
+    ///         configured threshold, routinely 1 — before the fund ever reaches that chain. This
+    ///         check therefore catches accidental drift, and everything an OUTSIDER can do, which is
+    ///         nothing: the initializer fixes the owners, so only the config's own signers can act
+    ///         at all.
+    ///
+    ///         It does NOT bind those signers. Every read here reaches the Safe through its own
+    ///         mutable `singleton` pointer (SafeProxy storage slot 0). Signers who can enable a
+    ///         module can equally DELEGATECALL a slot-0 writer — Safe ships `SafeMigration` for
+    ///         precisely that — and point it at code answering `getOwners`, `getThreshold`,
+    ///         `getModulesPaginated` and `getStorageAt` with exactly what this function expects,
+    ///         while behaving arbitrarily. No on-chain read of a proxy survives a hostile singleton,
+    ///         including a read of slot 0 itself, so there is no version of this check that closes
+    ///         it.
+    ///
+    ///         ACCEPTED, for a reason and at a price. The capability required is threshold-many
+    ///         manager signatures, and `OivConfig.managerSafe`'s own security note already requires
+    ///         those owners to be trusted at `admin` level — a malicious manager quorum can harm the
+    ///         fund by other routes regardless, so this is inside the documented trust model. The
+    ///         alternative — refusing to adopt an occupied Manager Safe — would close it completely
+    ///         and hand any anonymous party a permanent denial: the initializer is public config, so
+    ///         anyone can occupy that address for the cost of gas, and recovery means changing the
+    ///         config, which moves every address of the fund on every chain.
+    ///
+    ///         THE PRICE: before adoption existed, a squatted Manager Safe produced a loud revert.
+    ///         It is now silent.
+    ///
+    ///         WHERE IT IS CLOSED INSTEAD: off-chain. A UI can do what this function cannot, because
+    ///         `eth_getStorageAt` is served from the account's storage trie and executes no contract
+    ///         code — so reading SafeProxy slot 0 and comparing it to the canonical singleton cannot
+    ///         be faked, and once that passes the ordinary getters are trustworthy again. A contract
+    ///         has no such primitive: it can only call, which is the hole. `DEPLOYMENT.md` §
+    ///         "Adopting a pre-existing Safe" carries the exact slots and the required order for the
+    ///         deployer UI.
+    error AdoptedSafeMismatch(address safe);
+
+    /// @notice Thrown when `deployShares` is given `execTimelock` parameters that do not describe the
+    ///         timelock actually governing this chain's exec Roles Modifier.
+    /// @dev    The stack was deployed by an earlier `deployStack`, and nothing binds the parameters
+    ///         passed here to the ones it used — so without this the recorded and emitted
+    ///         `execTimelock` could be an address that was never deployed.
+    error TimelockMismatch(address predicted);
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
@@ -555,14 +668,18 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     // SECURITY: All setters take effect immediately with no timelock. A malicious or
     //           compromised owner can swap `kpkSharesMastercopy`, `rolesModifierMastercopy`,
     //           `safeSingleton`, or `safeModuleSetup` to backdoor every future `deployOiv` /
-    //           `deployStack` call. Past deployments are unaffected (each fund references its
-    //           own already-deployed implementation), but the blast radius for FUTURE
-    //           deployments is unbounded. The factory `owner` MUST therefore be a
+    //           `deployStack` call. FULLY deployed funds are unaffected — each references its own
+    //           already-deployed implementation — but a fund that is stack-only on some chains is
+    //           NOT: `timelockDeployer` is a CREATE2 deployer, so every timelock address depends on
+    //           it, and a later `deployShares` on such a chain would place that fund's shares
+    //           timelock at a different address than on the chains completed before the swap. That
+    //           is precisely the cross-chain divergence the timelock address fields promise cannot
+    //           happen. The blast radius for FUTURE deployments is unbounded. The factory `owner` MUST therefore be a
     //           TimelockController or governance multisig — never an EOA — and any value
     //           change SHOULD go through a public proposal/timelock cycle.
 
     /// @notice Updates the KpkTimelockDeployer address.
-    /// @dev    Same blast radius as `setKpkSharesDeployer`: a hostile deployer could hand every
+    /// @dev    Same blast radius as `setKpkSharesMastercopy`: a hostile deployer could hand every
     ///         FUTURE fund a timelock whose proposer and canceller sets it controls. Past
     ///         deployments are unaffected — each fund's timelock is already deployed and
     ///         self-administered.
@@ -625,6 +742,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _kpkSharesMastercopy New address. Must not be zero.
     function setKpkSharesMastercopy(address _kpkSharesMastercopy) external onlyOwner {
         if (_kpkSharesMastercopy == address(0)) revert ZeroAddress();
+        // Codeless is rejected as well as zero. This setter decides the implementation every future
+        // fund on this chain delegates to, and a codeless value fails only later, inside
+        // `deployOiv`, where `ERC1967Utils._setImplementation` reverts. `KpkTimelockDeployer`'s
+        // constructor already guards its own mastercopy this way (`InvalidMastercopy`); the same
+        // hazard deserves the same check here.
+        if (_kpkSharesMastercopy.code.length == 0) revert InvalidMastercopy();
         kpkSharesMastercopy = _kpkSharesMastercopy;
         emit KpkSharesMastercopyUpdated(_kpkSharesMastercopy);
     }
@@ -647,6 +770,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return instance Addresses of the five deployed contracts.
     function deployStack(StackConfig calldata config) external nonReentrant returns (StackInstance memory instance) {
         _validateStackConfig(config);
+        // Fail fast, as `deployOiv` does. Without this the revert still comes — from
+        // `_requireTimelockDeployer` inside `_deployAndWireStack` — but only after both Safes and
+        // all three Roles Modifiers have been deployed, ~2M gas the caller has already paid. This
+        // is the CCIP destination's entry point, where that gas is a spent cross-chain fee.
+        if (config.execTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
 
         // Reserve the registry ID before any external calls (CEI) — defends against any
         // future callback path that might re-enter the factory and shift indices.
@@ -665,14 +793,18 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Deploys a complete fund: operational stack + KpkShares UUPS proxy.
     ///         In addition to the stack, this function:
-    ///         - Deploys a fresh KpkShares implementation (isolated upgrade surface per fund).
+    ///         - Points the fund's proxy at the chain's shared KpkShares mastercopy. Upgrades stay
+    ///         isolated per fund regardless: `upgradeToAndCall` writes the calling proxy's own slot.
     ///         - Deploys an ERC-1967 proxy and initializes it.
     ///         - Registers any additional assets on the shares proxy.
     ///         - Grants `type(uint256).max` allowance from the Avatar Safe to the shares proxy
     ///           for the base asset and every additional asset with `canRedeem = true`.
     ///         - Wires the Manager Safe as the OPERATOR on the shares proxy.
     ///         - Removes itself as a module from the Avatar Safe before returning.
-    ///         Typically called on mainnet only; use `deployStack` for sidechain deployments.
+    ///         Callable on any chain. Use it on the chains that should carry shares and
+    ///         `deployStack` on the ones that should carry the operational stack only — but see the
+    ///         caller/salt precondition in `docs/KpkOivFactory.md` before calling it directly on a
+    ///         fund that was rolled out through `CcipOivDeployer`.
     ///         The five operational-stack addresses (Avatar Safe, Manager Safe, three Roles
     ///         Modifiers) are IDENTICAL to those produced by `deployStack` for the same
     ///         `(caller, config.salt)`.
@@ -690,13 +822,19 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         // Guard the brief deploy-time window where the factory is constructed with
         // `kpkSharesMastercopy == address(0)` so its CREATE2 address is independent of it
-        // (see constructor NatSpec). Once `setKpkSharesDeployer` has wired the deployer the
+        // (see constructor NatSpec). Once `setKpkSharesMastercopy` has wired the mastercopy the
         // setter's non-zero check prevents this from ever reverting again.
         if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
         // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside
         // `_deploySharesProxy` on an unwired deployer. `_deployAndWireStack` performs the same check
         // for the exec timelock at the point it needs it, which is early enough.
-        if (config.sharesTimelock.minDelay != 0 && timelockDeployer == address(0)) {
+        // BOTH timelocks, not just the shares one. With an exec-only timelock and no deployer
+        // wired, this guard used to pass and the revert came later from `_deployAndWireStack` —
+        // after the whole five-contract stack had been deployed, burning exactly the gas the
+        // fail-fast exists to save.
+        if (
+            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
+        ) {
             revert TimelockDeployerNotSet();
         }
 
@@ -747,6 +885,118 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         emit OivDeployed(id, instance);
     }
 
+    /// @notice Adds the shares token to a chain that already carries this fund's operational stack.
+    /// @dev    Lifts what was otherwise an immutable choice. The fund's cross-chain topology is hashed
+    ///         into the orchestrator's salt, so declaring a new shares chain later would move every
+    ///         address. The documented mitigation was "declare generously", which cannot cover a chain
+    ///         that does not exist yet, or one whose dominant stablecoin is unknowable today — and a
+    ///         declared chain is shares-or-nothing in the meantime, since the fan-out skips it and
+    ///         `ccipReceive` refuses stacks on it.
+    ///
+    ///         It works because the shares proxy's address is a function of `(factory, proxySalt,
+    ///         impl)` ALONE — see `_predictSharesProxy`. It depends on neither the Avatar Safe nor
+    ///         anything else in the stack. So on a stack-only chain that slot is still free, the Avatar
+    ///         Safe already sits at the fund's canonical address (same salt), and reusing the ORIGINAL
+    ///         salt lands the promoted shares token at the same address as every other shares chain.
+    ///         Nothing moves.
+    ///
+    ///         APPROVALS ARE NOT GRANTED HERE, deliberately. `_grantApprovals` needs the factory to be
+    ///         an enabled Avatar Safe module, and the factory disables itself at the end of every flow;
+    ///         re-enabling it would hand a module unrestricted execution over a live, funded Safe. The
+    ///         fund's admin grants them afterwards through the exec Roles Modifier, which is exactly
+    ///         what a scoped role there already permits. The intermediate state fails safe:
+    ///         subscriptions pull from the investor (`kpkShares.requestSubscription`) and work at once,
+    ///         while redemption SETTLEMENT pulls from the Avatar Safe and so reverts inside the
+    ///         operator's own transaction until the allowance exists — a loud failure, not a silent
+    ///         half-configuration. A timelocked fund can pre-schedule the approval and land it in the
+    ///         same block, because the proxy address is predictable beforehand.
+    ///
+    ///         Permissionless HERE, because caller-mixing already isolates address spaces. The gate
+    ///         that matters lives in `CcipOivDeployer.promoteShares`: the base asset is the one field
+    ///         the orchestrator's salt deliberately does not bind, so promotion has to be restricted to
+    ///         the fund's own salt-bound admin or its exec timelock.
+    /// @param  config   Fund parameters, with THIS chain's base asset and the fund's original salt.
+    /// @return instance The fund's addresses on this chain.
+    /// @dev SAFETY GAP, stated because it cannot currently be closed here. This function is
+    ///      PERMISSIONLESS, and it does NOT check that the Avatar Safe has approved the shares proxy
+    ///      to pull redemption assets. `CcipOivDeployer.promoteShares` does (`ApprovalNotGranted`,
+    ///      maximum allowance for the base asset and every `canRedeem` entry) — so that gate is
+    ///      bypassable by calling the factory directly.
+    ///
+    ///      What goes wrong: the fund is subscribable the moment it exists, since
+    ///      `requestSubscription` has no admin, operator or pause gate and pulls from the investor,
+    ///      while redemption settlement pulls `request.asset` from the Avatar Safe and reverts. An
+    ///      investor can be settled in and left unable to get out until an off-chain transaction
+    ///      lands.
+    ///
+    ///      The check belongs here and was written, but it does not fit: this contract is within a
+    ///      few hundred bytes of EIP-170 and the base-asset-only form still overflowed the test
+    ///      harness. Until the factory is split, USE `promoteShares` rather than calling this
+    ///      directly, and grant the approvals first either way — the proxy address is predictable
+    ///      beforehand, so there is no window that requires racing.
+    function deployShares(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
+        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
+        if (
+            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
+        ) revert TimelockDeployerNotSet();
+        _validateOivConfig(config);
+
+        StackInstance memory stack =
+            _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, msg.sender);
+
+        // Code at the Avatar Safe is NOT sufficient evidence that this factory built the stack.
+        // `_deriveSalts`'s caller-mixing protects only the shares impl and proxy, which this contract
+        // CREATE2s itself; the Avatar Safe, Manager Safe and three Roles Modifiers are deployed by the
+        // PERMISSIONLESS third-party `safeProxyFactory` / `moduleProxyFactory`, whose salts are
+        // `keccak256(keccak256(initializer), nonce)` — both public functions of the config. Anyone can
+        // therefore land those five addresses directly, and an earlier version of this guard tested
+        // exactly the one address they can create.
+        //
+        // The exec Roles Modifier's avatar is the coherence check that cannot be forged: a squatted
+        // modifier is initialized with avatar = target = owner = this factory, and only
+        // `OivStackWiring.wireExec` — reachable solely from a completed `deployStack`/`deployOiv` —
+        // repoints it at the Avatar Safe. So this holds if and only if a genuine stack deployment
+        // finished here. Pinned by `test_deployShares_revertsOnASquattedButUnwiredStack`.
+        if (stack.avatarSafe.code.length == 0 || stack.managerSafe.code.length == 0) revert StackNotDeployed();
+        if (stack.execRolesModifier.code.length == 0) revert StackNotDeployed();
+        if (IRoles(stack.execRolesModifier).avatar() != stack.avatarSafe) revert StackNotDeployed();
+
+        // Resolved BEFORE anything is deployed. Left where it was used — inside the struct literal
+        // below — a caller passing exec-timelock params the stack did not use burned the whole proxy
+        // deployment, plus a `TimelockController` clone when `sharesTimelock` was configured, and
+        // only then reverted. That is exactly what the entry-point fail-fast guards above exist to
+        // avoid.
+        address recordedExecTimelock = _recordedExecTimelock(stack.execRolesModifier, config.execTimelock, config.admin);
+
+        uint256 id = instanceCount++;
+        (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
+            config.sharesParams,
+            stack.managerSafe,
+            stack.avatarSafe,
+            config.admin,
+            config.additionalAssets,
+            _deriveSharesSalt(config.salt, msg.sender),
+            config.sharesTimelock
+        );
+
+        instance = OivInstance({
+            avatarSafe: stack.avatarSafe,
+            managerSafe: stack.managerSafe,
+            execRolesModifier: stack.execRolesModifier,
+            subRolesModifier: stack.subRolesModifier,
+            managerRolesModifier: stack.managerRolesModifier,
+            kpkSharesImpl: sharesImpl,
+            kpkSharesProxy: sharesProxy,
+            // Already deployed on this chain by `deployStack`, so recorded rather than deployed —
+            // and verified in both directions above.
+            execTimelock: recordedExecTimelock,
+            sharesTimelock: sharesTimelock
+        });
+
+        instances[id] = instance;
+        emit OivDeployed(id, instance);
+    }
+
     // ── Curated external-fund registry ───────────────────────────────────────────
 
     /// @notice Adds a fund that was NOT deployed by this factory to a curated, owner-managed registry.
@@ -767,7 +1017,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         on-chain consumer can read a registered fund's seven component addresses directly via the
     ///         `registeredFunds`/`getFund` getter without replaying `FundRegistered` events. The extra
     ///         SSTOREs are paid once per (rare, owner-only) registration.
-    /// @param  instance The seven fund-component addresses to record.
+    /// @param  instance The fund's component addresses to record.
     /// @return registeredFundId Zero-based index assigned in the `registeredFunds` mapping.
     function registerFund(OivInstance calldata instance) external onlyOwner returns (uint256 registeredFundId) {
         if (
@@ -817,7 +1067,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         slot is empty (never registered, or removed). Safe accessor for indexers/consumers —
     ///         prefer it over the raw `registeredFunds` getter, which silently returns a zero struct.
     /// @param  registeredFundId The `registeredFunds` index to read.
-    /// @return instance The seven fund-component addresses recorded at that id.
+    /// @return instance The fund's component addresses recorded at that id.
     function getFund(uint256 registeredFundId) external view returns (OivInstance memory instance) {
         instance = registeredFunds[registeredFundId];
         if (instance.kpkSharesProxy == address(0)) revert FundNotRegistered();
@@ -849,8 +1099,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         would produce when called by `caller`.
     /// @dev    All five contracts use CREATE2; their addresses are fully determined by
     ///         (factory address, infrastructure addresses, `caller`, `config.salt`, and the
-    ///         Manager Safe's owners/threshold). The prediction does NOT validate `config` —
-    ///         pass a config that would actually succeed (see `_validateStackConfig`).
+    ///         Manager Safe's owners/threshold). The prediction validates any configured timelock,
+    ///         via `predictExecTimelock`, so it reverts on e.g. an unsorted proposer array rather
+    ///         than returning an address no deployment could produce. It also runs
+    ///         `_validateStackConfig`, so manager owners, threshold and `finalOwner` are checked here
+    ///         exactly as `deployStack` checks them — `CcipOivDeployer.dispatchTo` relies on that as
+    ///         its source-chain pre-check.
     ///         By design, `predictStackAddresses` and `predictOivAddresses` produce IDENTICAL
     ///         Avatar Safe / Manager Safe / Roles Modifier addresses for the same `(salt,
     ///         caller)` — the factory is always enabled as a setup-time Avatar Safe module
@@ -864,6 +1118,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         view
         returns (StackInstance memory inst)
     {
+        // Validated exactly as `deployStack` would. `CcipOivDeployer.dispatchTo` uses this as its
+        // source-chain pre-check, and without this it validated only the TIMELOCK: duplicate or zero
+        // manager owners, a threshold of zero or above the owner count, all dispatched, burnt every
+        // lane's non-refundable fee, and reverted on arrival — the exact failure the pre-check exists
+        // to prevent.
+        _validateStackConfig(config);
+
         inst = _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
         if (config.execTimelock.minDelay != 0) {
@@ -875,14 +1136,16 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Predicts the deterministic addresses produced by `deployOiv(config)` when called
     ///         by `caller`. All seven addresses (5 operational-stack + KpkShares impl + proxy) are
     ///         CREATE2-deployed and fully predictable from `(factory, infrastructure addresses,
-    ///         caller, config.salt, manager owners/threshold, KpkShares constructor parameters)`.
+    ///         caller, config.salt, manager owners/threshold)`. The shares parameters are NOT among
+    ///         them: the proxy is deployed with empty constructor data, which is what lets one fund
+    ///         hold the same shares address on chains with different base assets.
     /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
     ///         the same `(salt, caller)` — see that function's NatSpec. The shares impl is deployed
     ///         the chain's shared `kpkSharesMastercopy`; the ERC-1967 proxy is deployed by this
-    ///         factory using a salt derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code includes the
-    ///         `KpkShares.initialize(params)` calldata where `params.safe` is overridden with the
-    ///         predicted Avatar Safe and `params.admin` is set to `address(this)`, mirroring
-    ///         `_deploySharesProxy` exactly.
+    ///         factory using a salt derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code
+    ///         carries EMPTY constructor data — initialization is a separate call — which is what
+    ///         keeps the proxy at one address on every chain despite `params.asset` being
+    ///         chain-specific. See `_deploySharesProxy`.
     /// @param  config  Fund deployment parameters.
     /// @param  caller  Address that would call `deployOiv`.
     /// @return inst    Predicted addresses for all seven contracts.
@@ -893,6 +1156,20 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     {
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
+
+        // Validated exactly as `deployOiv` would validate it. Without this, a prediction succeeds
+        // for a config `deployOiv` rejects — and `CcipOivDeployer` relies on prediction as its
+        // source-chain pre-check, so a fan-out originating from a STACK-ONLY chain (whose local
+        // branch runs `deployStack`, which validates only the stack half) would spend every lane's
+        // non-refundable fee and only then fail on the shares half. The shares half is salt-bound,
+        // so correcting it afterwards moves every address and orphans the stacks already landed.
+        _validateOivConfig(config);
+
+        // Guarded exactly as `deployOiv` and `deployShares` are. Without it an unwired factory
+        // predicted the proxy from `impl == address(0)` and returned a plausible-looking address
+        // that no deployment can ever produce — the same class of answer the timelock guard below
+        // already refuses to give.
+        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
 
         bytes32 proxySalt = _deriveSharesSalt(config.salt, caller);
         address predictedImpl = kpkSharesMastercopy;
@@ -923,8 +1200,37 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         }
     }
 
+    /// @dev Resolves the exec timelock to RECORD for a fund whose stack already exists here.
+    ///      Requires the predicted address to exist and to actually own the exec modifier, so the
+    ///      recorded value is the fund's real governance rather than the address some other
+    ///      parameter set would have produced.
+    function _recordedExecTimelock(address execRolesModifier, TimelockParams memory params, address expectedOwner)
+        internal
+        view
+        returns (address)
+    {
+        // BOTH directions. Recording a timelock the fund does not have is the obvious error; the
+        // inverse is just as wrong and was unguarded. With no timelock configured, `_wireExecModifier`
+        // handed the modifier to `finalOwner` — which `oivToStackConfig` derives from `admin` — so
+        // anything else owning it means the stack IS timelocked and this call would have written
+        // `address(0)` into `instances[id]` and emitted it. `registerFund`'s own NatSpec tells
+        // on-chain consumers to trust the deploy log over the registry, so that reads as "this fund
+        // has no delay" about a fund that does.
+        if (params.minDelay == 0) {
+            if (IRoles(execRolesModifier).owner() != expectedOwner) revert TimelockMismatch(address(0));
+            return address(0);
+        }
+
+        address predicted =
+            IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(execRolesModifier, params);
+        if (!IKpkTimelockDeployer(_requireTimelockDeployer()).isExecTimelocked(execRolesModifier, predicted)) {
+            revert TimelockMismatch(predicted);
+        }
+        return predicted;
+    }
+
     /// @dev Returns `timelockDeployer`, reverting if it has not been wired. Mirrors the
-    ///      `KpkSharesDeployerNotSet` guard: the factory may be constructed with a zero deployer so
+    ///      `KpkSharesMastercopyNotSet` guard: the factory may be constructed with a zero deployer so
     ///      its CREATE2 address does not depend on it, and only deployments that actually configure a
     ///      timelock require it to have been set since.
     function _requireTimelockDeployer() internal view returns (address deployer) {
@@ -935,6 +1241,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
     ///      Mirrors the deployment exactly: empty constructor data, initialization performed
     ///      afterwards.
+    ///
+    ///      Accepted consequence: the proxy address used to act as a checksum over the WHOLE
+    ///      `sharesParams` struct, and now covers none of it. `name`, `symbol`, `feeReceiver`, both
+    ///      fee rates and both TTLs are as chain-invariant in intent as `asset` is chain-specific,
+    ///      but nothing enforces that any more — a fee rate fat-fingered on one chain still yields
+    ///      the same address, so `DeployOiv.predict`'s "addresses match everywhere" signal will not
+    ///      catch it. Cross-chain parameter equality is now the config's job, not the address's.
     ///
     ///      It takes neither the shares parameters nor the Avatar Safe, and that absence is the point
     ///      rather than an omission: the proxy address is a function of `(factory, proxySalt, impl)`
@@ -1071,8 +1384,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         (uint256 execSalt, uint256 subSalt, uint256 mgrSalt, uint256 avatarNonce, uint256 mgrNonce) =
             _deriveSalts(config.salt, msg.sender);
 
-        // Step 1 – Deploy all three roles modifiers with factory as temp owner/avatar/target.
+        // Step 1 – Deploy (or adopt) all three roles modifiers with factory as temp
+        //          owner/avatar/target.
         address execMod = _deployRolesModifier(execSalt);
+
+        // The one state adoption must refuse: a completed fund already living at these addresses.
+        // Checked before the remaining components so a re-run against a live fund stops here rather
+        // than part-way through, and checked on ownership because that is both the unforgeable
+        // signal and the capability the wiring below needs. Wiring is not idempotent, so even
+        // without this gate a re-run would fail closed — this makes it fail legibly.
+        if (IRoles(execMod).owner() != address(this)) revert StackAlreadyDeployedHere();
+
         address subMod = _deployRolesModifier(subSalt);
         address managerMod = _deployRolesModifier(mgrSalt);
 
@@ -1153,29 +1475,56 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         mgrNonce = uint256(keccak256(abi.encode(caller, baseSalt, uint8(4))));
     }
 
-    /// @dev Derives the two CREATE2 salts used by `_deploySharesProxy` (KpkShares implementation
+    /// @dev Derives the CREATE2 salt used by `_deploySharesProxy` (KpkShares implementation
     ///      and ERC-1967 proxy). Indices 5 and 6 extend the `_deriveSalts` index space so all
     ///      seven OIV addresses are deterministic from `(caller, baseSalt)`. Same caller-mixing
     ///      rationale: prevents salt-squat front-running while keeping cross-chain determinism.
-    ///      Index mapping: 5 = KpkShares implementation, 6 = ERC-1967 shares proxy.
+    ///      Index 6. Index 5 belonged to the retired per-fund implementation and is left unused.
     /// @param baseSalt The user-supplied base salt from `OivConfig.salt`.
     /// @param caller   The address calling `deployOiv`.
     /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
     function _deriveSharesSalt(uint256 baseSalt, address caller) internal pure returns (bytes32 proxySalt) {
-        // Index 5 was the per-fund implementation's salt and is deliberately left unused, so the
-        // proxy's salt — and therefore every existing prediction of it — is unaffected by the move to
-        // a shared mastercopy.
+        // Index 5 was the per-fund implementation's salt and is deliberately left unused, so this
+        // SALT is unchanged by the move to a shared mastercopy. The proxy's ADDRESS is not: the
+        // ERC-1967 init code embeds `impl`, which moved from a per-fund implementation to the shared
+        // mastercopy, so every prediction of the proxy changed with it. Keeping index 6 costs
+        // nothing and avoids reusing a retired index; it preserves no prediction.
         proxySalt = keccak256(abi.encode(caller, baseSalt, uint8(6)));
     }
 
     // ── Internal: deployment helpers ────────────────────────────────────────────
 
     /// @dev Deploys a Zodiac Roles Modifier EIP-1167 proxy via the ModuleProxyFactory using
-    ///      CREATE2. The factory is set as the initial owner, avatar, and target so it can
-    ///      fully configure the modifier before transferring ownership.
+    ///      CREATE2, or ADOPTS one that already exists at the predicted address. The factory is
+    ///      the initial owner, avatar and target so it can fully configure the modifier before
+    ///      transferring ownership.
+    ///
+    ///      Adoption is what keeps this address un-squattable. `moduleProxyFactory` is
+    ///      permissionless and its salt is a public function of the config, so anyone can land
+    ///      this address; `deployModule` reverts `TakenAddress` on a collision, which used to deny
+    ///      the fund that chain forever (recovery meant changing the config, which moves every
+    ///      address on every chain). Adopting instead is safe because CREATE2 binds the address to
+    ///      the initializer: `ModuleProxyFactory` only ever deploys the EIP-1167 stub for
+    ///      `rolesModifierMastercopy` and always calls `setUp`, so code here means a modifier in
+    ///      exactly the state this function would have produced — owner, avatar and target all
+    ///      this factory. Nor can that state have drifted since: `setUp` is one-shot and every
+    ///      mutator is owner- or module-gated, with the factory as owner and no modules enabled.
+    ///      Both properties belong to the patched mastercopy rather than to stock Zodiac, so both
+    ///      are pinned against the real factory rather than inferred:
+    ///      pinned: test_premise_squattedModifierIsBornFactoryOwned
+    ///      pinned: test_premise_squattedModifierCannotBeReInitialized
+    ///      pinned: test_premise_squattedModifierRejectsEveryNonOwnerMutator
+    ///
+    ///      A pre-existing WIRED stack is rejected by `_deployAndWireStack`, not here.
     /// @param salt  CREATE2 salt for this modifier (derived from the base salt).
-    /// @return mod  Address of the deployed Roles Modifier proxy.
+    /// @return mod  Address of the deployed or adopted Roles Modifier proxy.
     function _deployRolesModifier(uint256 salt) internal returns (address mod) {
+        mod = _predictRolesModifier(salt);
+        if (mod.code.length != 0) {
+            emit ComponentAdopted(mod, "roles-modifier");
+            return mod;
+        }
+
         bytes memory initParams = abi.encode(address(this), address(this), address(this));
         bytes memory initializer = abi.encodeCall(IRoles.setUp, (initParams));
         mod = IModuleProxyFactory(moduleProxyFactory).deployModule(rolesModifierMastercopy, initializer, salt);
@@ -1191,11 +1540,28 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param modulesToEnable Modules to enable during `setup()`. Enabled in array order; each is
     ///                        inserted at the front of the linked list.
     /// @param nonce           CREATE2 nonce (salt) for address determinism.
-    /// @return safe           Address of the deployed Safe proxy.
+    /// @return safe           Address of the deployed or adopted Safe proxy.
     function _deploySafe(address[] memory owners, uint256 threshold, address[] memory modulesToEnable, uint256 nonce)
         internal
         returns (address safe)
     {
+        // Adopt an existing occupant rather than colliding with it. `safeProxyFactory` is
+        // permissionless and its salt is a public function of the config, so anyone can land this
+        // address; `createProxyWithNonce` then reverts `Create2 call failed`, which used to deny the
+        // fund that chain forever. Safe to adopt for the reason given on `_deployRolesModifier`:
+        // CREATE2 binds the address to the initializer, and `SafeProxyFactory` only ever deploys its
+        // own proxy creation code for `safeSingleton` and always runs `setup`. An adopted Avatar
+        // Safe also proves itself behaviourally: `_disableFactoryAsAvatarModule` only succeeds if
+        // the factory is an enabled module at the head of the list, and it asserts the removal.
+        // pinned: test_premise_squattedAvatarSafeIsBornFactoryHeaded
+        // pinned: test_adopt_deployOivAdoptsASquattedAvatarSafe
+        safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
+        if (safe.code.length != 0) {
+            _requireSafeMatchesConfig(safe, owners, threshold, modulesToEnable);
+            emit ComponentAdopted(safe, "safe");
+            return safe;
+        }
+
         bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
 
         bytes memory initializer = abi.encodeCall(
@@ -1204,6 +1570,56 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         );
 
         safe = ISafeProxyFactory(safeProxyFactory).createProxyWithNonce(safeSingleton, initializer, nonce);
+    }
+
+    /// @dev Asserts an adopted Safe still matches the configuration its CREATE2 address encodes.
+    ///      The module set is compared exactly rather than with `isModuleEnabled`, because the
+    ///      dangerous drift is an ADDED module — a module can execute on the Safe unconditionally,
+    ///      so an extra one is full control. `SafeModuleSetup` enables in array order and each
+    ///      insertion goes to the front, so the live list is the reverse of `modulesToEnable`.
+    function _requireSafeMatchesConfig(
+        address safe,
+        address[] memory owners,
+        uint256 threshold,
+        address[] memory modulesToEnable
+    ) internal view {
+        if (ISafe(safe).getThreshold() != threshold) revert AdoptedSafeMismatch(safe);
+        // `setupOwners` appends, so owners come back in configuration order; `enableModule`
+        // prepends, so modules come back reversed. Both orders are pinned by
+        // test_premise_squattedAvatarSafeIsBornFactoryHeaded and test_adopt_rejectsAMutatedSafe.
+        if (!_matches(ISafe(safe).getOwners(), owners, false)) revert AdoptedSafeMismatch(safe);
+
+        (address[] memory live, address next) =
+            ISafe(safe).getModulesPaginated(SENTINEL_MODULES, modulesToEnable.length + 1);
+        if (next != SENTINEL_MODULES) revert AdoptedSafeMismatch(safe);
+        if (!_matches(live, modulesToEnable, true)) revert AdoptedSafeMismatch(safe);
+
+        // Guard and fallback handler, which the initializer leaves unset and which Safe exposes
+        // through no getter. Reachable by exactly the adversary the owner/threshold/module checks
+        // above exist for: a signer of a squatted Manager Safe, at a configured threshold that is
+        // routinely 1, can `setGuard(hostile)` — after which every manager transaction reverts and
+        // the guard cannot be removed without those same signatures — or `setFallbackHandler`, whose
+        // handler answers `isValidSignature` however it likes. Both are as dangerous as the extra
+        // module the module check already refuses, so leaving them uninspected would have made that
+        // check a half-measure.
+        if (_safeSlot(safe, GUARD_STORAGE_SLOT) != address(0)) revert AdoptedSafeMismatch(safe);
+        if (_safeSlot(safe, FALLBACK_HANDLER_STORAGE_SLOT) != safeFallbackHandler) {
+            revert AdoptedSafeMismatch(safe);
+        }
+    }
+
+    /// @dev Reads one address-sized storage slot from a Safe.
+    function _safeSlot(address safe, uint256 slot) private view returns (address) {
+        return address(uint160(uint256(bytes32(ISafe(safe).getStorageAt(slot, 1)))));
+    }
+
+    /// @dev Element-wise comparison, optionally against `expected` read backwards.
+    function _matches(address[] memory live, address[] memory expected, bool reversed) internal pure returns (bool) {
+        if (live.length != expected.length) return false;
+        for (uint256 i = 0; i < live.length; i++) {
+            if (live[i] != expected[reversed ? expected.length - 1 - i : i]) return false;
+        }
+        return true;
     }
 
     // ── Internal: wiring helpers ────────────────────────────────────────────────
@@ -1282,8 +1698,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         IRoles(mod).setTransactionUnwrapper(MULTI_SEND_CALLS_ONLY, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
     }
 
-    /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy` (each fund
-    ///      has an isolated upgrade surface) and an ERC-1967 UUPS proxy pointing to it.
+    /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy`. Sharing one
+    ///      implementation costs no isolation: `upgradeToAndCall` writes the ERC-1967 slot of the
+    ///      CALLING proxy, so each fund still controls its own upgrades.
     ///      Role setup sequence:
     ///      1. Factory temporarily holds DEFAULT_ADMIN_ROLE (set during `initialize`).
     ///      2. If additional assets are provided, factory also temporarily holds OPERATOR to call
@@ -1321,11 +1738,23 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // necessarily chain-specific, and anything in the constructor data is inside the CREATE2 init
         // code and therefore inside the address. With it removed, the init code is
         // `creationCode ++ abi.encode(impl, "")` — and `impl` is itself chain-independent, since
-        // `KpkShares` takes no constructor arguments and `KpkSharesDeployer` sits at one address on
-        // every chain. Nothing chain-specific is left.
+        // `KpkShares` takes no constructor arguments, so its CREATE2 address is the same on every
+        // chain. Note what now carries that property: it used to rest on `KpkSharesDeployer` sitting
+        // at one address everywhere, and that contract no longer exists. It rests instead on
+        // `kpkSharesMastercopy` being wired to the same address on every chain, which the deploy
+        // script's post-flight `require` is what actually enforces — there is no on-chain binding.
+        // Nothing chain-specific is left in the init code either way.
         //
-        // The two statements are atomic within this call, so there is no block in which the proxy
-        // exists uninitialized and no window for anyone to front-run `initialize`. (The implementation
+        // There is no block in which the proxy exists uninitialized and no window to front-run
+        // `initialize` — but atomicity is not the whole reason, and the difference matters. Being in
+        // one call rules out another TRANSACTION interleaving; it does not rule out reentrancy from
+        // inside this one. What rules that out is that the only external calls `initialize` can reach
+        // are `IERC20Metadata(asset).symbol()` and `.decimals()`, both `view`, so solc emits
+        // STATICCALL and a hostile asset physically cannot mutate anything on the way back in. A
+        // future `KpkShares` that made a NON-static call during initialization would reopen the
+        // window this comment used to claim was closed by ordering alone.
+        //
+        // (The implementation
         // is separately protected: `KpkShares`'s constructor calls `_disableInitializers`.)
         proxy = address(new ERC1967Proxy{salt: proxySalt}(impl, ""));
 
@@ -1407,9 +1836,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `InvalidThreshold` if `threshold` is 0 or exceeds owner count.
     ///      Reverts with `ZeroAddress`      if any owner or `execRolesMod.finalOwner` is zero.
     ///      Reverts with `DuplicateOwner`   if `managerSafe.owners` contains duplicates.
-    function _validateStackConfig(StackConfig calldata config) internal pure {
+    function _validateStackConfig(StackConfig calldata config) internal view {
         _validateManagerOwners(config.managerSafe);
-        if (config.execRolesMod.finalOwner == address(0)) revert ZeroAddress();
+        // `address(this)` is rejected alongside zero: the factory is every modifier's TEMPORARY
+        // owner during wiring, so a `finalOwner` of the factory makes the completed stack
+        // indistinguishable from an unwired one — `StackAlreadyDeployedHere`'s ownership signal
+        // would read "adoptable" on a live fund, and the modifier would be factory-owned forever.
+        if (config.execRolesMod.finalOwner == address(0) || config.execRolesMod.finalOwner == address(this)) {
+            revert ZeroAddress();
+        }
     }
 
     /// @dev Validates an `OivConfig` before deployment.
@@ -1425,10 +1860,27 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Reverts with `InvalidSharesParams` if `sharesParams.feeReceiver`,
     ///                                        `sharesParams.subscriptionRequestTtl`, or
     ///                                        `sharesParams.redemptionRequestTtl` is unset.
-    function _validateOivConfig(OivConfig calldata config) internal pure {
+    function _validateOivConfig(OivConfig calldata config) internal view {
         _validateManagerOwners(config.managerSafe);
-        if (config.admin == address(0)) revert ZeroAddress();
+        // Rejected for the same reason as `finalOwner`, plus one of its own: `deployOiv` grants
+        // the shares admin role to the factory and then renounces it, so an `admin` of the factory
+        // leaves the token with no `DEFAULT_ADMIN_ROLE` holder at all.
+        if (config.admin == address(0) || config.admin == address(this)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
+        // Fee bounds too, because this validator's whole purpose is that a PREDICTION never succeeds
+        // where deployment would refuse — and `CcipOivDeployer` leans on exactly that as its only
+        // shares-half pre-check. Omitting them meant a fan-out from a stack-only chain priced and
+        // sent every lane, landed every stack, and only then failed inside `KpkShares.initialize`
+        // with `FeeRateLimitExceeded`. Since `_effectiveConfig` hashes `sharesParams`, correcting the
+        // rate afterwards moves every address and orphans every stack already landed.
+        // Mirrored as a literal rather than read from the mastercopy: three external calls cost 368
+        // bytes and this contract has a few hundred left. Kept honest by
+        // `test_maxFeeRateMirrorsKpkShares`, which fails if the audited constant ever moves.
+        if (
+            config.sharesParams.managementFeeRate > MAX_FEE_RATE
+                || config.sharesParams.performanceFeeRate > MAX_FEE_RATE
+                || config.sharesParams.redemptionFeeRate > MAX_FEE_RATE
+        ) revert InvalidSharesParams();
         // Mirror KpkShares._validateInitializationParams so misconfiguration fails fast at the
         // factory level instead of deep inside the proxy initializer.
         if (

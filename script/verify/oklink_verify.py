@@ -83,9 +83,13 @@ CONTRACTS = {
             "0000000000000000000000000000000000000000000000000000000000000000"
         ),
     },
+    # HISTORICAL, and no longer re-runnable from this tree: `src/KpkSharesDeployer.sol` was deleted
+    # when the factory moved to shared mastercopies. This contract is part of the LIVE salt-v3 stack
+    # and is already verified 30/30, so the entry is kept as the record of what was verified. To
+    # re-verify it, check out a commit that still contains the source.
     "kpkSharesDeployer": {
         "address": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
-        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",
+        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",  # deleted from HEAD
         "ctor": "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f",
     },
     "ccipOivDeployer": {
@@ -126,6 +130,16 @@ def prepare():
     """Regenerate the standard-JSON inputs with forge (optimizer/viaIR live inside)."""
     os.makedirs(STD_DIR, exist_ok=True)
     for name, meta in CONTRACTS.items():
+        # Entries whose source no longer exists in this tree are skipped, not attempted. `forge`
+        # exits non-zero on an unresolvable identifier, and because the output file is opened for
+        # writing FIRST, attempting it truncated the checked-in artifact to zero bytes and then
+        # raised — leaving every later entry unregenerated and a subsequent plain run submitting an
+        # empty standard-JSON body, which passes the existence precondition further down.
+        src = meta["identifier"].split(":")[0]
+        if not os.path.exists(os.path.join(REPO, src)):
+            print("skip %s: %s is not in this tree (kept as a record of what was verified)" % (name, src))
+            continue
+
         with open(std_path(name), "w") as fh:
             subprocess.run(
                 ["forge", "verify-contract",

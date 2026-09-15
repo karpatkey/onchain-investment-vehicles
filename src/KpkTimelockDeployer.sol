@@ -10,8 +10,8 @@ import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDep
 
 /// @notice Minimal view of OpenZeppelin `AccessControl`, used to inspect a KpkShares proxy's
 ///         `DEFAULT_ADMIN_ROLE` holders without importing `KpkShares` (which would pull its full
-///         creation bytecode into this contract's runtime — the same rationale as
-///         `IKpkSharesDeployer` in `KpkOivFactory.sol`).
+///         creation bytecode into this contract's runtime — the same rationale as the local
+///         `IRoles` / `ISafe` interfaces the factory declares instead of importing Zodiac and Safe).
 interface IAccessControlView {
     /// @notice Returns true if `account` holds `role`.
     function hasRole(bytes32 role, address account) external view returns (bool);
@@ -115,6 +115,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         unable to act on it.
     error InvalidMastercopy();
 
+    /// @notice Thrown when deploying a timelock for a `governed` address that has no code.
+    error GovernedHasNoCode(address governed);
+
     /// @param _timelockMastercopy The per-chain `TimelockControllerUpgradeable` mastercopy. It takes no
     ///                            constructor arguments and is deployed through the canonical CREATE2
     ///                            factory, so it is at one address on every chain — which is what keeps
@@ -139,17 +142,42 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @dev OpenZeppelin `AccessControl` default admin role.
     bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    /// @notice Lower bound on `minDelay`. A delay shorter than this cannot be reacted to by any
-    ///         realistic human process, which would make the veto decorative.
+    /// @notice Lower bound on `minDelay` AT DEPLOY TIME ONLY. A delay shorter than this cannot be
+    ///         reacted to by any realistic human process, which would make the veto decorative.
+    /// @dev    Not a permanent property: the timelock is self-administered, so one proposer can
+    ///         schedule `updateDelay(1)` and, after a single delay window, the fund's delay is one
+    ///         second. That is within the design — the change is public for the whole window and any
+    ///         canceller can veto it — but this constant bounds what a fund is BORN with, not what
+    ///         it keeps.
     uint256 public constant MIN_DELAY_FLOOR = 12 hours;
 
     /// @notice Upper bound on `minDelay`. Guards against a fat-fingered unit error (e.g. passing
     ///         milliseconds) permanently freezing a fund's governance behind a decade-long delay.
     uint256 public constant MIN_DELAY_CAP = 30 days;
 
-    /// @notice Upper bound on the length of the `proposers` and `cancellers` arrays. Validation is
-    ///         O(n^2) (duplicate detection), so this bounds worst-case gas.
-    uint256 public constant MAX_ROLE_MEMBERS = 20;
+    /// @notice Upper bound on the length of the `proposers` and `cancellers` arrays.
+    /// @dev    Set by the CCIP destination gas cap, not by validation cost. `oivToStackConfig`
+    ///         forwards `execTimelock` verbatim to every sidechain, so these arrays are provisioned
+    ///         again inside each destination's `deployStack` — and ten of the twenty live lanes cap
+    ///         destination execution at exactly 3,000,000 gas.
+    ///
+    ///         Measured 2026-09-04 on a mainnet fork, timelocked `deployStack` with N proposers and
+    ///         N cancellers: N=0 1.79M, N=4 2.05M, N=8 2.38M, N=10 2.56M, N=12 2.73M, N=14 2.91M,
+    ///         N=20 3.52M — roughly 86k per proposer+canceller pair. At the previous bound of 20 a
+    ///         config that validation ACCEPTED could not be delivered: `deployEverywhere` succeeds
+    ///         locally and spends every CCIP fee on the source chain, the destination then runs out
+    ///         of gas, `dispatchTo` cannot be given a limit above 3M on those lanes, and because the
+    ///         sidechain salts derive from the orchestrator as `msg.sender` no EOA can reproduce the
+    ///         fund's canonical addresses by calling `deployStack` directly. The fund could never
+    ///         exist on those chains at its canonical addresses at all.
+    ///
+    ///         10 leaves ~360k of margin (~12%) against the full `ccipReceive` frame the destination
+    ///         actually pays for — 2,639,682 measured; `deployStack` alone is 2.56M, which is the
+    ///         narrower figure the test below asserts. Pinned by
+    ///         `test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap`, which measures the
+    ///         largest set this constant permits rather than a typical one. This is a ceiling only —
+    ///         there is deliberately no floor on either array.
+    uint256 public constant MAX_ROLE_MEMBERS = 10;
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -205,10 +233,26 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         already-deployed address rather than reverting. Deploying does **not** adopt — the
     ///         current owner must subsequently call `IRoles(execRolesModifier).transferOwnership(timelock)`.
     ///         Verify with `isExecTimelocked` afterwards.
+    ///
+    ///         **Deploy and hand over in ONE transaction.** Between the two steps the timelock is
+    ///         live and governs nothing, and its proposers can already schedule against the target.
+    ///         A proposer can schedule `transferOwnership(attacker)`, wait out the delay, and execute
+    ///         the instant you hand over — with no post-adoption delay at all. Nothing on-chain
+    ///         detects it: `TimelockController`'s pending operations are not enumerable, so
+    ///         `_requireLiveConfigMatches` cannot see them and `isExecTimelocked` returns true
+    ///         regardless. Batching both steps (a Safe multiSend) removes the window entirely.
+    ///         Funds built by `KpkOivFactory` are never exposed, because it does both in one call.
     /// @param  execRolesModifier The fund's exec Roles Modifier, whose address is identical on every
-    ///                           chain. Given the SAME `params` on each chain, the resulting timelock
-    ///                           address is therefore identical everywhere too; differing params on one
-    ///                           chain silently produce a different address there.
+    ///                           chain. Given the same `params` AND the same caller on each chain, the
+    ///                           resulting timelock address is identical everywhere too; differing
+    ///                           params on one chain silently produce a different address there.
+    ///
+    ///                           The caller is part of that: `_salt` binds `msg.sender`, so a timelock
+    ///                           the factory deploys and one you deploy yourself for the same fund land
+    ///                           at different addresses. That is deliberate — it is what stops a
+    ///                           configured proposer pre-deploying a fund's timelock and pre-staging an
+    ///                           operation in it — but it means the manual path below governs only what
+    ///                           you then hand it, never a factory-built fund's existing timelock.
     /// @param  params            Effective timelock configuration.
     /// @return timelock          The deployed (or pre-existing) `TimelockController`.
     function deployExecTimelock(address execRolesModifier, TimelockParams calldata params)
@@ -235,7 +279,11 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
 
     // ── Prediction ────────────────────────────────────────────────────────────
 
-    /// @notice Returns the address `deployExecTimelock` would produce for `(execRolesModifier, params)`.
+    /// @notice Returns the address `deployExecTimelock` would produce for
+    ///         `(execRolesModifier, params)` **when called by `msg.sender`**. The salt binds the
+    ///         caller, so this is the fund's timelock address only if you are the account that will
+    ///         deploy it — for a factory-built fund that is the factory, not you. Reading this from a
+    ///         block explorer with a default `from` returns an address nothing will ever deploy.
     /// @dev    Validates `params` exactly as the deploy would, so a prediction can never succeed for a
     ///         configuration `deployExecTimelock` would reject. Otherwise pure CREATE2 arithmetic — it
     ///         does not indicate whether that address is already deployed.
@@ -267,9 +315,28 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     /// @dev    Intended to be swept across every chain a fund lives on: partial adoption leaves a fund
     ///         under mixed governance with nothing on-chain to flag it.
     function isExecTimelocked(address execRolesModifier, address timelock) external view returns (bool) {
+        // Both zero checks matter, and for different reasons.
+        //
+        // `timelock == 0` is what `OivInstance.execTimelock` holds when no timelock was configured,
+        // so a sweep feeding that field straight back in would compare `owner()` against zero — and
+        // a modifier whose ownership was RENOUNCED has exactly that owner. A bricked fund would have
+        // read as correctly timelocked, which is the opposite of what this function is for.
+        //
+        // `execRolesModifier` with no code makes the call below revert rather than answer, which
+        // breaks the cross-chain sweep this function documents itself as being for: a fund is
+        // routinely stack-only on some chains and absent from others.
+        if (timelock == address(0) || execRolesModifier.code.length == 0) return false;
         return IRoles(execRolesModifier).owner() == timelock;
     }
 
+    /// @dev    Checks exactly two accounts and no more. `AccessControl` is non-enumerable, so this
+    ///         CANNOT establish that the timelock is the only admin — it answers "did this specific
+    ///         handover happen", not "is this fund delay-governed". A third holder granted before or
+    ///         after would keep a delay-free path to `upgradeToAndCall` and every fee setter while
+    ///         this still returned true. Funds built by `KpkOivFactory` are not exposed to that: the
+    ///         proxy is freshly initialized with the factory as sole admin, and the factory grants
+    ///         the timelock INSTEAD of `finalAdmin` before renouncing its own role. The caveat is
+    ///         for callers using this deployer standalone against a proxy with a history.
     /// @notice True once `timelock` holds `DEFAULT_ADMIN_ROLE` on `sharesProxy` and `previousAdmin`
     ///         no longer does.
     /// @dev    Both halves matter: granting the timelock while the old admin retains the role leaves a
@@ -316,14 +383,26 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         //
         // `address(this)` as the initializing admin is what makes canceller provisioning atomic; it is
         // renounced below, in this same call, before control ever returns to the caller.
+        // `governed` must exist. Predicting for a not-yet-deployed modifier is legitimate — the
+        // factory does exactly that — which is why this lives here and not in `_validate`. DEPLOYING
+        // for one is not: on the documented manual path a typo'd address yields a real,
+        // funded-looking timelock that governs nothing, and `isExecTimelocked` against it cannot
+        // flag the mistake because there is nothing there to ask.
+        if (governed.code.length == 0) revert GovernedHasNoCode(governed);
+
         TimelockControllerUpgradeable tl = TimelockControllerUpgradeable(
             payable(Clones.cloneDeterministic(timelockMastercopy, _salt(domain, governed, params)))
         );
         tl.initialize(params.minDelay, params.proposers, executors, address(this));
 
+        // Hoisted, as `_requireLiveConfigMatches` already does with both of its role constants. This
+        // runs inside the destination's `deployStack`, the one path with a hard 3,000,000-gas ceiling
+        // and roughly 12% of margin — re-reading the constant up to `MAX_ROLE_MEMBERS` times spends
+        // that margin for nothing.
+        bytes32 cancellerRole = tl.CANCELLER_ROLE();
         uint256 cancellerCount = params.cancellers.length;
         for (uint256 i; i < cancellerCount; ++i) {
-            tl.grantRole(tl.CANCELLER_ROLE(), params.cancellers[i]);
+            tl.grantRole(cancellerRole, params.cancellers[i]);
         }
 
         tl.renounceRole(DEFAULT_ADMIN_ROLE, address(this));

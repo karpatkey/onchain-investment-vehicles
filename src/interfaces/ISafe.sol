@@ -39,6 +39,18 @@ interface ISafe {
     /// @notice Returns the current signature threshold.
     function getThreshold() external view returns (uint256);
 
+    /// @notice Walks the module linked list from `start`, returning up to `pageSize` modules.
+    /// @dev    Used to assert an ADOPTED Safe carries exactly the modules its initializer enabled
+    ///         and no others — `isModuleEnabled` alone cannot detect an EXTRA module.
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
+
+    /// @notice Raw storage read. Used to inspect an adopted Safe's guard and fallback handler, which
+    ///         Safe exposes through no getter but which are as dangerous as an extra module.
+    function getStorageAt(uint256 offset, uint256 length) external view returns (bytes memory);
+
     /// @notice Executes a call or delegatecall on behalf of this Safe without collecting signatures.
     /// @dev    Callable only by an enabled module.
     ///         `operation` 0 = CALL, 1 = DELEGATECALL.
