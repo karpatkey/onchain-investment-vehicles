@@ -101,6 +101,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      recently enabled to oldest: SENTINEL → newest → … → oldest → SENTINEL.
     address private constant SENTINEL_MODULES = address(0x1);
 
+    /// @dev Mirror of `KpkShares.MAX_FEE_RATE`. Duplicated rather than read, because reading it costs
+    ///      368 bytes of a contract that is near EIP-170; pinned by `test_maxFeeRateMirrorsKpkShares`.
+    uint256 private constant MAX_FEE_RATE = 2000;
+
     /// @dev `keccak256("guard_manager.guard.address")` — Safe v1.4.1's guard slot.
     uint256 private constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
 
@@ -1470,11 +1474,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         mgrNonce = uint256(keccak256(abi.encode(caller, baseSalt, uint8(4))));
     }
 
-    /// @dev Derives the two CREATE2 salts used by `_deploySharesProxy` (KpkShares implementation
+    /// @dev Derives the CREATE2 salt used by `_deploySharesProxy` (KpkShares implementation
     ///      and ERC-1967 proxy). Indices 5 and 6 extend the `_deriveSalts` index space so all
     ///      seven OIV addresses are deterministic from `(caller, baseSalt)`. Same caller-mixing
     ///      rationale: prevents salt-squat front-running while keeping cross-chain determinism.
-    ///      Index mapping: 5 = KpkShares implementation, 6 = ERC-1967 shares proxy.
+    ///      Index 6. Index 5 belonged to the retired per-fund implementation and is left unused.
     /// @param baseSalt The user-supplied base salt from `OivConfig.salt`.
     /// @param caller   The address calling `deployOiv`.
     /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
@@ -1862,6 +1866,20 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // leaves the token with no `DEFAULT_ADMIN_ROLE` holder at all.
         if (config.admin == address(0) || config.admin == address(this)) revert ZeroAddress();
         if (config.sharesParams.asset == address(0)) revert ZeroAddress();
+        // Fee bounds too, because this validator's whole purpose is that a PREDICTION never succeeds
+        // where deployment would refuse — and `CcipOivDeployer` leans on exactly that as its only
+        // shares-half pre-check. Omitting them meant a fan-out from a stack-only chain priced and
+        // sent every lane, landed every stack, and only then failed inside `KpkShares.initialize`
+        // with `FeeRateLimitExceeded`. Since `_effectiveConfig` hashes `sharesParams`, correcting the
+        // rate afterwards moves every address and orphans every stack already landed.
+        // Mirrored as a literal rather than read from the mastercopy: three external calls cost 368
+        // bytes and this contract has a few hundred left. Kept honest by
+        // `test_maxFeeRateMirrorsKpkShares`, which fails if the audited constant ever moves.
+        if (
+            config.sharesParams.managementFeeRate > MAX_FEE_RATE
+                || config.sharesParams.performanceFeeRate > MAX_FEE_RATE
+                || config.sharesParams.redemptionFeeRate > MAX_FEE_RATE
+        ) revert InvalidSharesParams();
         // Mirror KpkShares._validateInitializationParams so misconfiguration fails fast at the
         // factory level instead of deep inside the proxy initializer.
         if (
