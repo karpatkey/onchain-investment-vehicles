@@ -139,8 +139,10 @@ abstract contract OivChainDeploy is Script {
         );
     }
 
-    /// @dev Both mastercopies take no constructor arguments, so each lands at one address on every
-    ///      chain and the contracts that reference them stay chain-independent.
+    /// @dev The two MASTERCOPIES take no constructor arguments, so each lands at one address on
+    ///      every chain. `KpkTimelockDeployer` does take one — the timelock mastercopy — so its
+    ///      address depends on that mastercopy's, and therefore on the salt generation; it is still
+    ///      chain-independent, because every input is.
     function _sharesMastercopyInitCode() internal pure returns (bytes memory) {
         return type(KpkShares).creationCode;
     }
@@ -327,6 +329,19 @@ abstract contract OivChainDeploy is Script {
             console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
+            // The claim above runs only in the just-deployed branch, so a run whose CREATE2 landed
+            // but whose `initialize` did not — broadcast aborted mid-sequence, an RPC or nonce
+            // failure, or someone claiming it between the two transactions — would take this branch
+            // forever after and never retry. Attempt it here too; a revert means it is already
+            // claimed, which is the desired end state either way. The post-flight below is what
+            // actually asserts that.
+            address[] memory noMembersRetry = new address[](0);
+            (bool retried,) = timelockMastercopy.call(
+                abi.encodeCall(
+                    TimelockControllerUpgradeable.initialize, (0, noMembersRetry, noMembersRetry, address(0))
+                )
+            );
+            retried; // outcome is not the signal — the post-flight assertion is
         }
         if (timelockDeployer.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
@@ -392,6 +407,18 @@ abstract contract OivChainDeploy is Script {
             console.log("  link:    ", linkToken);
             return;
         }
+        // The timelock mastercopy's initializer must be claimed before this chain is called ready.
+        // Asserted rather than assumed: the claim is attempted in two places above, and a run whose
+        // CREATE2 landed while its `initialize` did not would otherwise print "Chain ready" over a
+        // canonical, repo-published mastercopy whose initializer is open — or already held by a
+        // stranger — which is the exact condition the claim exists to prevent. Outside the broadcast,
+        // so this probe is simulation-only and sends nothing.
+        address[] memory noMembersCheck = new address[](0);
+        (bool stillOpen,) = timelockMastercopy.call(
+            abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembersCheck, noMembersCheck, address(0)))
+        );
+        require(!stillOpen, "post-flight: timelock mastercopy initializer is still open");
+
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
     }
 }

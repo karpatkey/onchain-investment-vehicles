@@ -122,7 +122,8 @@ src/
   utils/                   Empty (Avatar Safe signer), RecoverFunds
 script/
   DeployOiv.s.sol          deploy a fund via the factory
-  DeployKpkOivFactory.s.sol deterministic factory + deployer deployment
+  DeployKpkOivFactory.s.sol re-wires kpkSharesMastercopy on an ALREADY-onboarded chain
+  chains/Deploy_<Chain>.s.sol onboards a chain end to end (use this one)
   DeployCcipOivDeployer.s.sol deterministic orchestrator deployment
   ccip-networks.json       CCIP router / LINK / selector registry (23 chains)
   README.md                script usage guide (kpkShares management scripts)

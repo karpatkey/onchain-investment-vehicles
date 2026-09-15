@@ -93,6 +93,21 @@ contract DeployOiv is OivConfigReader {
 
     function deployStack(string calldata configPath) external {
         string memory json = vm.readFile(configPath);
+        // The mirror of `deployOiv`'s guard, and the more damaging direction. `deployStack` lands a
+        // fully WIRED stack at the same five addresses `deployOiv` would use, after which that chain
+        // can never carry shares: `deployLocal` reverts `StackAlreadyDeployedHere` because the stack
+        // is wired, and `promoteShares` reverts `SharesChainAlreadyDeclared` because the chain is in
+        // the topology. Both recovery routes are closed at once, and the only way back is a new salt
+        // and a full re-rollout.
+        //
+        // Only checked when the config states a topology. An absent `.sharesChains` is still "no
+        // opinion", so the legacy per-chain flow is unaffected.
+        if (vm.keyExists(json, ".sharesChains")) {
+            require(
+                !_shouldDeployShares(json),
+                "config: this chain IS in .sharesChains - use deployOiv; deployStack here would strand it"
+            );
+        }
         _deployStack(json);
     }
 

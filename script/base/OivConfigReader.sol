@@ -44,7 +44,8 @@ abstract contract OivConfigReader is Script {
         } else {
             console.log("  kpkShares:             NOT on this chain (not listed in .sharesChains)");
             console.log("  would-be proxy:       ", inst.kpkSharesProxy);
-            console.log("  (that address is reachable later via promoteShares, not by this deploy)");
+            console.log("  (not created by this deploy; reachable later - deployOiv on the direct");
+            console.log("   path, or promoteShares via the orchestrator)");
         }
     }
 
@@ -154,8 +155,6 @@ abstract contract OivConfigReader is Script {
     }
 
     /// @dev Whether this chain should receive the shares token as well as the operational stack.
-    ///      An absent `.sharesChains` means "no opinion" and leaves the choice with whichever entry
-    ///      point the operator invoked, which is how this worked before the list existed.
     /// @dev The fund's cross-chain topology, as the orchestrator wants it: `(chainId, asset)` for
     ///      every chain in `.sharesChains`, ascending, with each chain's own asset resolved from
     ///      `.oiv.assetOverrides` exactly as `_assetForThisChain` would resolve it there.
@@ -177,18 +176,48 @@ abstract contract OivConfigReader is Script {
 
         uint256[] memory ids = json.readUintArray(".sharesChains");
         out = new CcipOivDeployer.SharesChain[](ids.length);
+        bool sawFallback;
         for (uint256 i = 0; i < ids.length; i++) {
             // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
             // two orderings would be two funds. Fail here with the offending id rather than letting
             // the revert surface from inside the orchestrator.
             require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
             string memory key = string.concat(".oiv.assetOverrides.", vm.toString(ids[i]));
+            // AT MOST ONE declared chain may omit its override. The fallback is
+            // `.oiv.sharesParams.asset`, which belongs to exactly one chain — so one omission is
+            // unambiguous (that is the chain the base asset is for) and a second is necessarily
+            // wrong, since two chains cannot share one token address. Left silent, the second
+            // omission puts a token that does not exist there into the topology, the topology is
+            // hashed into the salt, and nothing fails until `deployLocal` runs on that chain — by
+            // which point the fan-out has deployed the fund and spent every lane's non-refundable
+            // fee at addresses derived from the wrong topology, and correcting the config moves all
+            // of them.
+            if (!vm.keyExists(json, key)) {
+                require(
+                    !sawFallback,
+                    string.concat(
+                        "config: more than one declared shares chain has no .oiv.assetOverrides entry (",
+                        vm.toString(ids[i]),
+                        ") - only the chain .oiv.sharesParams.asset belongs to may omit it"
+                    )
+                );
+                sawFallback = true;
+            }
             address asset =
                 vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
             out[i] = CcipOivDeployer.SharesChain({chainId: ids[i], asset: asset});
         }
     }
 
+    /// @dev Whether THIS chain should carry a shares token, per `.sharesChains`.
+    ///      An absent `.sharesChains` means "no opinion" and answers true, leaving the choice with
+    ///      whichever entry point the operator invoked — which is how this worked before the list
+    ///      existed, and why `DeployOiv.deploy` (whose whole job is to pick the branch) requires the
+    ///      key while `deployOiv` / `deployStack` do not.
+    ///
+    ///      Note this is the OPPOSITE contract to `_buildSharesChains`, which hard-requires the key:
+    ///      that one feeds the salt, where a per-chain default would make a fund's addresses depend
+    ///      on where it was launched from.
     function _shouldDeployShares(string memory json) internal view returns (bool) {
         if (!vm.keyExists(json, ".sharesChains")) return true;
         uint256[] memory ids = json.readUintArray(".sharesChains");

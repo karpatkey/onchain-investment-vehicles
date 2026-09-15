@@ -120,7 +120,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + shares mastercopy deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` wires the mastercopy in, then `transferOwnership` hands the factory to the OIV Safe. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
+The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then factory + both mastercopies + `KpkTimelockDeployer` via the canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` and `setTimelockDeployer`, then `transferOwnership` to the OIV Safe. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain** — it never wires `timelockDeployer` — and refuses to run on one that is not already onboarded; it exists to re-wire `kpkSharesMastercopy` afterwards. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 

@@ -41,6 +41,23 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("Final owner (post-deploy):  ", finalOwner);
         console.log("==========================================");
 
+        // This script does NOT deploy or wire `timelockDeployer` — only the per-chain
+        // `script/chains/Deploy_<Chain>.s.sol` scripts (via `OivChainDeploy._runChain`) do, and they
+        // need a chain id and CCIP router this entry point does not take. So it cannot onboard a
+        // fresh chain: every timelocked fund there would revert `TimelockDeployerNotSet`, and in a
+        // CCIP fan-out the destination reverts with the source-chain fee already spent.
+        //
+        // Refused here, at the top, rather than part-way through. `forge script` simulates the whole
+        // body before broadcasting, so a later revert sends nothing either — but it does so after
+        // pretending to deploy a factory, which reads like a transient failure rather than "you are
+        // running the wrong script". What this entry point IS good for is re-wiring
+        // `kpkSharesMastercopy` on a chain that is already fully onboarded.
+        if (predictedFactory.code.length == 0 || KpkOivFactory(predictedFactory).timelockDeployer() == address(0)) {
+            revert(
+                "this script cannot onboard a chain (it never wires timelockDeployer) - use script/chains/Deploy_<Chain>.s.sol"
+            );
+        }
+
         vm.startBroadcast();
 
         // Same preflight `_runChain` performs. This standalone path is documented in README.md as a
@@ -109,8 +126,8 @@ contract DeployKpkOivFactory is OivChainDeploy {
         // Backstop only — the in-broadcast check above fires first and before the handover. Kept
         // because this one also covers a run that reached here by some path the other did not.
         require(
-            KpkOivFactory(predictedFactory).timelockDeployer() != address(0),
-            "post-flight: timelockDeployer not wired - use script/chains/Deploy_<Chain>.s.sol, not this script"
+            KpkOivFactory(predictedFactory).timelockDeployer() == _predictTimelockDeployer(),
+            "post-flight: timelockDeployer is not the canonical one for this generation"
         );
         require(
             KpkOivFactory(predictedFactory).kpkSharesMastercopy() == predictedDeployer,

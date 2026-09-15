@@ -251,4 +251,51 @@ contract OivConfigReaderTest is Test {
         vm.expectRevert(bytes("config: this chain is not in .sharesChains - use deployStack, or fix the config"));
         script.deployOiv("script/oiv-config.example.json");
     }
+
+    /// @notice The shipped example declares two shares chains and overrides only one — that is
+    ///         CORRECT, because the omitted chain is the one `.oiv.sharesParams.asset` belongs to.
+    ///         This pins that the guard below does not reject it.
+    function test_sharesChains_oneOmittedOverrideIsFine() public view {
+        CcipOivDeployer.SharesChain[] memory t = reader.sharesChains(json);
+        assertEq(t.length, 2, "example declares two shares chains");
+        assertEq(t[0].asset, USDC, "chain 1 falls back to the base asset, which is its asset");
+        assertEq(t[1].asset, GNOSIS_ASSET, "chain 100 uses its explicit override");
+    }
+
+    /// @notice A SECOND omission is necessarily wrong — two chains cannot share one token address —
+    ///         and silently yields a topology naming a token that does not exist on one of them.
+    ///         Because the topology is hashed into the salt, that is unrecoverable once the fan-out
+    ///         has spent its fees, so it must be refused at parse time.
+    function test_sharesChains_refusesASecondMissingOverride() public {
+        string memory bad = string.concat(
+            '{"sharesChains":[1,10,100],',
+            '"oiv":{"sharesParams":{"asset":"',
+            vm.toString(USDC),
+            '"},',
+            '"assetOverrides":{"100":"',
+            vm.toString(GNOSIS_ASSET),
+            '"}}}'
+        );
+        vm.expectRevert();
+        reader.sharesChains(bad);
+    }
+
+    /// @notice `deployStack` on a chain the topology DECLARES strands that chain permanently, and it
+    ///         is the more damaging direction of the two. It lands a fully WIRED stack at the same
+    ///         five addresses `deployOiv` would use, after which both recovery routes are closed at
+    ///         once: `deployLocal` reverts `StackAlreadyDeployedHere` because the stack is wired, and
+    ///         `promoteShares` reverts `SharesChainAlreadyDeclared` because the chain is in the
+    ///         topology. The only way back is a new salt and a full re-rollout.
+    function test_deployStack_refusesAChainInsideTheTopology() public {
+        DeployOiv script = new DeployOiv();
+
+        // The example declares [1, 100]; stand on chain 1 so this chain is inside its topology.
+        vm.chainId(1);
+        assertTrue(reader.shouldDeployShares(json), "this chain must be inside the example topology");
+
+        vm.expectRevert(
+            bytes("config: this chain IS in .sharesChains - use deployOiv; deployStack here would strand it")
+        );
+        script.deployStack("script/oiv-config.example.json");
+    }
 }
