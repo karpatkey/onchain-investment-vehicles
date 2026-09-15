@@ -564,8 +564,15 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         config, which moves every address of the fund on every chain.
     ///
     ///         THE PRICE: before adoption existed, a squatted Manager Safe produced a loud revert.
-    ///         It is now silent. Operators should treat "this Safe already existed" as a fact worth
-    ///         checking before a fund goes live, which is what the deployment runbook now says.
+    ///         It is now silent.
+    ///
+    ///         WHERE IT IS CLOSED INSTEAD: off-chain. A UI can do what this function cannot, because
+    ///         `eth_getStorageAt` is served from the account's storage trie and executes no contract
+    ///         code — so reading SafeProxy slot 0 and comparing it to the canonical singleton cannot
+    ///         be faked, and once that passes the ordinary getters are trustworthy again. A contract
+    ///         has no such primitive: it can only call, which is the hole. `DEPLOYMENT.md` §
+    ///         "Adopting a pre-existing Safe" carries the exact slots and the required order for the
+    ///         deployer UI.
     error AdoptedSafeMismatch(address safe);
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
