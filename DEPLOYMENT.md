@@ -218,8 +218,13 @@ Surfacing "this was adopted" for those is informative; for the Manager Safe it i
 Before adoption existed, a pre-created Manager Safe made deployment fail loudly. It now succeeds
 quietly. That lost signal is the real cost, and it is an operational one:
 
-- **Treat "the address already had a contract" as a fact to verify, not a convenience.** Deployment
-  logs `[SKIP]`-style lines when a component already exists rather than being created.
+- **Watch for `ComponentAdopted`.** The factory emits it whenever a component was already at its
+  predicted address and was adopted rather than created, with `kind` of `"safe"` or
+  `"roles-modifier"`. Index it and alert on it. It exists specifically because the fund path is
+  otherwise silent — both adopt branches return early, and `OivDeployed` looks identical either way.
+  (The `[SKIP]` lines printed during deployment come from the INFRASTRUCTURE scripts — `Empty`,
+  MultiSendUnwrapper, the factory, the mastercopies, the orchestrator — and say nothing about a
+  fund's own components.)
 - On any chain where the Manager Safe already existed, **confirm before funding** that its
   implementation pointer is the canonical Safe singleton for that chain and that its owners and
   threshold match the config, using a Safe UI or explorer rather than an on-chain call.
@@ -248,7 +253,13 @@ forge script script/DeployOiv.s.sol \
 
 Deploys whichever a chain is configured for, per `.sharesChains`: the full fund on the chains listed there, the operational stack alone on every other chain. Run the **identical command on every chain** — the config decides.
 
-`.sharesChains` is **required** by this entry point and has no default. A config that omits it would put a live shares token on every chain you ran the command against, which is the opposite of what chain selection is for; `deployOiv` and `deployStack` keep the permissive default because there you have already chosen the branch by hand. An explicitly empty `[]` is legal and means "operational stacks everywhere, shares promoted later via `promoteShares`" — it must be stated, not implied.
+`.sharesChains` is **required** by this entry point and has no default. A config that omits it would put a live shares token on every chain you ran the command against, which is the opposite of what chain selection is for; `deployOiv` and `deployStack` keep the permissive default because there you have already chosen the branch by hand. An empty `[]` is **refused**. It reads as a deliberate statement but behaves as a trap: `keyExists`
+answers true for it, so it satisfies every presence check, and then every chain — including the one
+meant to carry the fund — takes the stack-only branch. Those stacks are wired, so a corrected re-run
+reverts `StackAlreadyDeployedHere` and the canonical addresses are gone. An earlier version of this
+document suggested recovering such a fund with `promoteShares`; that is not possible. `promoteShares`
+lives on `CcipOivDeployer` and calls the factory as the **orchestrator** with the topology-bound salt,
+so every address it computes differs from one deployed through this script.
 
 ```bash
 forge script script/DeployOiv.s.sol \
@@ -424,6 +435,10 @@ All three blocks are optional. Omit them and a fund deploys exactly as it did be
 `minDelay` is required whenever a timelock block is present, and must be non-zero: `minDelay: 0` is the factory's "no timelock" sentinel, so a block listing proposers and cancellers but no delay — or a placeholder zero — would silently deploy no timelock at all. The reader rejects **both** the missing key and an explicit `0`. To deploy without a timelock, omit the block entirely.
 
 `proposers` is required too, for a sharper reason: the factory deliberately imposes no floor on it, so a *missing* key defaulting to an empty list would produce a timelock that can never schedule anything, freezing whatever it governs with no recovery and no error. An explicitly empty `[]` is still accepted — zero proposers is a permitted choice, but it must be a choice. (`cancellers` may be omitted; no cancellers simply means no veto.)
+
+**`minDelay` must be between 12 hours and 30 days** (`MIN_DELAY_FLOOR` / `MIN_DELAY_CAP`); anything
+outside reverts `DelayOutOfBounds` at deploy time. The reader accepts `1`, `43199` and `2592001`
+happily — they fail on-chain, mid-rollout, like the ordering rules below.
 
 **Member arrays must be strictly ascending by address value, contain no zero and no duplicates, and `cancellers` must be disjoint from `proposers`.** `KpkTimelockDeployer` enforces all four (`MembersNotAscending`, `ZeroAddress`, `DuplicateRoleMember`), so a list written in governance-priority order reverts mid-rollout. Sort by numeric address value, not by role. The ordering is also load-bearing beyond validation: the arrays are hashed into the timelock's salt, so the same members in a different order would place the timelock at a different address on one chain while every other address still matched.
 

@@ -397,6 +397,18 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
+    /// @notice Emitted when a component was ALREADY at its predicted address and was adopted rather
+    ///         than created.
+    /// @dev    This is the signal the accepted adoption risk depends on. `DEPLOYMENT.md` § "Adopting
+    ///         a pre-existing Safe" asks an operator to verify an adopted Manager Safe off-chain
+    ///         before funding — advice that needs a way to know adoption happened, and the fund path
+    ///         is otherwise silent: both adopt branches return early, and `OivDeployed` looks
+    ///         identical either way. Index it and alert on it; a `component` that is the fund's
+    ///         Manager Safe is the one that warrants the off-chain check.
+    /// @param  component  The adopted address.
+    /// @param  kind       `"safe"` or `"roles-modifier"`.
+    event ComponentAdopted(address indexed component, bytes32 indexed kind);
+
     /// @notice Emitted when `deployStack` successfully deploys an operational stack.
     /// @param stackId   Zero-based index of this stack in the `stacks` mapping.
     /// @param instance  Addresses of all five deployed contracts.
@@ -1441,7 +1453,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return mod  Address of the deployed or adopted Roles Modifier proxy.
     function _deployRolesModifier(uint256 salt) internal returns (address mod) {
         mod = _predictRolesModifier(salt);
-        if (mod.code.length != 0) return mod;
+        if (mod.code.length != 0) {
+            emit ComponentAdopted(mod, "roles-modifier");
+            return mod;
+        }
 
         bytes memory initParams = abi.encode(address(this), address(this), address(this));
         bytes memory initializer = abi.encodeCall(IRoles.setUp, (initParams));
@@ -1476,6 +1491,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
         if (safe.code.length != 0) {
             _requireSafeMatchesConfig(safe, owners, threshold, modulesToEnable);
+            emit ComponentAdopted(safe, "safe");
             return safe;
         }
 

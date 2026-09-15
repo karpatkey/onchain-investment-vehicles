@@ -298,4 +298,59 @@ contract OivConfigReaderTest is Test {
         );
         script.deployStack("script/oiv-config.example.json");
     }
+
+    /// @dev Builds a minimal topology-only config with the given chain-id list.
+    function _topologyJson(string memory ids) internal view returns (string memory) {
+        return string.concat(
+            '{"sharesChains":',
+            ids,
+            ",",
+            '"oiv":{"sharesParams":{"asset":"',
+            vm.toString(USDC),
+            '"},',
+            '"assetOverrides":{"100":"',
+            vm.toString(GNOSIS_ASSET),
+            '"}}}'
+        );
+    }
+
+    /// @notice An EMPTY topology satisfies every presence check — `keyExists` answers true for `[]` —
+    ///         and then answers false on every chain, so each one takes the stack-only branch,
+    ///         including the chain meant to carry the fund. Those stacks are wired, so a corrected
+    ///         re-run reverts `StackAlreadyDeployedHere` and the canonical addresses are gone. There
+    ///         is no recovery via `promoteShares`: it runs on the orchestrator, with a different
+    ///         caller and a different salt, so it cannot reach a fund deployed this way.
+    function test_sharesChains_refusesAnEmptyTopology() public {
+        vm.expectRevert(
+            bytes("config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to")
+        );
+        reader.sharesChains(_topologyJson("[]"));
+    }
+
+    /// @notice Chain id 0 slipped past the ascending check as a leading element, and surfaced from
+    ///         the orchestrator as `InvalidSharesChain()` — which carries no id, defeating the
+    ///         stated purpose of failing here with the offending one.
+    function test_sharesChains_refusesChainIdZero() public {
+        vm.expectRevert(bytes("config: .sharesChains contains chain id 0"));
+        reader.sharesChains(_topologyJson("[0,1]"));
+    }
+
+    /// @notice The ascending requirement had no test at all — a mutation sweep found it survived
+    ///         deletion. Order is load-bearing: the topology is hashed into the salt, so two
+    ///         orderings are two different funds.
+    function test_sharesChains_refusesADescendingList() public {
+        vm.expectRevert(bytes("config: .sharesChains must be strictly ascending by chain id"));
+        reader.sharesChains(_topologyJson("[100,1]"));
+    }
+
+    /// @notice `_requireAssetIsLive` also survived deletion. It runs before any broadcast, so this
+    ///         reaches it without an RPC: on this unit-test chain no token has code, and standing on
+    ///         chain 1 puts us inside the example's topology so the branch guard passes first.
+    function test_deployOiv_refusesAnAssetWithNoCodeOnThisChain() public {
+        DeployOiv script = new DeployOiv();
+        vm.chainId(1);
+
+        vm.expectRevert(bytes("config: base asset has no code on this chain - add an .oiv.assetOverrides entry for it"));
+        script.deployOiv("script/oiv-config.example.json");
+    }
 }
