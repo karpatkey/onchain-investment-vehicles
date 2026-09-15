@@ -34,7 +34,7 @@ contract DeployOiv is OivConfigReader {
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
     ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
     ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
-    address public constant FACTORY = 0xdb7dED3fd4e8Aa37387f6d361Bf4FfFB3151e0ad;
+    address public constant FACTORY = 0x8D93543d777Bcc2d7d373b49cB0E8e4bA30764FA;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 
@@ -93,12 +93,18 @@ contract DeployOiv is OivConfigReader {
 
     function deployStack(string calldata configPath) external {
         string memory json = vm.readFile(configPath);
-        // The mirror of `deployOiv`'s guard, and the more damaging direction. `deployStack` lands a
-        // fully WIRED stack at the same five addresses `deployOiv` would use, after which that chain
-        // can never carry shares: `deployLocal` reverts `StackAlreadyDeployedHere` because the stack
-        // is wired, and `promoteShares` reverts `SharesChainAlreadyDeclared` because the chain is in
-        // the topology. Both recovery routes are closed at once, and the only way back is a new salt
-        // and a full re-rollout.
+        // The mirror of `deployOiv`'s guard: you almost certainly meant `deployOiv` here, since the
+        // config says this chain carries shares.
+        //
+        // Be accurate about the cost, because an earlier version of this comment overstated it.
+        // On THIS script's direct flow — EOA caller, raw `config.salt` — the mistake is recoverable:
+        // `KpkOivFactory.deployShares(config)` adds the shares token to the wired stack in one
+        // transaction, at the canonical addresses, leaving only the Avatar Safe approvals to grant
+        // through the exec Roles Modifier. And an EOA-run `deployStack` cannot strand an
+        // ORCHESTRATOR-deployed fund at all, because the salts mix `msg.sender` and it never reaches
+        // those addresses. The unrecoverable pairing — `deployLocal` blocked by
+        // `StackAlreadyDeployedHere` and `promoteShares` by `SharesChainAlreadyDeclared` — needs the
+        // orchestrator to have wired the stack, which this script never does.
         //
         // Only checked when the config states a topology. An absent `.sharesChains` is still "no
         // opinion", so the legacy per-chain flow is unaffected.

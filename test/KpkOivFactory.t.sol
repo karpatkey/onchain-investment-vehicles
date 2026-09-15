@@ -2038,7 +2038,7 @@ contract KpkOivFactoryTest is OivTestConstants {
         KpkOivFactory.OivConfig memory cfg = oivConfig;
         cfg.execTimelock = _timelockParams(3 days);
 
-        vm.expectRevert();
+        vm.expectRevert(); // TimelockMismatch carries the predicted address, which differs per run
         factory.deployShares(cfg);
     }
 
@@ -2103,6 +2103,50 @@ contract KpkOivFactoryTest is OivTestConstants {
 
         vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.TimelockMismatch.selector, address(0)));
         factory.deployShares(cfg);
+    }
+
+    /// @notice Prediction must refuse a fee rate deployment would refuse. `CcipOivDeployer` uses
+    ///         `predictOivAddresses` as its ONLY shares-half pre-check, so a gap here means a fan-out
+    ///         from a stack-only chain prices and sends every lane, lands every stack, and only then
+    ///         fails inside `KpkShares.initialize` — and since the salt hashes `sharesParams`,
+    ///         correcting the rate moves every address and orphans what landed.
+    function test_predictOivAddresses_refusesAFeeRateAboveTheCap() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.sharesParams.managementFeeRate = 3000; // MAX_FEE_RATE is 2000
+
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        factory.predictOivAddresses(cfg, address(this));
+    }
+
+    /// @notice The factory mirrors `KpkShares.MAX_FEE_RATE` as a literal because reading it costs
+    ///         368 bytes it does not have. This is what keeps the duplicate honest.
+    function test_maxFeeRateMirrorsKpkShares() public view {
+        assertEq(
+            KpkShares(factory.kpkSharesMastercopy()).MAX_FEE_RATE(),
+            2000,
+            "factory literal must track the audited constant"
+        );
+    }
+
+    /// @notice A mutation sweep found the OWNER clause of the adopted-Safe check survived deletion
+    ///         against the whole suite: every other adoption test uses a Safe whose owner set is
+    ///         unchanged, so only the module and ordering clauses were exercised. With that clause
+    ///         gone, a single compromised signer of a squatted threshold-1 Manager Safe could add
+    ///         themselves an owner and have the factory adopt it — handing that address the fund's
+    ///         manager authority.
+    function test_adopt_rejectsASafeWithAnAddedOwner() public {
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address squatted =
+            _squatManagerSafe(makeAddr("ownerSquatter"), predicted.managerRolesModifier, _stackSalt(address(this), 4));
+
+        // A Safe's own owner management is self-authorized, which is what an owner executing a
+        // transaction on the squatted Safe achieves.
+        address attacker = makeAddr("addedOwner");
+        vm.prank(squatted);
+        ISafeModules(squatted).addOwnerWithThreshold(attacker, 1);
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.AdoptedSafeMismatch.selector, squatted));
+        factory.deployOiv(oivConfig);
     }
 
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
@@ -2170,7 +2214,12 @@ contract KpkOivFactoryHarness is KpkOivFactory {
     function exposed_execApprove(address avatarSafe, address asset, address spender) external {
         _execApprove(avatarSafe, asset, spender);
     }
+}
 
+/// @dev Lives outside `KpkOivFactoryHarness` deliberately: it calls no factory internal, so inheriting
+///      the whole factory to host it was pure weight — and the harness is now the binding EIP-170
+///      constraint in this repo, tighter than the factory it wraps.
+contract ModuleDisabler {
     function exposed_disableFactoryModule(address avatarSafe) external {
         bool moduleDisabled = ISafe(avatarSafe)
             .execTransactionFromModule(
@@ -2228,18 +2277,19 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
 
     function test_disableModule_revertsIfModuleCallReturnsFalse() public {
         address mockSafe = makeAddr("mockSafe");
+        ModuleDisabler disabler = new ModuleDisabler();
 
         vm.mockCall(
             mockSafe,
             abi.encodeCall(
                 ISafe.execTransactionFromModule,
-                (mockSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(harness))), 0)
+                (mockSafe, 0, abi.encodeCall(ISafe.disableModule, (address(0x1), address(disabler))), 0)
             ),
             abi.encode(false)
         );
 
         vm.expectRevert("KpkOivFactory: failed to disable module");
-        harness.exposed_disableFactoryModule(mockSafe);
+        disabler.exposed_disableFactoryModule(mockSafe);
     }
 }
 
@@ -2255,17 +2305,13 @@ interface ISafeModules {
     /// @dev Self-authorized on a Safe, so pranking as the Safe stands in for an owner executing it.
     function enableModule(address module) external;
 
+    function addOwnerWithThreshold(address owner, uint256 threshold) external;
+
     function setGuard(address guard) external;
 
     function setFallbackHandler(address handler) external;
 }
 
-/// @dev An ERC-20 whose `symbol()` attempts a STATE WRITE. `KpkShares.initialize` reads `symbol()`
-///      and `decimals()` on the base asset, and both are declared `view`, so solc emits STATICCALL —
-///      under which any write reverts and the revert propagates. This token therefore makes
-///      `deployOiv` fail, and that failure is the proof: under a plain CALL the write would succeed
-///      and deployment would sail through, which is exactly the reentrancy window the factory's
-///      comment claims is closed.
 contract InertAsset {
     function decimals() external pure returns (uint8) {
         return 18;
@@ -2288,6 +2334,12 @@ contract InertAsset {
     }
 }
 
+/// @dev An ERC-20 whose `symbol()` attempts a STATE WRITE. `KpkShares.initialize` reads `symbol()`
+///      and `decimals()` on the base asset, and both are declared `view`, so solc emits STATICCALL —
+///      under which any write reverts and the revert propagates. This token therefore makes
+///      `deployOiv` fail, and that failure is the proof: under a plain CALL the write would succeed
+///      and deployment would sail through, which is exactly the reentrancy window the factory's
+///      comment claims is closed.
 contract StateWritingAsset {
     uint256 public poked;
 
