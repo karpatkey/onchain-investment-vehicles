@@ -524,26 +524,48 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     error StackAlreadyDeployedHere();
 
     /// @notice Thrown when a Safe already at a predicted address does not match the configuration
-    ///         that address encodes — different owners, threshold, or module set.
-    /// @dev    Adoption is safe only while a pre-landed component is still in the state its
-    ///         initializer produced. Two of the three kinds cannot drift: the Roles Modifiers are
-    ///         factory-owned with no modules, and the Avatar Safe's sole owner is the always-
-    ///         reverting `Empty`. The MANAGER Safe can: its owners are live keys from the config, so
-    ///         a squatted one is a working multisig from the moment it exists, and its signers can
-    ///         mutate it — at the configured threshold, which is routinely 1 — before the fund ever
-    ///         reaches that chain.
+    ///         that address encodes — different owners, threshold, module set, guard or fallback
+    ///         handler.
     ///
-    ///         Read the limit precisely. This catches accidental drift and anything an OUTSIDER can
-    ///         do, which is nothing: the initializer fixes the owners, so only the config's own
-    ///         signers can act. It does NOT bind a malicious manager quorum, because every read here
-    ///         goes through the Safe's own mutable `singleton` pointer — signers who can enable a
-    ///         module can equally DELEGATECALL a slot-0 writer (Safe ships `SafeMigration` for
-    ///         exactly that) and make all of these reads answer whatever the config expects. No
-    ///         on-chain read of a proxy survives that. Those signers are already trusted at `admin`
-    ///         level by this contract's own security note, so it is inside the documented model —
-    ///         but it was a LOUD revert before adoption existed, and it is silent now. Adopting that silently would hand `MANAGER_ROLE` and the
-    ///         shares `OPERATOR` role to a multisig the config never described — where before
-    ///         adoption existed, the same squat merely reverted the deployment.
+    /// @dev    WHAT THIS CATCHES, AND WHAT IT DOES NOT. Stated at length because the honest boundary
+    ///         is narrower than the check looks, and the difference was accepted deliberately
+    ///         (decision recorded 2026-09-15; see `DEPLOYMENT.md`, "Adopting a pre-existing Safe").
+    ///
+    ///         Adoption is sound only while a pre-landed component is still in the state its
+    ///         initializer produced. Two of the three kinds cannot leave it. The Roles Modifiers are
+    ///         factory-owned with no modules enabled, so every mutator is closed to everyone else.
+    ///         The Avatar Safe's sole owner is the codehash-asserted, always-reverting `Empty`, so no
+    ///         signature can ever be produced for it and its only modules are the factory and a
+    ///         role-less exec modifier.
+    ///
+    ///         The MANAGER Safe can. Its owners are live keys from the config, so a squatted one is a
+    ///         working multisig from the moment it exists, and its signers can mutate it — at the
+    ///         configured threshold, routinely 1 — before the fund ever reaches that chain. This
+    ///         check therefore catches accidental drift, and everything an OUTSIDER can do, which is
+    ///         nothing: the initializer fixes the owners, so only the config's own signers can act
+    ///         at all.
+    ///
+    ///         It does NOT bind those signers. Every read here reaches the Safe through its own
+    ///         mutable `singleton` pointer (SafeProxy storage slot 0). Signers who can enable a
+    ///         module can equally DELEGATECALL a slot-0 writer — Safe ships `SafeMigration` for
+    ///         precisely that — and point it at code answering `getOwners`, `getThreshold`,
+    ///         `getModulesPaginated` and `getStorageAt` with exactly what this function expects,
+    ///         while behaving arbitrarily. No on-chain read of a proxy survives a hostile singleton,
+    ///         including a read of slot 0 itself, so there is no version of this check that closes
+    ///         it.
+    ///
+    ///         ACCEPTED, for a reason and at a price. The capability required is threshold-many
+    ///         manager signatures, and `OivConfig.managerSafe`'s own security note already requires
+    ///         those owners to be trusted at `admin` level — a malicious manager quorum can harm the
+    ///         fund by other routes regardless, so this is inside the documented trust model. The
+    ///         alternative — refusing to adopt an occupied Manager Safe — would close it completely
+    ///         and hand any anonymous party a permanent denial: the initializer is public config, so
+    ///         anyone can occupy that address for the cost of gas, and recovery means changing the
+    ///         config, which moves every address of the fund on every chain.
+    ///
+    ///         THE PRICE: before adoption existed, a squatted Manager Safe produced a loud revert.
+    ///         It is now silent. Operators should treat "this Safe already existed" as a fact worth
+    ///         checking before a fund goes live, which is what the deployment runbook now says.
     error AdoptedSafeMismatch(address safe);
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
