@@ -166,6 +166,53 @@ stranger could mount.
 **Decision recorded 2026-09-15.** Accepted knowingly, on the trade-off above, after it was found by
 a security review of the adoption path.
 
+### ⚠️ If you are building or refactoring the deployer UI — read this
+
+**The UI can verify what the contract cannot, and it is the only layer that can.** This is the single
+most important consequence of the accepted risk above, so treat it as a requirement rather than a
+nice-to-have.
+
+The contract is defeated because every question it asks the Safe is a *call*, and calls run whatever
+code the Safe's `singleton` pointer designates — including code chosen by an attacker. A UI is not
+limited that way: `eth_getStorageAt` is served by the node from the account's storage trie and
+**executes no contract code**, so nothing can fake it.
+
+#### The requirement
+
+When a deployment **adopts** a component (the address already had code) rather than creating it,
+surface that fact, and for the **Manager Safe** verify it as follows, in this order:
+
+1. **`eth_getStorageAt(managerSafe, 0x0, "latest")`** → must equal the chain's canonical Safe
+   singleton. For Safe v1.4.1 as wired here that is `0x41675C099F32341bf84BFc5382aF534df5C7461a`
+   (`OivInfraConstants.SAFE_SINGLETON`). **This check is the one that matters** — everything else is
+   only meaningful once it passes.
+2. Guard slot **`0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8`**
+   (`keccak256("guard_manager.guard.address")`) → must be zero.
+3. Fallback-handler slot **`0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5`**
+   (`keccak256("fallback_manager.handler.address")`) → must equal the configured
+   `safeFallbackHandler`.
+4. **Only after step 1 passes**, `getOwners()`, `getThreshold()` and `getModulesPaginated()` are
+   trustworthy — the code answering them is then the genuine Safe — and should be compared against
+   the fund's config.
+
+#### Do not
+
+- **Do not use `masterCopy()`** to check the pointer. It is a *call*, so a hostile implementation
+  answers it. It will return the right value on an honest Safe and a lie on a poisoned one, which is
+  the worst possible property for a check.
+- **Do not rely on `getOwners()` / `getThreshold()` alone.** Same reason. They are sound *after*
+  step 1 and meaningless before it.
+- **Do not replicate these checks in a contract.** They cannot work there: a contract cannot read
+  another account's storage, so it must call — which is precisely the hole. This is a UI/off-chain
+  responsibility by construction, not by preference.
+
+#### Scope
+
+This applies to the **Manager Safe only**. An adopted Avatar Safe or Roles Modifier needs no such
+check: the Avatar Safe's sole owner is the always-reverting `Empty`, so no signature for it can
+exist, and the Roles Modifiers are factory-owned with no modules enabled, so every mutator is closed.
+Surfacing "this was adopted" for those is informative; for the Manager Safe it is load-bearing.
+
 ### What this costs you, and what to do about it
 
 Before adoption existed, a pre-created Manager Safe made deployment fail loudly. It now succeeds
