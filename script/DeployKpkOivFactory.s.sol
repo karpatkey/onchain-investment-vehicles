@@ -6,23 +6,29 @@ import {OivChainDeploy} from "./base/OivChainDeploy.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 
 /// @title  DeployKpkOivFactory
-/// @notice Deploys the `KpkShares` mastercopy and `KpkOivFactory` deterministically across every chain via
-///         the canonical CREATE2 deployer, producing identical addresses on every chain. The
-///         address-critical constants/salts/init-code live in `OivChainDeploy` (the single source of
-///         truth shared with the per-chain scripts), so the standalone and per-chain paths can never
-///         drift to different factory addresses. The factory bakes in the PATCHED Roles Modifier
-///         v2.1.1 mastercopy (`0xF2964CE6…83D5`).
+/// @notice **Verifies** that a chain's factory wiring is correct and complete. It no longer onboards
+///         a chain, and the name is kept only because `docs/DEPLOYED_ADDRESSES.md` records historical
+///         runs under it.
 ///
-/// @dev    Flow: pre-compute predicted addresses → CREATE2 factory (idempotent) → CREATE2 deployer
-///         (idempotent) → `setKpkSharesMastercopy` → `transferOwnership(finalOwner)`.
+/// @dev    It cannot onboard, and three attempts to guard it as though it could each failed for the
+///         same underlying reason: only `OivChainDeploy._runChain` wires `timelockDeployer`, and it
+///         needs a chain id and CCIP router this entry point does not take. `_runChain` also sets
+///         `kpkSharesMastercopy` and hands ownership to `finalOwner` immediately, so by the time this
+///         script can run, every step it knows how to perform is already done and the `onlyOwner`
+///         setters are out of reach of the deployer EOA.
+///
+///         What remains is genuinely useful: run it against an onboarded chain and it asserts the
+///         factory exists, its owner is `finalOwner`, `timelockDeployer` is the canonical one for
+///         this salt generation, and `kpkSharesMastercopy` is the expected address. Any of those
+///         failing means that chain is not what the rollout believes it is.
+///
+///         To ONBOARD a chain use `script/chains/Deploy_<Chain>.s.sol`.
 ///
 /// Usage (per chain):
 ///   source .env && forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
-///     --rpc-url <chain> --account $DEPLOYER_NAME --broadcast --verify \
-///     --sig "run(address,address)" <eoaOwner> <finalOwner>
+///     --rpc-url <chain> --sig "run(address,address)" <eoaOwner> <finalOwner>
 ///
-/// `<eoaOwner>` MUST equal the broadcasting account (it calls the onlyOwner setters and is baked
-/// into the factory's CREATE2 init-code — enforced below).
+/// No `--broadcast`: this sends nothing.
 contract DeployKpkOivFactory is OivChainDeploy {
     function run(address eoaOwner, address finalOwner) external {
         require(eoaOwner != address(0), "eoaOwner is zero");
