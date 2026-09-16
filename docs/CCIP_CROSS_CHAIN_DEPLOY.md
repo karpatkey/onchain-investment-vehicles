@@ -99,14 +99,19 @@ config's addresses; an identical config still yields identical addresses on ever
 code must predict via the orchestrator's `predictOiv(config, sharesChains)`** (which applies this derivation), not
 the factory's raw `predictOivAddresses`.
 
-**Any wired chain.** `deployEverywhere` / `dispatchTo` run the local `deployOiv` and originate the
-fan-out from whichever chain you call them on, provided that chain is in the orchestrator's registry
-(`onlyWiredChain`). There is no designated source chain: `SOURCE_CHAIN_ID` and `NotSourceChain` are
-gone. Pre-occupation of the deterministic stack addresses — the reason the old restriction existed —
-is handled at the factory instead, which adopts pristine pre-landed components and refuses only a
-stack that has already been wired. The
-orchestrator never holds a privileged role on any deployed fund — the exec Roles Modifier (owned by
-`config.admin`) remains the authoritative gatekeeper of Avatar Safe execution.
+**Any wired chain.** `deployEverywhere` / `dispatchTo` originate the fan-out from whichever chain you
+call them on, provided that chain is in the orchestrator's registry (`onlyWiredChain`). There is no
+designated source chain: `SOURCE_CHAIN_ID` and `NotSourceChain` are gone. Pre-occupation of the
+deterministic stack addresses — the reason the old restriction existed — is handled at the factory
+instead, which adopts pristine pre-landed components and refuses only a stack that has already been
+wired. The orchestrator never holds a privileged role on any deployed fund — the exec Roles Modifier
+(owned by `config.admin`) remains the authoritative gatekeeper of Avatar Safe execution.
+
+**The local half is conditional, and this is the easy thing to get wrong.** `_deployEverywhere` runs
+`factory.deployOiv` only when the origin chain appears in `sharesChains`; when it does not, it runs
+`factory.deployStack` and returns an instance whose shares fields are zero. So initiating from Base
+with an Ethereum-only topology deploys a **stack** on Base, not a Base shares token — which is
+correct, and is not what "deploy everywhere from any chain" sounds like.
 
 ## Operational model (important)
 

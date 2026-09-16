@@ -683,6 +683,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _timelockDeployer New address. Must not be zero.
     function setTimelockDeployer(address _timelockDeployer) external onlyOwner {
         if (_timelockDeployer == address(0)) revert ZeroAddress();
+        // Codeless is rejected too, and write-once is exactly why. `setKpkSharesMastercopy` has
+        // always had this guard; here it was survivable while the value could be corrected, and is
+        // not any more — latching to a codeless address would permanently brick timelocked funds on
+        // this chain with no way back except a new factory generation. Making a value unchangeable
+        // raises the bar on validating it.
+        if (_timelockDeployer.code.length == 0) revert InvalidMastercopy();
         // Write-once. See `InfrastructureAlreadySet`. Onboarding legitimately sets this after
         // construction (`OivChainDeploy._runChain`), so the latch is on the first non-zero value
         // rather than on construction.

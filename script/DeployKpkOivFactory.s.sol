@@ -82,7 +82,17 @@ contract DeployKpkOivFactory is OivChainDeploy {
             factory.timelockDeployer() == _predictTimelockDeployer(),
             "timelockDeployer is unset or not the canonical one for this generation"
         );
+        // The stored address matching is not the same as the deployer EXISTING. A factory latched to
+        // the predicted address before that address was deployed satisfies the check above, and this
+        // script would report the chain verified while every timelocked fund later fails on the
+        // interface call. The whole point of a verifier is to catch that.
+        require(
+            factory.timelockDeployer().code.length > 0,
+            "timelockDeployer address is correct but has no code on this chain"
+        );
         console.log("[OK]   timelockDeployer        ", factory.timelockDeployer());
+
+        require(factory.kpkSharesMastercopy().code.length > 0, "kpkSharesMastercopy has no code on this chain");
 
         require(factory.kpkSharesMastercopy() == predictedMastercopy, "kpkSharesMastercopy mismatch");
         console.log("[OK]   kpkSharesMastercopy     ", factory.kpkSharesMastercopy());

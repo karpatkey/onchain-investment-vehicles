@@ -43,9 +43,21 @@ abstract contract OivConfigReader is Script {
             console.log("  shares timelock:      ", inst.sharesTimelock);
         } else {
             console.log("  kpkShares:             NOT on this chain (not listed in .sharesChains)");
-            console.log("  would-be proxy:       ", inst.kpkSharesProxy);
-            console.log("  (not created by this deploy; reachable later - deployOiv on the direct");
-            console.log("   path, or promoteShares via the orchestrator)");
+            // Only when it is a real prediction. A stack-only DEPLOY result comes back through
+            // `_instanceFromStack`, which deliberately zeroes the shares fields, so printing it
+            // unconditionally labelled `0x0000...0000` as this fund's would-be proxy.
+            if (inst.kpkSharesProxy != address(0)) {
+                console.log("  would-be proxy:       ", inst.kpkSharesProxy);
+            }
+            // The previous instruction named `deployOiv` on the direct path, which is wrong once a
+            // stack exists here: it redeploys the stack and collides. The three routes actually
+            // differ by path and by whether the topology declares this chain.
+            console.log("  Adding shares here later:");
+            console.log("    direct factory path:      KpkOivFactory.deployShares(config)");
+            console.log("    orchestrator, chain IN .sharesChains:  deployLocal(config, sharesChains)");
+            console.log("    orchestrator, chain NOT in it:         promoteShares(config, sharesChains)");
+            console.log("    (promoteShares is gated - admin or exec timelock - and needs max");
+            console.log("     allowances from the Avatar Safe first)");
         }
     }
 
