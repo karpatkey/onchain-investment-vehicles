@@ -134,7 +134,14 @@ contract CcipDeployEverywhere is OivConfigReader {
         vm.stopBroadcast();
 
         console.log("============================================================");
-        console.log("  deployEverywhere complete (local OIV deployed, CCIP dispatched)");
+        // Branch, because the origin need not carry shares: `_deployEverywhere` runs `deployStack`
+        // locally when this chain is absent from the topology, and saying "local OIV deployed" there
+        // tells the operator a shares token exists when only the stack does.
+        console.log(
+            instance.kpkSharesProxy != address(0)
+                ? "  deployEverywhere complete (local OIV deployed, CCIP dispatched)"
+                : "  deployEverywhere complete (local STACK only - this chain carries no shares - CCIP dispatched)"
+        );
         console.log("============================================================");
         _logInstance(instance, instance.kpkSharesProxy != address(0));
         console.log("------------------------------------------------------------");

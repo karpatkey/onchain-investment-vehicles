@@ -307,9 +307,12 @@ from; no Foundry script is required.
    `EMPTY_CONTRACT` is present on every target chain.
 2. Nothing to seed. The orchestrator bakes the `chainId → CCIP selector` registry into its
    CONSTRUCTOR, so a freshly deployed instance already knows every wired chain — confirm with
-   **Read** `getChainIds()`. Do **not** call `setChainSelectors` from `script/ccip-networks.json`:
-   that file includes `bob` and `katana`, which the baked list deliberately excludes, and adding
-   them makes the no-array `deployEverywhere` spend non-refundable fees on two dead lanes.
+   **Read** `getChainIds()`. Calling `setChainSelectors` afterwards is redundant, not dangerous:
+   the repo helper `CcipDeployEverywhere.seedSelectors` filters `script/ccip-networks.json` through
+   `_seedable`, which rejects rows marked `excluded: true`, so `bob` and `katana` are never emitted
+   — pinned by `test/SelectorSeedScope.t.sol`. What IS dangerous is supplying an unfiltered array
+   by hand: adding those two makes the no-array `deployEverywhere` spend non-refundable fees on two
+   dead lanes. An earlier version of this step attributed that hazard to the helper itself.
 3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
 4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
    the quoted fee (a little extra is fine; surplus is refunded). This deploys the origin chain's part

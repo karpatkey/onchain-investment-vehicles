@@ -446,5 +446,18 @@ abstract contract OivChainDeploy is Script {
         );
 
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
+        // Scope of the three mastercopy assertions above, stated because they look stronger than
+        // they are. They catch a claimer who gave themselves a DELAY or OPEN execution. They do not
+        // catch the dangerous case: a searcher who claimed the initializer between our CREATE2 and
+        // our `initialize` — separate broadcast transactions — taking PROPOSER_ROLE plus a PRIVATE
+        // executor with `minDelay == 0`. That passes all three and leaves them able to schedule and
+        // immediately execute arbitrary calls from this published address.
+        //
+        // `AccessControlUpgradeable` is non-enumerable, so no on-chain check can rule it out; the
+        // role set has to be inspected off-chain, or the race removed by giving the mastercopy a
+        // wrapper whose CONSTRUCTOR calls `_disableInitializers()` (which moves the mastercopy
+        // address and every timelock address with it). Until then this line means "wired as
+        // expected", not "provably uncontrolled".
+        console.log("     NOTE: timelock mastercopy control is NOT proven here - see the comment above.");
     }
 }
