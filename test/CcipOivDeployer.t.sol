@@ -293,6 +293,73 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
     }
 
+    /// @notice The stack-only branches validated the stack half of a salt that commits to the WHOLE
+    ///         config. A zero `feeReceiver` is the cheapest demonstration: `deployStack` does not
+    ///         care about it, the effective salt does, so the stack landed at addresses derived from
+    ///         a shares configuration that can never deploy. Every later shares-chain call reverts,
+    ///         and correcting the field moves the salt and abandons the stack.
+    ///
+    ///         Existing coverage pinned only stack-half fields (a duplicate owner, a bad timelock),
+    ///         which the narrower `predictStackAddresses` already caught — so widening the check was
+    ///         invisible to the suite until these two.
+    function test_deployLocal_stackOnlyBranchRejectsAnInvalidSharesConfig() public {
+        // Gnosis-only topology while standing on this chain: the stack-only branch.
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        oivConfig.sharesParams.feeReceiver = address(0);
+
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.deployLocal(oivConfig, topology);
+    }
+
+    function test_dispatchTo_rejectsAnInvalidSharesFieldBeforeSpendingFees() public {
+        oivConfig.sharesParams.feeReceiver = address(0);
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for an undeployable fund");
+    }
+
+    /// @notice The owner bound must be pinned at a SEND and a QUOTE, not only by the gas measurement
+    ///         that justifies it. The gas test reads the constant and would pass unchanged if the
+    ///         `_price` check were deleted — so on its own it proves the number is right while
+    ///         letting the enforcement disappear, which is the exact failure it exists to prevent:
+    ///         a fan-out whose destinations run out of gas with every non-refundable fee spent.
+    function test_deployEverywhere_refusesMoreManagerOwnersThanCcipCanAfford() public {
+        uint256 max = orchestrator.MAX_CCIP_MANAGER_OWNERS();
+        oivConfig.managerSafe.owners = _ascendingOwners(max + 1);
+        oivConfig.managerSafe.threshold = 1;
+
+        // The quote refuses too, which is the point of enforcing in `_price`: an undeliverable
+        // config fails while you are sizing the fee, not after you have paid it.
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ManagerOwnersExceedCcipBudget.selector, max + 1, max));
+        orchestrator.quoteDeployEverywhere(oivConfig, _topology(), _dests(), GAS_LIMIT);
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ManagerOwnersExceedCcipBudget.selector, max + 1, max));
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "no message may be dispatched for a rejected config");
+    }
+
+    /// @notice And exactly `MAX_CCIP_MANAGER_OWNERS` must still be accepted — a bound that is off by
+    ///         one in the safe direction is still wrong, and would silently shrink what a fund can be.
+    function test_deployEverywhere_acceptsExactlyTheMaximumOwners() public view {
+        uint256 max = orchestrator.MAX_CCIP_MANAGER_OWNERS();
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe.owners = _ascendingOwners(max);
+        cfg.managerSafe.threshold = 1;
+
+        orchestrator.quoteDeployEverywhere(cfg, _topology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @dev Distinct, ascending, non-zero owner addresses.
+    function _ascendingOwners(uint256 n) internal pure returns (address[] memory out) {
+        out = new address[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = address(uint160(0x70000 + i));
+        }
+    }
+
     function test_quoteDeployEverywhere_sugarRejectsAZeroBaseAsset() public {
         oivConfig.sharesParams.asset = address(0);
         vm.expectRevert(CcipOivDeployer.InvalidSharesChain.selector);

@@ -90,6 +90,11 @@ CONTRACTS = {
     "kpkSharesDeployer": {
         "address": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
         "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",  # deleted from HEAD
+        # Historical: kept so the record of what was verified at this address survives, but excluded
+        # from every active loop. `prepare()` already skipped regenerating it (the source is gone),
+        # while `main()` still submitted the committed artifact on every chain — re-verifying a
+        # retired contract and counting it toward the coverage total.
+        "historical": True,
         "ctor": "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f",
     },
     "ccipOivDeployer": {
@@ -130,6 +135,9 @@ def prepare():
     """Regenerate the standard-JSON inputs with forge (optimizer/viaIR live inside)."""
     os.makedirs(STD_DIR, exist_ok=True)
     for name, meta in CONTRACTS.items():
+        if meta.get("historical"):
+            print("skip %s: historical record, not regenerated" % name)
+            continue
         # Entries whose source no longer exists in this tree are skipped, not attempted. `forge`
         # exits non-zero on an unresolvable identifier, and because the output file is opened for
         # writing FIRST, attempting it truncated the checked-in artifact to zero bytes and then
@@ -209,14 +217,18 @@ def main():
         prepare()
         return 0
 
-    for name in CONTRACTS:
+    active = [n for n, m in CONTRACTS.items() if not m.get("historical")]
+    for name in active:
         if not os.path.exists(std_path(name)):
             print("missing %s -- run with --prepare first" % std_path(name))
             return 1
+    for name, meta in CONTRACTS.items():
+        if meta.get("historical"):
+            print("skip %s: historical record, not re-verified" % name)
 
     verified, pending, problems = [], [], []
     for chain in CHAINS:
-        for name in CONTRACTS:
+        for name in active:
             code, guid = submit(chain, name)
             target = "%s/%s" % (chain, name)
             if code == ALREADY_VERIFIED:

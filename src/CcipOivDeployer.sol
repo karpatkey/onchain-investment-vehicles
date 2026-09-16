@@ -583,6 +583,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         address expected = _assetFor(sharesChains, block.chainid);
 
         if (expected == address(0)) {
+            // Validate the WHOLE config, not just the half this branch deploys. The salt commits to
+            // `feeReceiver`, the fee rates, the TTL and the shares timelock even on a chain that
+            // carries no shares, so `deployStack` accepts a config whose shares half can never
+            // deploy: every later shares-chain call reverts, and correcting the offending field
+            // changes the salt and abandons this stack at addresses nothing can reuse. Same check
+            // `_deployEverywhere` runs before either of its branches.
+            factory.predictOivAddresses(eff, address(this));
+
             KpkOivFactory.StackInstance memory stack = factory.deployStack(factory.oivToStackConfig(eff));
             emit LocalStackDeployed(stack);
             // Populated rather than returned zeroed: a successful deploy that reports nine zero
@@ -667,10 +675,17 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // ascending (a reformatted or regenerated config reorders it easily), a `minDelay` outside
         // the deployer's band, or a canceller that is also a proposer all sail through here, every
         // lane's non-refundable fee is paid, and every destination reverts inside
-        // `KpkTimelockDeployer._validate`. `predictStackAddresses` validates exactly what each
-        // destination's `deployStack` will, and needs no shares mastercopy, so it is the cheapest
-        // complete check for what this function actually sends.
-        factory.predictStackAddresses(factory.oivToStackConfig(eff), address(this));
+        // `KpkTimelockDeployer._validate`.
+        //
+        // `predictOivAddresses`, not `predictStackAddresses`. The narrower check validates exactly
+        // what this function SENDS, which is what an earlier version of this comment argued for —
+        // but the fund's identity is wider than its payload. The effective salt commits to
+        // `feeReceiver`, the fee rates, the TTL and the shares timelock, so dispatching first with
+        // one of those invalid lands every destination stack successfully and leaves a fund whose
+        // shares chains can never complete; correcting the field moves the salt and orphans every
+        // stack just paid for. It costs a wired shares mastercopy on the SOURCE chain, which every
+        // onboarded chain has.
+        factory.predictOivAddresses(eff, address(this));
 
         (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) =
             _price(eff, destSelectors, _sharesChainIds(sharesChains), gasLimit);
