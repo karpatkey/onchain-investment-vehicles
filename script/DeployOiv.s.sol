@@ -34,7 +34,7 @@ contract DeployOiv is OivConfigReader {
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
     ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
     ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
-    address public constant FACTORY = 0x638F770cdC166CdECBABB1E5cbB03080F0d891D1;
+    address public constant FACTORY = 0x5DCAe509E955373FeB8A5f54a906104B0CEEc2A3;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ contract DeployOiv is OivConfigReader {
         if (vm.keyExists(json, ".sharesChains")) {
             require(
                 !_shouldDeployShares(json),
-                "config: this chain IS in .sharesChains - use deployOiv; deployStack here would strand it"
+                "config: this chain IS in .sharesChains - use deployOiv; deployStack here omits the shares token this config asks for (recoverable via KpkOivFactory.deployShares)"
             );
         }
         _deployStack(json);

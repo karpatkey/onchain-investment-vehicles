@@ -67,12 +67,26 @@ the deprecated factory:
 `ccipReceive` accepts a message only when all three hold:
 
 1. `msg.sender` is the configured CCIP Router.
-2. `message.sourceChainSelector` is the configured Ethereum-mainnet selector.
-3. The decoded source sender equals `address(this)` — i.e. the sibling orchestrator on mainnet
-   (same address everywhere).
+2. `message.sourceChainSelector` is **any selector in the orchestrator's registry** (`_isKnownSelector`)
+   — not a single designated source. The registry is seeded at construction with the same chains on
+   every deployment, so every orchestrator accepts every other one.
+3. The decoded source sender equals `address(this)` — the sibling orchestrator on whichever chain
+   initiated, which is the same address everywhere.
 
-Check (3) blocks a forged message from pre-occupying the deterministic CREATE2 addresses for a salt
-and griefing the legitimate deployment. `deployEverywhere` and `dispatchTo` are **permissionless** —
+**Check (3) is the load-bearing one**, and it is worth being precise about why, because check (2)
+looks stronger than it is. Only a contract deployed at *this* address can be the source sender, and
+that address is a deterministic function of the orchestrator's creation code. Check (2) narrows the
+set further, to the chains actually wired — without it, anyone could CREATE2 the same bytecode on any
+CCIP-supported chain and send from there. So (2) is defence in depth over (3), not a substitute for
+it, and loosening (2) from "mainnet only" to "any registered chain" does not weaken the model.
+
+What these guards do **not** buy: they do not stop a third party from pre-occupying a fund's five
+stack addresses. Those are deployed by the permissionless `safeProxyFactory` / `moduleProxyFactory`,
+whose salts are `keccak256(keccak256(initializer), nonce)` — public functions of the config — so
+anyone can land them. That is no longer a denial of service, because `KpkOivFactory` **adopts**
+pristine pre-landed components instead of colliding with them (CREATE2 binds each address to the
+factory's own initializer, so a squatter is forced into it). What the factory refuses is a stack that
+has already been *wired*. `deployEverywhere` and `dispatchTo` are **permissionless** —
 the caller pays the CCIP fees in **native gas** via `msg.value`, so there is no shared balance to
 drain.
 
@@ -227,7 +241,14 @@ source .env && script/deploy-all.sh                # every wired chain, then pri
 
 Or run the per-chain Solidity script directly (`script/chains/Deploy_<Chain>.s.sol`). Both perform,
 in one broadcast: `Empty` preflight → `MultiSendUnwrapper` → `KpkOivFactory` → the `KpkShares` and
-`TimelockController` mastercopies (the latter's initializer claimed immediately, so nobody else can)
+`TimelockController` mastercopies (the latter's initializer claimed immediately — **best effort, not
+a guarantee**: the CREATE2 and the `initialize` are separate broadcast transactions, so a searcher
+can claim the published address in between, after which the claim reverts and a re-run reports
+`[SKIP]`. The post-flight assertions catch a claimer who gave themselves a delay or open execution;
+they do **not** catch one who claimed it inert while holding `PROPOSER_ROLE`. Closing this properly
+means a wrapper whose constructor calls `_disableInitializers()`, which moves the mastercopy address
+and every timelock address with it — a rollout-scale change. Clones are unaffected either way, since
+each has its own storage; what is at stake is a kpk-published address under a stranger's control)
 → `KpkTimelockDeployer` → wire both into the factory → `CcipOivDeployer` + `configure`. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its

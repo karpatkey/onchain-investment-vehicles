@@ -182,6 +182,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice Thrown when a `sharesChains` entry has a zero chain id or a zero asset.
     error InvalidSharesChain();
 
+    /// @notice Thrown when `sharesChains` is empty. A fund with no shares chain is not a fund: every
+    ///         chain would take the stack-only branch, those stacks are wired, and the canonical
+    ///         addresses are then unreachable — `deployLocal` reverts `StackAlreadyDeployedHere` and
+    ///         `promoteShares` cannot reach them either, since it calls the factory with a different
+    ///         caller and salt. The Foundry parser has always refused this; the contract did not, and
+    ///         the contract is the entry point a third party actually reaches.
+    error EmptySharesChains();
+
     /// @notice Thrown when the local chain carries shares but `config.sharesParams.asset` disagrees
     ///         with what the topology names for it. The topology commits to each chain's asset;
     ///         without this check that commitment would be decorative.
@@ -1007,6 +1015,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      ambiguous. Strictly ascending by `chainId` gives one canonical encoding per topology and
     ///      kills duplicates in the same pass.
     function _validateSharesChains(SharesChain[] memory sharesChains) internal pure {
+        // A bare loop accepts a zero-length array by doing nothing, so every one of this function's
+        // call sites — including three public `deployEverywhere` overloads — took `[]` as valid.
+        // None of them has a legitimate empty case: `promoteShares` wants the topology the fund was
+        // born with, and `effectiveSalt`'s own comment says validation exists so the helper cannot
+        // answer for a topology no deployment can use.
+        if (sharesChains.length == 0) revert EmptySharesChains();
+
         uint256 previous;
         for (uint256 i = 0; i < sharesChains.length; i++) {
             uint256 chainId = sharesChains[i].chainId;

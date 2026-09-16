@@ -191,25 +191,10 @@ abstract contract OivConfigReader is Script {
         );
 
         uint256[] memory ids = json.readUintArray(".sharesChains");
-        // EMPTY is not a legal topology, and is far worse than it looks. `keyExists` answers true for
-        // `[]`, so it satisfies every presence check; `_shouldDeployShares` then answers false on
-        // every chain, so each one takes the stack-only branch — including the chain meant to carry
-        // the fund. Those stacks are WIRED, so re-running later with a corrected list reverts
-        // `StackAlreadyDeployedHere`, and the canonical addresses are gone for good. There is no
-        // recovery through `promoteShares` either: it lives on the orchestrator and calls the factory
-        // with a different caller AND a different salt, so it cannot reach a fund deployed this way.
-        require(
-            ids.length != 0,
-            "config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to"
-        );
+        _validateSharesChainIds(ids);
 
         out = new CcipOivDeployer.SharesChain[](ids.length);
         for (uint256 i = 0; i < ids.length; i++) {
-            // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
-            // two orderings would be two funds. Fail here with the offending id rather than letting
-            // the revert surface from inside the orchestrator.
-            require(ids[i] != 0, "config: .sharesChains contains chain id 0");
-            require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
             string memory key = string.concat(".oiv.assetOverrides.", vm.toString(ids[i]));
             // EVERY declared chain must name its own asset. An earlier version allowed a single
             // omission, on the reasoning that the fallback (`.oiv.sharesParams.asset`) belongs to
@@ -230,8 +215,10 @@ abstract contract OivConfigReader is Script {
                     " - every shares chain must name its own asset, even if it repeats another"
                 )
             );
-            address asset =
-                vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
+            // No fallback: the require above already guarantees the key. The ternary that used to
+            // stand here kept `.oiv.sharesParams.asset` as an unreachable second branch, which read
+            // as though the fallback were still live.
+            address asset = json.readAddress(key);
             out[i] = CcipOivDeployer.SharesChain({chainId: ids[i], asset: asset});
         }
     }
@@ -248,10 +235,41 @@ abstract contract OivConfigReader is Script {
     function _shouldDeployShares(string memory json) internal view returns (bool) {
         if (!vm.keyExists(json, ".sharesChains")) return true;
         uint256[] memory ids = json.readUintArray(".sharesChains");
+        // Validate before answering, so that EVERY entry point consulting `.sharesChains` refuses a
+        // malformed topology rather than silently reinterpreting it. Answering "false" for an
+        // unusable list is the dangerous direction: it reads as "this chain carries no shares",
+        // which is a legal and destructive answer. See `_validateSharesChainIds`.
+        _validateSharesChainIds(ids);
         for (uint256 i = 0; i < ids.length; i++) {
             if (ids[i] == block.chainid) return true;
         }
         return false;
+    }
+
+    /// @dev The shape checks every `.sharesChains` reader needs, in one place so they cannot drift.
+    ///      This lived inline in `_buildSharesChains` and therefore guarded only the CCIP path, while
+    ///      `DeployOiv.deploy` — which reaches `.sharesChains` through `_shouldDeployShares` — took
+    ///      the identical input unchecked and answered "false" on every chain. Same file, same list,
+    ///      opposite outcomes, and the unguarded path was the recoverable-looking one.
+    function _validateSharesChainIds(uint256[] memory ids) internal pure {
+        // EMPTY is not a legal topology, and is far worse than it looks. `keyExists` answers true for
+        // `[]`, so it satisfies every presence check; `_shouldDeployShares` then answers false on
+        // every chain, so each one takes the stack-only branch — including the chain meant to carry
+        // the fund. Those stacks are WIRED, so re-running later with a corrected list reverts
+        // `StackAlreadyDeployedHere`, and the canonical addresses are gone for good. There is no
+        // recovery through `promoteShares` either: it lives on the orchestrator and calls the factory
+        // with a different caller AND a different salt, so it cannot reach a fund deployed this way.
+        require(
+            ids.length != 0,
+            "config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to"
+        );
+        for (uint256 i = 0; i < ids.length; i++) {
+            // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so
+            // two orderings would be two funds. Fail here with the offending id rather than letting
+            // the revert surface from inside the orchestrator.
+            require(ids[i] != 0, "config: .sharesChains contains chain id 0");
+            require(i == 0 || ids[i] > ids[i - 1], "config: .sharesChains must be strictly ascending by chain id");
+        }
     }
 
     function _readAdditionalAssets(string memory json)

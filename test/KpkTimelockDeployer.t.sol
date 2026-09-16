@@ -549,8 +549,35 @@ contract KpkTimelockDeployerTest is Test {
     /// @notice And a chain where the modifier does not exist must answer false rather than reverting,
     ///         since the function documents itself as safe to sweep across every chain a fund may or
     ///         may not live on.
-    function test_isExecTimelocked_isFalseWhereTheModifierDoesNotExist() public view {
-        assertFalse(kit.isExecTimelocked(address(0xdead), address(0xbeef)), "absent modifier must not revert");
+    /// @dev    The timelock argument must have CODE for this to test what it claims. It previously
+    ///         passed a bare `address(0xbeef)`, which the codeless-timelock guard now short-circuits
+    ///         first — leaving the test green while no longer exercising the absent-modifier branch
+    ///         at all. Using a real deployment keeps the two guards independently pinned.
+    function test_isExecTimelocked_isFalseWhereTheModifierDoesNotExist() public {
+        MockOwnable liveTimelock = new MockOwnable(address(this));
+        assertFalse(kit.isExecTimelocked(address(0xdead), address(liveTimelock)), "absent modifier must not revert");
+    }
+
+    /// @notice A modifier whose ownership was transferred to a CODELESS address is permanently
+    ///         unownable — nothing there can ever call `transferOwnership` back. Reporting it as
+    ///         correctly timelocked is the same inversion the zero-address check exists to prevent,
+    ///         one step removed: the sweep exists to find funds that are NOT delay-governed, and this
+    ///         is the worst case of that, since the governance is not merely missing but unrecoverable.
+    ///
+    ///         Unreachable through `KpkOivFactory`, whose timelock is always a `Clones` deployment
+    ///         and therefore always has code. This guards the standalone and adopted paths, where the
+    ///         modifier's owner has a history this contract did not create.
+    function test_isExecTimelocked_isFalseForACodelessTimelock() public {
+        address codeless = address(0xBEEF);
+        assertEq(codeless.code.length, 0, "precondition: the owner must have no code");
+
+        MockOwnable strandedModifier = new MockOwnable(codeless);
+        assertEq(strandedModifier.owner(), codeless, "precondition: ownership really was transferred there");
+
+        assertFalse(
+            kit.isExecTimelocked(address(strandedModifier), codeless),
+            "a modifier owned by a codeless address is stranded, not timelocked"
+        );
     }
 
     /// @notice Deploying a timelock for a `governed` address with no code produces a real,
