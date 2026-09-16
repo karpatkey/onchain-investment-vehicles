@@ -25,10 +25,10 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x5DCAe509E955373FeB8A5f54a906104B0CEEc2A3` |
+| `KpkOivFactory` | `0x7ed2feE9993D932Aa1395C8Dd8E83e0a4a3CcB86` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xDD76A346eCa917C524F11b8fa15F5E7DfCD7c5E0` |
+| `CcipOivDeployer` (orchestrator) | `0xf7C3f364e116536Ee663ba27b40Ab49fe9DD4a94` |
 | `KpkTimelockDeployer` | `0x9Cf6169440CFeBCAe47c5e615Df950d93a2e3A83` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
@@ -120,7 +120,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then factory + both mastercopies + `KpkTimelockDeployer` via the canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` and `setTimelockDeployer`, then `transferOwnership` to the OIV Safe. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain** — it never wires `timelockDeployer`, and by the time it can run, `_runChain` has already set every value it knows how to set and moved ownership to `finalOwner`, putting the `onlyOwner` setters out of reach. It survives as a **verifier**: run it against an onboarded chain (no `--broadcast`) and it asserts the factory's owner, canonical `timelockDeployer` and expected `kpkSharesMastercopy`. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
+The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then factory + both mastercopies + `KpkTimelockDeployer` via the canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` and `setTimelockDeployer` — both **write-once**, so onboarding gets exactly one attempt per chain and a mistake needs a new factory generation rather than a correcting transaction — then `transferOwnership` to the OIV Safe. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain** — it never wires `timelockDeployer`, and by the time it can run, `_runChain` has already set every value it knows how to set and moved ownership to `finalOwner`, putting the `onlyOwner` setters out of reach. It survives as a **verifier**: run it against an onboarded chain (no `--broadcast`) and it asserts the factory's owner, canonical `timelockDeployer` and expected `kpkSharesMastercopy`. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 
