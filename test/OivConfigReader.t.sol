@@ -281,12 +281,20 @@ contract OivConfigReaderTest is Test {
         reader.sharesChains(bad);
     }
 
-    /// @notice `deployStack` on a chain the topology DECLARES strands that chain permanently, and it
-    ///         is the more damaging direction of the two. It lands a fully WIRED stack at the same
-    ///         five addresses `deployOiv` would use, after which both recovery routes are closed at
-    ///         once: `deployLocal` reverts `StackAlreadyDeployedHere` because the stack is wired, and
-    ///         `promoteShares` reverts `SharesChainAlreadyDeclared` because the chain is in the
-    ///         topology. The only way back is a new salt and a full re-rollout.
+    /// @notice `deployStack` on a chain the topology DECLARES omits the shares token that config
+    ///         asks for, and the guard exists to catch the mistake at the point it is made.
+    /// @dev    Be accurate about the cost, because this NatSpec previously preserved the exact false
+    ///         claim the production revert string was corrected to remove — that the chain is
+    ///         stranded permanently and only a new salt recovers it. On THIS script's direct flow
+    ///         (EOA caller, raw `config.salt`) it is recoverable: `KpkOivFactory.deployShares(config)`
+    ///         adds the shares token to the wired stack in one transaction, at the canonical
+    ///         addresses. An EOA-run `deployStack` cannot strand an ORCHESTRATOR-deployed fund at all,
+    ///         because those salts mix `msg.sender` and it never reaches those addresses.
+    ///
+    ///         The unrecoverable pairing — `deployLocal` blocked by `StackAlreadyDeployedHere` and
+    ///         `promoteShares` by `SharesChainAlreadyDeclared` — needs the ORCHESTRATOR to have wired
+    ///         the stack, which this script never does. A test that documents the failure it guards
+    ///         more direly than the failure is will outlive the message it was written beside.
     function test_deployStack_refusesAChainInsideTheTopology() public {
         DeployOiv script = new DeployOiv();
 
