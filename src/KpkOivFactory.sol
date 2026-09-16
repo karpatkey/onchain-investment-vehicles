@@ -434,24 +434,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param kpkSharesProxy    The removed fund's KpkShares proxy (its registry key).
     event FundUnregistered(uint256 indexed registeredFundId, address indexed kpkSharesProxy);
 
-    /// @notice Emitted when the owner updates the Safe proxy factory address.
-    event SafeProxyFactoryUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the Safe singleton address.
-    event SafeSingletonUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the Safe module setup address.
-    event SafeModuleSetupUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the Safe fallback handler address.
-    event SafeFallbackHandlerUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the Zodiac module proxy factory address.
-    event ModuleProxyFactoryUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the Zodiac Roles Modifier mastercopy address.
-    event RolesModifierMastercopyUpdated(address indexed newAddress);
-
     /// @notice Emitted when the owner updates the KpkShares mastercopy address.
     event KpkSharesMastercopyUpdated(address indexed newAddress);
 
@@ -518,6 +500,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         of the same name, for the same reason: the value decides what every future fund on
     ///         this chain delegates to.
     error InvalidMastercopy();
+
+    /// @notice Thrown when an infrastructure address is set a second time. These are write-once
+    ///         because `deployShares` re-derives an existing fund's stack from the factory's CURRENT
+    ///         infrastructure: rotating any of them makes `_predictStack` point elsewhere and the
+    ///         promote-later path revert `StackNotDeployed`, while rotating `kpkSharesMastercopy`
+    ///         lands a promoted proxy at a different address from the fund's other shares chains.
+    ///         Every fund deployed before such a rotation loses its promotion route silently, and the
+    ///         trigger is an ordinary bugfix rotation rather than owner compromise.
+    ///
+    ///         The cost of closing it this way is real and deliberate: a bad mastercopy can no longer
+    ///         be swapped in place, and needs a new factory generation and a re-rollout. That is the
+    ///         accepted trade — a rotation that silently breaks existing funds is worse than one that
+    ///         is loudly impossible. Pinning infrastructure per stack would keep both properties, and
+    ///         did not fit the factory's EIP-170 budget when this was decided.
+    error InfrastructureAlreadySet();
 
     /// @notice Thrown when `deployShares` is called for a fund whose operational stack does not exist
     ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
@@ -686,56 +683,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _timelockDeployer New address. Must not be zero.
     function setTimelockDeployer(address _timelockDeployer) external onlyOwner {
         if (_timelockDeployer == address(0)) revert ZeroAddress();
+        // Write-once. See `InfrastructureAlreadySet`. Onboarding legitimately sets this after
+        // construction (`OivChainDeploy._runChain`), so the latch is on the first non-zero value
+        // rather than on construction.
+        if (timelockDeployer != address(0)) revert InfrastructureAlreadySet();
         timelockDeployer = _timelockDeployer;
         emit TimelockDeployerUpdated(_timelockDeployer);
-    }
-
-    /// @notice Updates the Gnosis Safe proxy factory address.
-    /// @param _safeProxyFactory New address. Must not be zero.
-    function setSafeProxyFactory(address _safeProxyFactory) external onlyOwner {
-        if (_safeProxyFactory == address(0)) revert ZeroAddress();
-        safeProxyFactory = _safeProxyFactory;
-        emit SafeProxyFactoryUpdated(_safeProxyFactory);
-    }
-
-    /// @notice Updates the Gnosis Safe singleton address.
-    /// @param _safeSingleton New address. Must not be zero.
-    function setSafeSingleton(address _safeSingleton) external onlyOwner {
-        if (_safeSingleton == address(0)) revert ZeroAddress();
-        safeSingleton = _safeSingleton;
-        emit SafeSingletonUpdated(_safeSingleton);
-    }
-
-    /// @notice Updates the Gnosis SafeModuleSetup address.
-    /// @param _safeModuleSetup New address. Must not be zero.
-    function setSafeModuleSetup(address _safeModuleSetup) external onlyOwner {
-        if (_safeModuleSetup == address(0)) revert ZeroAddress();
-        safeModuleSetup = _safeModuleSetup;
-        emit SafeModuleSetupUpdated(_safeModuleSetup);
-    }
-
-    /// @notice Updates the Safe fallback handler address.
-    /// @param _safeFallbackHandler New address. Must not be zero.
-    function setSafeFallbackHandler(address _safeFallbackHandler) external onlyOwner {
-        if (_safeFallbackHandler == address(0)) revert ZeroAddress();
-        safeFallbackHandler = _safeFallbackHandler;
-        emit SafeFallbackHandlerUpdated(_safeFallbackHandler);
-    }
-
-    /// @notice Updates the Zodiac ModuleProxyFactory address.
-    /// @param _moduleProxyFactory New address. Must not be zero.
-    function setModuleProxyFactory(address _moduleProxyFactory) external onlyOwner {
-        if (_moduleProxyFactory == address(0)) revert ZeroAddress();
-        moduleProxyFactory = _moduleProxyFactory;
-        emit ModuleProxyFactoryUpdated(_moduleProxyFactory);
-    }
-
-    /// @notice Updates the Zodiac Roles Modifier mastercopy address.
-    /// @param _rolesModifierMastercopy New address. Must not be zero.
-    function setRolesModifierMastercopy(address _rolesModifierMastercopy) external onlyOwner {
-        if (_rolesModifierMastercopy == address(0)) revert ZeroAddress();
-        rolesModifierMastercopy = _rolesModifierMastercopy;
-        emit RolesModifierMastercopyUpdated(_rolesModifierMastercopy);
     }
 
     /// @notice Updates the KpkShares mastercopy address.
@@ -748,6 +701,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // constructor already guards its own mastercopy this way (`InvalidMastercopy`); the same
         // hazard deserves the same check here.
         if (_kpkSharesMastercopy.code.length == 0) revert InvalidMastercopy();
+        // Write-once. See `InfrastructureAlreadySet`. This is the setter with the worse failure of
+        // the two: rotating it does not merely block promotion, it lands a promoted proxy at an
+        // address that differs from the fund's existing shares chains — breaking the one invariant
+        // the cross-chain design exists to provide.
+        if (kpkSharesMastercopy != address(0)) revert InfrastructureAlreadySet();
         kpkSharesMastercopy = _kpkSharesMastercopy;
         emit KpkSharesMastercopyUpdated(_kpkSharesMastercopy);
     }

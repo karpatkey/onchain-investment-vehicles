@@ -239,7 +239,7 @@ Fixed at factory deployment and apply to every stack deployed through it.
 | `safeFallbackHandler`      | Safe fallback handler set on every deployed Safe         |
 | `moduleProxyFactory`       | Zodiac `ModuleProxyFactory` — deploys Roles Modifier proxies |
 | `rolesModifierMastercopy`  | Zodiac Roles Modifier mastercopy all modifiers point to  |
-| `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set via `setKpkSharesMastercopy`, which rejects zero and codeless values |
+| `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set via `setKpkSharesMastercopy`, which rejects zero and codeless values and is **write-once** (`InfrastructureAlreadySet`). Rotation would land a promoted proxy at a different address from the fund's existing shares chains, silently, for every fund deployed beforehand; a bad mastercopy needs a new factory generation instead |
 
 All infrastructure addresses are owner-updatable after deployment via the corresponding `setXxx` setter functions.
 

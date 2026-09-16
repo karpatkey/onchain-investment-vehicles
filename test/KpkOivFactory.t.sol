@@ -1387,12 +1387,87 @@ contract KpkOivFactoryTest is OivTestConstants {
         factory.setKpkSharesMastercopy(mastercopy);
 
         // And the positive direction, which had no coverage at all: the owner can set it, and the
-        // event fires.
-        vm.expectEmit(true, false, false, true, address(factory));
+        // event fires. Run against an UNWIRED factory, because the setter is now write-once and the
+        // shared fixture already has a mastercopy from construction.
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+
+        vm.expectEmit(true, false, false, true, address(unwired));
         emit KpkOivFactory.KpkSharesMastercopyUpdated(mastercopy);
         vm.prank(factoryOwner);
-        factory.setKpkSharesMastercopy(mastercopy);
-        assertEq(factory.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
+        unwired.setKpkSharesMastercopy(mastercopy);
+        assertEq(unwired.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
+    }
+
+    /// @notice The infrastructure setters are WRITE-ONCE, and this is the fund-breaking direction:
+    ///         `deployShares` re-derives an existing fund's stack from the factory's CURRENT
+    ///         infrastructure, so rotating the mastercopy lands a promoted proxy at an address that
+    ///         differs from the fund's other shares chains — breaking the single invariant the
+    ///         cross-chain design exists to provide, for every fund deployed before the rotation,
+    ///         with no revert at rotation time to warn anyone.
+    ///
+    ///         The accepted cost is that a bad mastercopy now needs a new factory generation rather
+    ///         than an in-place swap. A rotation that silently breaks existing funds is worse than
+    ///         one that is loudly impossible.
+    function test_setKpkSharesMastercopy_isWriteOnce() public {
+        address first = address(new KpkShares());
+        address second = address(new KpkShares());
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+
+        vm.prank(factoryOwner);
+        unwired.setKpkSharesMastercopy(first);
+        assertEq(unwired.kpkSharesMastercopy(), first, "first write must land");
+
+        vm.prank(factoryOwner);
+        vm.expectRevert(KpkOivFactory.InfrastructureAlreadySet.selector);
+        unwired.setKpkSharesMastercopy(second);
+
+        // The owner cannot rotate it even to a perfectly valid mastercopy, which is the point.
+        assertEq(unwired.kpkSharesMastercopy(), first, "the original must survive a rotation attempt");
+    }
+
+    /// @notice Same latch on the timelock deployer. Rotating this one blocks promotion outright
+    ///         (`_predictStack` points elsewhere, so `deployShares` reverts `StackNotDeployed`)
+    ///         rather than misplacing the proxy — still silent, still unrecoverable for funds that
+    ///         already exist.
+    function test_setTimelockDeployer_isWriteOnce() public {
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+
+        vm.prank(factoryOwner);
+        unwired.setTimelockDeployer(makeAddr("firstDeployer"));
+
+        vm.prank(factoryOwner);
+        vm.expectRevert(KpkOivFactory.InfrastructureAlreadySet.selector);
+        unwired.setTimelockDeployer(makeAddr("secondDeployer"));
     }
 
     /// @notice `onlyOwner` on this setter had NO coverage — deleting the modifier left the whole
@@ -1413,11 +1488,24 @@ contract KpkOivFactoryTest is OivTestConstants {
 
     function test_setTimelockDeployer_emitsEvent() public {
         address newDeployer = makeAddr("newTimelockDeployer");
-        vm.expectEmit(true, true, true, true, address(factory));
+        // Unwired, because the setter is write-once and the shared fixture is already wired.
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+
+        vm.expectEmit(true, true, true, true, address(unwired));
         emit KpkOivFactory.TimelockDeployerUpdated(newDeployer);
         vm.prank(factoryOwner);
-        factory.setTimelockDeployer(newDeployer);
-        assertEq(factory.timelockDeployer(), newDeployer, "setter must take effect");
+        unwired.setTimelockDeployer(newDeployer);
+        assertEq(unwired.timelockDeployer(), newDeployer, "setter must take effect");
     }
 
     function test_deployOiv_revertsWhenTimelockConfiguredButDeployerUnset() public {
