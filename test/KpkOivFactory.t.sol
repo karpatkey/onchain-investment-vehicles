@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {console} from "forge-std/console.sol";
+import {CcipOivDeployer} from "../src/CcipOivDeployer.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkShares} from "src/kpkShares.sol";
@@ -2020,8 +2021,17 @@ contract KpkOivFactoryTest is OivTestConstants {
 
     /// @dev Measures a timelocked `deployStack` with `n` proposers and `n` cancellers.
     function _timelockedStackGas(uint256 n, uint256 salt) internal returns (uint256) {
+        return _timelockedStackGas(n, salt, 0);
+    }
+
+    /// @dev `owners` == 0 keeps the fixture's default manager owner set.
+    function _timelockedStackGas(uint256 n, uint256 salt, uint256 owners) internal returns (uint256) {
         KpkOivFactory.StackConfig memory cfg = factory.oivToStackConfig(oivConfig);
         cfg.salt = salt;
+        if (owners != 0) {
+            cfg.managerSafe.owners = _ascending(owners, 0x50000);
+            cfg.managerSafe.threshold = 1;
+        }
         cfg.execTimelock =
             TimelockParams({minDelay: 2 days, proposers: _ascending(n, 0x1000), cancellers: _ascending(n, 0x9000)});
 
@@ -2046,6 +2056,32 @@ contract KpkOivFactoryTest is OivTestConstants {
         uint256 max = timelockDeployer.MAX_ROLE_MEMBERS();
         uint256 spent = _timelockedStackGas(max, 777);
         assertLt(spent, 3_000_000, "the largest role set MAX_ROLE_MEMBERS permits must still fit the 3M cap");
+    }
+
+    /// @notice The test above varies only the TIMELOCK arrays, so it measured the worst permitted
+    ///         timelock rather than the worst permitted config — while `managerSafe.owners` was
+    ///         unbounded and `_validateManagerOwners` is O(n^2). Measured on the worst timelock,
+    ///         `deployStack` alone costs 2,778,274 at 10 owners, 2,920,639 at 15 and 3,072,264 at 20,
+    ///         and the destination pays ~80k more for the `ccipReceive` frame — so a valid config
+    ///         with ~15 owners spent every lane's non-refundable fee and then ran out of gas on
+    ///         arrival. `CcipOivDeployer.MAX_CCIP_MANAGER_OWNERS` is what makes this bounded.
+    ///
+    ///         Asserted against 2,920,000 rather than 3,000,000 to keep the ~80k receive frame inside
+    ///         the cap, and measured at BOTH maxima at once because that is the config a caller can
+    ///         actually submit.
+    function test_deployStack_worstPermittedConfigStillFitsTheCcipGasCap() public {
+        uint256 maxRole = timelockDeployer.MAX_ROLE_MEMBERS();
+        // Read off a real orchestrator rather than duplicating the number here, so the bound and
+        // the gas proof that justifies it cannot drift apart.
+        CcipOivDeployer orch = new CcipOivDeployer(address(this), address(factory));
+        uint256 maxOwners = orch.MAX_CCIP_MANAGER_OWNERS();
+
+        uint256 spent = _timelockedStackGas(maxRole, 0xC0FFEE, maxOwners);
+        assertLt(
+            spent,
+            2_920_000,
+            "worst config both bounds permit must leave room for the ccipReceive frame inside the 3M cap"
+        );
     }
 
     /// @notice The setter decides what every future fund on this chain delegates to, so a codeless

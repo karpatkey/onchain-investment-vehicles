@@ -241,7 +241,16 @@ Fixed at factory deployment and apply to every stack deployed through it.
 | `rolesModifierMastercopy`  | Zodiac Roles Modifier mastercopy all modifiers point to  |
 | `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set via `setKpkSharesMastercopy`, which rejects zero and codeless values and is **write-once** (`InfrastructureAlreadySet`). Rotation would land a promoted proxy at a different address from the fund's existing shares chains, silently, for every fund deployed beforehand; a bad mastercopy needs a new factory generation instead |
 
-All infrastructure addresses are owner-updatable after deployment via the corresponding `setXxx` setter functions.
+Infrastructure addresses are **not** owner-updatable. The six Safe/Zodiac addresses
+(`safeProxyFactory`, `safeSingleton`, `safeModuleSetup`, `safeFallbackHandler`, `moduleProxyFactory`,
+`rolesModifierMastercopy`) are fixed at construction and have no setters at all — they were removed,
+being constructor-set, zero-rejected and therefore permanently locked by the write-once rule anyway.
+Only `kpkSharesMastercopy` and `timelockDeployer` have setters, each usable **once**, because
+onboarding wires them after construction; a second call reverts `InfrastructureAlreadySet`.
+
+The reason is `deployShares`: it re-derives an existing fund's stack from the factory's *current*
+infrastructure, so any rotation would silently break the promote-later path for every fund deployed
+beforehand. A bad mastercopy therefore needs a new factory generation, not a correcting transaction.
 
 ---
 

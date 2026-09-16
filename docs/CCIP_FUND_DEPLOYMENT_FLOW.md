@@ -46,8 +46,9 @@ factory sees one identical `msg.sender` and the fund lands at the same Avatar/Ma
 addresses across all chains.
 
 A destination that is itself in `sharesChains` is **excluded from this fan-out** — it is reserved for
-its own `deployEverywhere`/`promoteShares` call, because only the chain that carries shares can
-deploy them. Sending it a stack would wire that stack and permanently close both routes.
+its own `deployLocal(config, sharesChains)`, because only the chain that carries shares can deploy
+them. Sending it a stack would wire that stack and permanently take the addresses its own shares
+deployment needs. (Not `promoteShares`, which refuses a declared chain; see below.)
 
 ## The one origin transaction → asynchronous destination delivery
 

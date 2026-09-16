@@ -324,16 +324,35 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertEq(inst.kpkSharesProxy, address(0), "and the zero shares fields are the branch signal");
     }
 
-    /// @dev A selector shared by two chain ids used to desync `_isKnownSelector`: removing one of
-    ///      them cleared the flag while the other still advertised that selector, so a live
-    ///      destination silently rejected every inbound stack.
-    function test_removeChainSelector_keepsASharedSelectorTrusted() public {
-        orchestrator.setChainSelector(4242, BASE_SELECTOR); // same selector as Base, deliberately
-        orchestrator.removeChainSelector(4242);
+    /// @dev Two chain ids sharing one selector is now UNCONSTRUCTIBLE, so the desync this test was
+    ///      written for cannot arise. It used to be merely tolerated: `_forgetSelectorIfUnused` kept
+    ///      the flag correct when one of the pair was removed. Tolerating it left a worse bug
+    ///      untouched — `_stackSelectors` emits one destination per CHAIN ID, so a shared selector
+    ///      made a fan-out pay for two deliveries to the same chain, the second reverting
+    ///      `StackAlreadyDeployedHere` with its fee already spent.
+    ///
+    ///      `_forgetSelectorIfUnused` is deliberately kept as defence in depth rather than deleted
+    ///      as now-unreachable.
+    function test_setChainSelector_refusesASelectorAnotherChainHolds() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.SelectorAlreadyMapped.selector, BASE_SELECTOR, BASE_CHAIN_ID)
+        );
+        orchestrator.setChainSelector(4242, BASE_SELECTOR);
+    }
 
-        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "Base is still registered");
-        // Base must still be accepted as a source: a topology naming Optimism keeps this chain a
-        // legitimate stack destination, so delivery should succeed rather than revert InvalidSourceChain.
+    /// @dev The operational consequence, and the reason uniqueness is workable: moving a selector to
+    ///      a different chain id is still possible, it just has to be done in the order that never
+    ///      leaves two ids holding it. Re-registering the same id with its OWN selector stays a no-op
+    ///      rather than a revert, which matters because the constructor re-seeds on every deploy.
+    function test_setChainSelector_allowsAMoveAfterTheOldHolderIsRemoved() public {
+        orchestrator.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR); // idempotent re-seed of itself
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "re-seeding itself is a no-op");
+
+        orchestrator.removeChainSelector(BASE_CHAIN_ID);
+        orchestrator.setChainSelector(4242, BASE_SELECTOR);
+        assertEq(orchestrator.chainSelectorOf(4242), BASE_SELECTOR, "the selector moves once its holder is gone");
+
+        // And the moved selector is trusted as a source at its new home.
         CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
         remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
         Client.Any2EVMMessage memory message = _messageFor(remote);
