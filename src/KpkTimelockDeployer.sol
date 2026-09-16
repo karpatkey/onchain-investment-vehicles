@@ -325,7 +325,15 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         // `execRolesModifier` with no code makes the call below revert rather than answer, which
         // breaks the cross-chain sweep this function documents itself as being for: a fund is
         // routinely stack-only on some chains and absent from others.
-        if (timelock == address(0) || execRolesModifier.code.length == 0) return false;
+        //
+        // `timelock` with no code is the same false positive wearing a different hat. Ownership
+        // transferred to a codeless address leaves the modifier permanently unownable, and without
+        // this check the sweep reports that fund as correctly timelocked — the exact inversion the
+        // zero check above exists to prevent. Unreachable through `KpkOivFactory`, whose owner is
+        // always a `Clones` deployment and therefore always has code; this guards the standalone and
+        // adopted paths, where the modifier's owner has a history this contract did not create.
+        if (timelock == address(0) || timelock.code.length == 0) return false;
+        if (execRolesModifier.code.length == 0) return false;
         return IRoles(execRolesModifier).owner() == timelock;
     }
 

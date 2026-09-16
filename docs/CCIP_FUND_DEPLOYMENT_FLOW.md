@@ -1,97 +1,143 @@
 # OIV Fund Deployment Flow (one transaction, multichain via CCIP)
 
-How a **new OIV fund** is deployed to mainnet **and** fanned out to sidechains from a **single
-mainnet transaction**, using the already-deployed `CcipOivDeployer`. For the direct per-chain path,
-see [FUND_DEPLOYMENT_FLOW.md](FUND_DEPLOYMENT_FLOW.md); for the full design, security model, and
+How a **new OIV fund** is deployed on the chain you call from **and** fanned out to every other
+chain, from a **single transaction on any wired chain**, using the already-deployed
+`CcipOivDeployer`. For the direct per-chain path, see
+[FUND_DEPLOYMENT_FLOW.md](FUND_DEPLOYMENT_FLOW.md); for the full design, security model, and
 supported-network list, see [CCIP_CROSS_CHAIN_DEPLOY.md](CCIP_CROSS_CHAIN_DEPLOY.md).
 
 > **Assumed already deployed & configured** on every target chain (all at the same address):
 > `KpkOivFactory`, the `KpkShares` mastercopy, `KpkTimelockDeployer` and its `TimelockController`
 > mastercopy, the `Empty` contract, and `CcipOivDeployer` — the latter `configure`d with each chain's
-> CCIP router (the LINK token is optional). There is no mainnet chain selector to configure any more:
-> the `chainId → selector` registry is baked in at construction, and any wired chain can originate a
-> fan-out. CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
+> CCIP router (the LINK token is optional). There is no designated source chain: the
+> `chainId → selector` registry is baked in at construction, and **any wired chain can originate a
+> fan-out**. CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
 > pre-funding is required. This doc is only about deploying a **fund** through them.
+
+## Two things that are no longer true of the old mainnet-origin flow
+
+If you have read an earlier version of this document, both of these changed:
+
+1. **The origin is whichever wired chain you call from.** `SOURCE_CHAIN_ID` and `NotSourceChain` are
+   gone, and `ccipReceive` accepts any selector in the registry — the load-bearing guard is that the
+   source sender equals `address(this)`.
+2. **Shares are no longer mainnet-only.** A fund declares a `sharesChains` **topology**: every chain
+   in it gets the full fund (stack + `kpkShares`), every other wired chain gets the operational stack
+   alone. The topology is hashed into the salt, so it must be passed identically everywhere and
+   cannot be changed afterwards without moving every address.
 
 ## End-to-end overview
 
 ```mermaid
 flowchart LR
-    Op["Operator (caller)"] -->|"deployEverywhere{value}(config, destChainIds, gasLimit)"| Orc["CcipOivDeployer (mainnet)"]
-    Orc -->|"factory.deployOiv(config)"| F["KpkOivFactory (mainnet)"]
-    F --> Fund["Full OIV on mainnet<br/>(stack + kpkShares)"]
-    Orc -->|"ccipSend × N (native fee)"| R["CCIP Router (mainnet)"]
-    R -->|"CCIP network (~15 min)"| R2["CCIP Router (sidechain)"]
-    R2 -->|"ccipReceive"| Orc2["CcipOivDeployer (sidechain,<br/>same address)"]
-    Orc2 -->|"factory.deployStack(stackConfig)"| F2["KpkOivFactory (sidechain)"]
-    F2 --> Stack["Operational stack<br/>(same addresses as mainnet)"]
+    Op["Operator (caller)"] -->|"deployEverywhere{value}(config, sharesChains, destChainIds, gasLimit)"| Orc["CcipOivDeployer (origin chain,<br/>any wired chain)"]
+    Orc -->|"factory.deployOiv(config)"| F["KpkOivFactory (origin)"]
+    F --> Fund["Full OIV on the origin<br/>(stack + kpkShares)"]
+    Orc -->|"ccipSend × N (native fee)"| R["CCIP Router (origin)"]
+    R -->|"CCIP network (~15 min)"| R2["CCIP Router (destination)"]
+    R2 -->|"ccipReceive"| Orc2["CcipOivDeployer (destination,<br/>same address)"]
+    Orc2 -->|"factory.deployStack(stackConfig)"| F2["KpkOivFactory (destination)"]
+    F2 --> Stack["Operational stack<br/>(same addresses as the origin)"]
 ```
 
 The orchestrator is the **uniform factory caller** on every chain (same address everywhere), so the
 factory sees one identical `msg.sender` and the fund lands at the same Avatar/Manager/Roles
 addresses across all chains.
 
-## The one mainnet transaction → asynchronous sidechain delivery
+A destination that is itself in `sharesChains` is **excluded from this fan-out** — it is reserved for
+its own `deployEverywhere`/`promoteShares` call, because only the chain that carries shares can
+deploy them. Sending it a stack would wire that stack and permanently close both routes.
+
+## The one origin transaction → asynchronous destination delivery
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Op as Operator (caller)
-    participant O as CcipOivDeployer (mainnet)
-    participant F as KpkOivFactory (mainnet)
-    participant R as CCIP Router (mainnet)
+    participant O as CcipOivDeployer (origin)
+    participant F as KpkOivFactory (origin)
+    participant R as CCIP Router (origin)
     participant N as CCIP network
-    participant O2 as CcipOivDeployer (sidechain)
-    participant F2 as KpkOivFactory (sidechain)
+    participant O2 as CcipOivDeployer (destination)
+    participant F2 as KpkOivFactory (destination)
 
-    Op->>O: deployEverywhere{value}(config, destChainIds, gasLimit)
-    Note over O: require configured + non-empty destinations
-    Note over O: payload = abi.encode(factory.oivToStackConfig(config)),<br/>sum getFee over destinations, require msg.value >= total
+    Op->>O: deployEverywhere{value}(config, sharesChains, destChainIds, gasLimit)
+    Note over O: require onlyWiredChain + non-empty, ascending sharesChains<br/>+ no duplicate destinations
+    Note over O: salt = keccak256(config-with-zeroed-asset, sharesChains)<br/>pre-check via factory.predictStackAddresses BEFORE pricing
+    Note over O: payload = abi.encode(stackConfig, sharesChainIds),<br/>sum getFee over destinations, require msg.value >= total
     O->>F: deployOiv(config)
-    F-->>O: full OIV deployed on mainnet (emit LocalOivDeployed)
-    loop each destination chain
+    F-->>O: full OIV deployed on the origin (emit LocalOivDeployed)
+    loop each destination chain (shares chains excluded)
         O->>R: ccipSend{value: fee}(destSelector, message) [receiver = this address]
         R-->>O: messageId (emit StackDispatched)
     end
     O-->>Op: OivInstance + messageIds (surplus refunded, tx confirmed)
 
-    Note over R,N: ~15 min — Ethereum finality + CCIP delivery
+    Note over R,N: ~15 min — source finality + CCIP delivery
     N->>O2: ccipReceive(message)
-    Note over O2: require msg.sender == router,<br/>sourceChainSelector == mainnet,<br/>decoded sender == address(this)
+    Note over O2: require msg.sender == router,<br/>sourceChainSelector ∈ registry,<br/>decoded sender == address(this)
     O2->>F2: deployStack(stackConfig)
     F2-->>O2: stack deployed at the fund's addresses (emit StackReceived)
 ```
 
 **Key points**
 
-- The mainnet transaction returns once the messages are **dispatched**; each sidechain stack
+- The origin transaction returns once the messages are **dispatched**; each destination stack
   materialises later, after source finality.
 - CCIP fees are paid in **native gas from the caller's `msg.value`** — size it up front with
-  `quoteDeployEverywhere(config, destChainIds, gasLimit)` (or the no-array
-  `quoteDeployEverywhere(config, gasLimit)` for all configured chains). The aggregate fee is checked
-  once against `msg.value`, each message pays its own fee in native, and any surplus is refunded.
-- `ccipReceive` deploys only the **operational stack** (`deployStack`); the `kpkShares` token exists
-  on mainnet only.
+  `quoteDeployEverywhere(config, sharesChains, destChainIds, gasLimit)` (or the no-array
+  `quoteDeployEverywhere(config, sharesChains, gasLimit)` for all wired chains, or the single-argument
+  `quoteDeployEverywhere(config, gasLimit)` sugar for "this chain carries the shares"). The aggregate
+  fee is checked once against `msg.value`, each message pays its own fee in native, and any surplus
+  is refunded.
+- `ccipReceive` deploys only the **operational stack** (`deployStack`). The `kpkShares` token exists
+  on every chain named in `sharesChains` — each deployed by its own transaction on that chain, never
+  by CCIP.
+
+## Adding shares to a chain later
+
+Two different situations, and they use different calls — mixing them up is the easy mistake:
+
+**A chain that IS in `sharesChains` but has not deployed yet.** It gets its shares by running its own
+`deployEverywhere` (or the direct `deployOiv`) **on that chain**. Nothing promotes it, and no other
+chain's fan-out will send it a stack — it is deliberately excluded, because a wired stack there would
+close both routes at once (`deployLocal` reverts `StackAlreadyDeployedHere`, and `promoteShares`
+refuses a declared chain).
+
+**A chain that is NOT in `sharesChains` at all.** This is what `promoteShares(config, sharesChains)`
+is for — the escape hatch for the one thing the salt-bound topology costs, since a fund otherwise
+could not gain a shares chain after birth. Call it **on the chain being promoted**, passing the
+fund's **original** topology so the salt still resolves to its existing addresses. Preconditions:
+
+- The caller is `config.admin` or the fund's exec timelock. This is the one gated entry point here,
+  because a promoted chain's asset is *not* committed to by the topology — an open promotion would
+  let anyone holding the config deploy a shares token denominated in a worthless asset at the fund's
+  canonical address.
+- The operational stack already exists on that chain (`StackNotDeployed` otherwise).
+- The Avatar Safe has already approved the shares proxy for **`type(uint256).max`** — on the base
+  asset *and* every `additionalAssets` entry with `canRedeem`. Not merely non-zero: a smaller
+  allowance would let the fund settle a few redemptions and then start reverting. Promotion cannot
+  grant these itself, and the proxy address is predictable beforehand, so approve first.
 
 ## Recovery / add-a-chain (`dispatchTo`)
 
 `deployEverywhere` is the first, atomic fan-out and can't be re-run with the same config (its local
-`deployOiv` would collide on the mainnet CREATE2 addresses). To extend the fund to a chain that
-wasn't in the original set, or to re-send to one whose delivery permanently failed, use
-`dispatchTo` — the CCIP fan-out only, no local deploy.
+`deployOiv` would collide on the origin's CREATE2 addresses). To extend the fund to a chain that
+wasn't in the original destination set, or to re-send to one whose delivery permanently failed, use
+`dispatchTo(config, sharesChains, destChainIds, gasLimit)` — the CCIP fan-out only, no local deploy.
 
 ```mermaid
 flowchart TD
-    A["Sidechain message failed,<br/>or new chain to add"] --> B["caller calls dispatchTo{value}(config, destChainIds, gasLimit)"]
+    A["Destination message failed,<br/>or new chain to add"] --> B["caller calls dispatchTo{value}(config, sharesChains, destChainIds, gasLimit)"]
     B --> C["ccipSend × N (no local deployOiv)"]
-    C --> D["sidechain ccipReceive → factory.deployStack"]
+    C --> D["destination ccipReceive → factory.deployStack"]
     D --> E["stack at the fund's existing addresses"]
     A2["Message stuck in CCIP FAILED state"] -.->|"alternative: replay same message"| M["CCIP manual re-execution"]
 ```
 
-Pass the **same `config`** (notably the same `salt`) so the stack lands at the fund's existing
-addresses; never re-dispatch to a chain that already has the stack (its message would revert on the
-CREATE2 collision).
+Pass the **same `config` and the same `sharesChains`** (notably the same `salt`) so the stack lands at
+the fund's existing addresses; never re-dispatch to a chain that already has the stack (its message
+would revert on the CREATE2 collision).
 
 ## Notes
 

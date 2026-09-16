@@ -295,7 +295,9 @@ contract OivConfigReaderTest is Test {
         assertTrue(reader.shouldDeployShares(json), "this chain must be inside the example topology");
 
         vm.expectRevert(
-            bytes("config: this chain IS in .sharesChains - use deployOiv; deployStack here would strand it")
+            bytes(
+                "config: this chain IS in .sharesChains - use deployOiv; deployStack here omits the shares token this config asks for (recoverable via KpkOivFactory.deployShares)"
+            )
         );
         script.deployStack("script/oiv-config.example.json");
     }
@@ -342,6 +344,39 @@ contract OivConfigReaderTest is Test {
     function test_sharesChains_refusesADescendingList() public {
         vm.expectRevert(bytes("config: .sharesChains must be strictly ascending by chain id"));
         reader.sharesChains(_topologyJson("[100,1]"));
+    }
+
+    /// @notice The asymmetry this fixes: the SAME malformed topology that `sharesChains` refuses
+    ///         loudly was accepted in silence by `shouldDeployShares`, which is the reader
+    ///         `DeployOiv.deploy` consults to pick its branch. Refusing in one place and
+    ///         reinterpreting in the other is worse than refusing in neither — the guarded path
+    ///         teaches you the input is checked.
+    ///
+    ///         `[]` is the dangerous member of this set. The other two produce a nonsense answer;
+    ///         `[]` produces a PLAUSIBLE one — "this chain carries no shares" — on every chain at
+    ///         once, which is a legal instruction to deploy a wired stack everywhere and strand the
+    ///         fund at addresses nothing can reclaim.
+    function test_shouldDeployShares_refusesEveryTopologyTheBuilderRefuses() public {
+        vm.expectRevert(
+            bytes("config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to")
+        );
+        reader.shouldDeployShares(_topologyJson("[]"));
+
+        vm.expectRevert(bytes("config: .sharesChains contains chain id 0"));
+        reader.shouldDeployShares(_topologyJson("[0,1]"));
+
+        vm.expectRevert(bytes("config: .sharesChains must be strictly ascending by chain id"));
+        reader.shouldDeployShares(_topologyJson("[100,1]"));
+    }
+
+    /// @notice The permissive default is deliberate and must SURVIVE the validator: a config with no
+    ///         `.sharesChains` key at all still answers true, because the explicit `deployOiv` /
+    ///         `deployStack` entry points are allowed to have no opinion about topology. Only
+    ///         `deploy` requires the key. Without this, tightening the validator would quietly break
+    ///         the legacy per-chain flow instead of the malformed-config case it targets.
+    function test_shouldDeployShares_keepsThePermissiveDefaultWhenTheKeyIsAbsent() public view {
+        string memory noKey = string.concat('{"oiv":{"sharesParams":{"asset":"', vm.toString(USDC), '"}}}');
+        assertTrue(reader.shouldDeployShares(noKey), "an absent .sharesChains is 'no opinion', not 'no shares'");
     }
 
     /// @notice `_requireAssetIsLive` also survived deletion. It runs before any broadcast, so this

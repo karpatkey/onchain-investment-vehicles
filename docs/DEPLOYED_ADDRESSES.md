@@ -25,11 +25,11 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x638F770cdC166CdECBABB1E5cbB03080F0d891D1` |
+| `KpkOivFactory` | `0x5DCAe509E955373FeB8A5f54a906104B0CEEc2A3` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xb32e410b98d263B02f7752bEde6C3387A4819073` |
-| `KpkTimelockDeployer` | `0x787294e855cdE7214B316cC995517931a144C014` |
+| `CcipOivDeployer` (orchestrator) | `0xDD76A346eCa917C524F11b8fa15F5E7DfCD7c5E0` |
+| `KpkTimelockDeployer` | `0x9Cf6169440CFeBCAe47c5e615Df950d93a2e3A83` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer`'s constructor takes the timelock mastercopy address

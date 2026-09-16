@@ -259,6 +259,19 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.deployLocal(oivConfig, topology);
     }
 
+    /// @notice An empty topology passed every validation site, because `_validateSharesChains` is a
+    ///         loop and a zero-length array simply skips it. Three public `deployEverywhere`
+    ///         overloads take the array from the caller, so this was reachable by any contract — and
+    ///         the Foundry config parser had refused the same input all along. The guard belongs on
+    ///         the contract, which is the entry point a third party actually reaches; the script is
+    ///         only the path kpk itself uses.
+    function test_topology_mustNotBeEmpty() public {
+        CcipOivDeployer.SharesChain[] memory none = new CcipOivDeployer.SharesChain[](0);
+
+        vm.expectRevert(CcipOivDeployer.EmptySharesChains.selector);
+        orchestrator.predictOiv(oivConfig, none);
+    }
+
     function test_topology_mustBeAscending() public {
         CcipOivDeployer.SharesChain[] memory bad = new CcipOivDeployer.SharesChain[](2);
         bad[0] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
