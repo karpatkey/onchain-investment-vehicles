@@ -41,7 +41,7 @@ sequenceDiagram
     participant F as KpkOivFactory
     participant Z as Zodiac ModuleProxyFactory
     participant S as Safe ProxyFactory
-    participant D as KpkShares mastercopy
+    participant D as KpkShares mastercopy (shared, pre-deployed)
     participant Av as Avatar Safe
 
     Op->>Fg: deployOiv(configPath)
@@ -51,8 +51,8 @@ sequenceDiagram
     F->>S: create Avatar Safe (signer = Empty, modules [exec, factory])
     F->>S: create Manager Safe (owners + threshold, module [manager])
     Note over F: wire exec/sub/manager modifiers<br/>(assign roles, set avatar/target, transfer ownership)
-    F->>D: deploy(implSalt) → kpkShares implementation
-    F->>F: new ERC1967Proxy(impl, initialize) → shares proxy
+    Note over F,D: no per-fund implementation is deployed — the mastercopy<br/>is a fixed, already-deployed address the factory reads
+    F->>F: new ERC1967Proxy(kpkSharesMastercopy, initialize) → shares proxy
     Note over F: register additional assets, grant OPERATOR to Manager Safe,<br/>grant admin to admin, renounce factory's own admin
     F->>Av: approve shares proxy for base + redeemable assets (via module call)
     F->>Av: disable factory module
@@ -70,7 +70,7 @@ flowchart TD
         Sub["sub Roles Modifier<br/>(automation)"]
         Mgr["Manager Safe<br/>(operators)"]
         MgrMod["manager Roles Modifier"]
-        Px["kpkShares proxy<br/>(+ per-fund impl)"]
+        Px["kpkShares proxy<br/>(delegates to the chain's<br/>shared KpkShares mastercopy)"]
     end
     Ex -->|"execTransactionFromModule"| Av
     Sub --> Ex

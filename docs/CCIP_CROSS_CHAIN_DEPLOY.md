@@ -1,8 +1,11 @@
 # Cross-Chain OIV Deployment via Chainlink CCIP
 
-`CcipOivDeployer` lets a **single mainnet transaction** deploy a full OIV on mainnet and fan out
-the matching operational stack to multiple sidechains over Chainlink CCIP — producing the **same**
-Avatar Safe / Manager Safe / Roles Modifier addresses on every chain.
+`CcipOivDeployer` lets a **single transaction on any wired chain** deploy this chain's part of an
+OIV and fan out the matching operational stack to every other wired chain over Chainlink CCIP —
+producing the **same** Avatar Safe / Manager Safe / Roles Modifier addresses on every chain.
+
+The local half is conditional: the full OIV when the origin appears in `sharesChains`, the
+operational stack alone when it does not.
 
 It is an external orchestrator: **all CCIP, fee, and router logic lives outside `KpkOivFactory`.**
 The only factory change is exposing `oivToStackConfig` (a `pure` helper `deployOiv` already uses
@@ -13,7 +16,7 @@ internally); the factory's deployment logic and invariants are otherwise untouch
 `KpkOivFactory` mixes `msg.sender` into every CREATE2 salt (`_deriveSalts`). Its cross-chain address
 invariant therefore holds only when the **same caller** invokes the factory on every chain. A raw
 CCIP integration breaks this — on the destination chain the factory's caller would be the CCIP
-Router, not the original mainnet account.
+Router, not the account that originated the fan-out.
 
 `CcipOivDeployer` solves it by being the single, uniform caller of the factory on every chain.
 Because it is deployed at the **same address on all chains** (deterministic CREATE2, identical
@@ -21,15 +24,15 @@ creation code), the factory observes one identical `msg.sender` everywhere, so t
 is preserved without putting any CCIP logic into the factory's deployment path.
 
 ```
-                          mainnet
-   user ──deployEverywhere(config, [arb, base, op, gnosis])──▶ CcipOivDeployer
+                    origin chain (ANY wired chain)
+   user ──deployEverywhere(config, sharesChains, [...])──▶ CcipOivDeployer
                                                                │
                           ┌────────────────────────────────────┤
-                          ▼                                     ▼ (×N)
-                 factory.deployOiv(config)            router.ccipSend(stackConfig)
-                 (full OIV: stack + shares)                     │
-                                                                ▼  ~15 min, async
-                                            sidechain  CcipOivDeployer.ccipReceive
+                          ▼                                     ▼ (×N, shares chains excluded)
+     origin IS in sharesChains:                        router.ccipSend(stackConfig)
+         factory.deployOiv(config)                              │
+     origin is NOT:                                             ▼  ~15 min, async
+         factory.deployStack(stackConfig)     destination  CcipOivDeployer.ccipReceive
                                                                 │
                                                                 ▼
                                                     factory.deployStack(stackConfig)
@@ -115,8 +118,9 @@ correct, and is not what "deploy everywhere from any chain" sounds like.
 
 ## Operational model (important)
 
-- **Asynchronous, not atomic.** The mainnet tx confirms once messages are dispatched. Each sidechain
-  stack materialises later (after Ethereum finality, ~15 min) when CCIP delivers to `ccipReceive`.
+- **Asynchronous, not atomic.** The origin tx confirms once messages are dispatched. Each destination
+  stack materialises later (after the ORIGIN chain's finality — ~15 min from Ethereum, and different
+  on every other origin) when CCIP delivers to `ccipReceive`.
 - **Partial failure is possible.** A destination message can fail (e.g. gas underestimate, missing
   `EMPTY_CONTRACT` on that chain). It then enters CCIP's FAILED state and can be **manually
   re-executed** within its retry window. Monitor delivery on the [CCIP Explorer](https://ccip.chain.link).
@@ -282,7 +286,7 @@ its registry, and that registry is baked in at construction.
 
 ### Destination chain registry ("selected chains")
 
-Callers target chains by **chain ID**; the mainnet orchestrator resolves each id to its CCIP selector
+Callers target chains by **chain ID**; the origin chain's orchestrator resolves each id to its CCIP selector
 via an owner-managed, **enumerable** registry:
 
 - `setChainSelector(chainId, ccipChainSelector)` / `setChainSelectors(chainIds[], selectors[])` — owner
@@ -296,9 +300,10 @@ owner hasn't approved.
 
 ## Usage — from a block explorer (no script needed)
 
-Everything is a direct contract call on the mainnet orchestrator; no Foundry script is required.
+Everything is a direct contract call on the orchestrator of whichever wired chain you originate
+from; no Foundry script is required.
 
-1. Deploy + configure the orchestrator on mainnet and all target sidechains (above), and ensure
+1. Deploy + configure the orchestrator on the origin and all target chains (above), and ensure
    `EMPTY_CONTRACT` is present on every target chain.
 2. Nothing to seed. The orchestrator bakes the `chainId → CCIP selector` registry into its
    CONSTRUCTOR, so a freshly deployed instance already knows every wired chain — confirm with
@@ -307,8 +312,9 @@ Everything is a direct contract call on the mainnet orchestrator; no Foundry scr
    them makes the no-array `deployEverywhere` spend non-refundable fees on two dead lanes.
 3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
 4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
-   the quoted fee (a little extra is fine; surplus is refunded). This deploys the OIV on mainnet and
-   fans the stack out to every selected chain in one transaction. To target only a subset, use the
+   the quoted fee (a little extra is fine; surplus is refunded). This deploys the origin chain's part
+   of the fund — full OIV if the origin is in `sharesChains`, stack only if not — and fans the stack
+   out to every selected chain in one transaction. To target only a subset, use the
    `deployEverywhere(config, sharesChains, destChainIds, gasLimit)` overload with an explicit
    chain-ID array. To fill a declared shares chain, or add one later, use `deployLocal` /
    `promoteShares` on that chain — both are documented in `DEPLOYMENT.md`.

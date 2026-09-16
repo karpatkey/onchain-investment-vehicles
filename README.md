@@ -48,8 +48,8 @@ Every fund the factory deploys is the same five-to-seven-contract stack:
 
 | Entry point | Deploys | Typical use |
 |---|---|---|
-| `deployOiv(config)` | the full fund: the 5-contract operational stack **+** a per-fund `kpkShares` implementation and UUPS proxy, with asset allowances and operator wiring | **mainnet** |
-| `deployStack(config)` | the 5-contract operational stack only (no shares token) | **sidechains** |
+| `deployOiv(config)` | the full fund: the 5-contract operational stack **+** a UUPS `kpkShares` proxy backed by the chain's **shared** `KpkShares` mastercopy, with asset allowances and operator wiring | chains in `sharesChains` |
+| `deployStack(config)` | the 5-contract operational stack only (no shares token) | every other wired chain |
 
 Key properties:
 
