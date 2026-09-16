@@ -31,8 +31,9 @@ If you have read an earlier version of this document, both of these changed:
 ```mermaid
 flowchart LR
     Op["Operator (caller)"] -->|"deployEverywhere{value}(config, sharesChains, destChainIds, gasLimit)"| Orc["CcipOivDeployer (origin chain,<br/>any wired chain)"]
-    Orc -->|"factory.deployOiv(config)"| F["KpkOivFactory (origin)"]
-    F --> Fund["Full OIV on the origin<br/>(stack + kpkShares)"]
+    Orc -->|"origin IS in sharesChains:<br/>factory.deployOiv(config)"| F["KpkOivFactory (origin)"]
+    Orc -->|"origin is NOT:<br/>factory.deployStack(stackConfig)"| F
+    F --> Fund["Full OIV (stack + kpkShares)<br/>OR stack only, per the topology"]
     Orc -->|"ccipSend × N (native fee)"| R["CCIP Router (origin)"]
     R -->|"CCIP network (~15 min)"| R2["CCIP Router (destination)"]
     R2 -->|"ccipReceive"| Orc2["CcipOivDeployer (destination,<br/>same address)"]
@@ -65,8 +66,13 @@ sequenceDiagram
     Note over O: require onlyWiredChain + non-empty, ascending sharesChains<br/>+ no duplicate destinations
     Note over O: salt = keccak256(config-with-zeroed-asset, sharesChains)<br/>pre-check via factory.predictStackAddresses BEFORE pricing
     Note over O: payload = abi.encode(stackConfig, sharesChainIds),<br/>sum getFee over destinations, require msg.value >= total
-    O->>F: deployOiv(config)
-    F-->>O: full OIV deployed on the origin (emit LocalOivDeployed)
+    alt origin chain is in sharesChains
+        O->>F: deployOiv(config)
+        F-->>O: full OIV deployed on the origin (emit LocalOivDeployed)
+    else origin carries no shares
+        O->>F: deployStack(stackConfig)
+        F-->>O: stack only; returned shares fields are zero (emit LocalStackDeployed)
+    end
     loop each destination chain (shares chains excluded)
         O->>R: ccipSend{value: fee}(destSelector, message) [receiver = this address]
         R-->>O: messageId (emit StackDispatched)
@@ -82,6 +88,10 @@ sequenceDiagram
 
 **Key points**
 
+- **The local half depends on the topology.** `deployEverywhere` runs `deployOiv` locally only when
+  the origin is in `sharesChains`; otherwise it runs `deployStack` and the returned instance's shares
+  fields are zero. Starting a fan-out from a stack-only chain is supported and coherent — it just
+  does not give that chain a shares token.
 - The origin transaction returns once the messages are **dispatched**; each destination stack
   materialises later, after source finality.
 - CCIP fees are paid in **native gas from the caller's `msg.value`** — size it up front with
@@ -98,11 +108,19 @@ sequenceDiagram
 
 Two different situations, and they use different calls — mixing them up is the easy mistake:
 
-**A chain that IS in `sharesChains` but has not deployed yet.** It gets its shares by running its own
-`deployEverywhere` (or the direct `deployOiv`) **on that chain**. Nothing promotes it, and no other
-chain's fan-out will send it a stack — it is deliberately excluded, because a wired stack there would
-close both routes at once (`deployLocal` reverts `StackAlreadyDeployedHere`, and `promoteShares`
-refuses a declared chain).
+**A chain that IS in `sharesChains` but has not deployed yet.** It is filled by the orchestrator's
+**`deployLocal(config, sharesChains)`**, run on that chain. This is the call that makes a second
+shares chain reachable at all, and the two obvious alternatives are both wrong:
+
+- **not** the factory's raw `deployOiv` — that uses `config.salt` verbatim, while the orchestrator
+  derives the salt from the config *and* the topology, so a direct call builds a different fund at
+  non-canonical addresses;
+- **not** a second `deployEverywhere` — it would work, but re-dispatches stacks to destinations the
+  first fan-out already covered, paying every one of those non-refundable fees again;
+- **not** `promoteShares` — it reverts `SharesChainAlreadyDeclared` for a chain the topology names.
+
+No other chain's fan-out will send this chain a stack; it is deliberately excluded, because a wired
+stack here would take the addresses its own shares deployment needs.
 
 **A chain that is NOT in `sharesChains` at all.** This is what `promoteShares(config, sharesChains)`
 is for — the escape hatch for the one thing the salt-bound topology costs, since a fund otherwise

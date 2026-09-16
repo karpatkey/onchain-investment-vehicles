@@ -1445,6 +1445,30 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(unwired.kpkSharesMastercopy(), first, "the original must survive a rotation attempt");
     }
 
+    /// @notice Write-once raises the bar on validation: a codeless timelock deployer used to be
+    ///         survivable because the owner could correct it, and now it would permanently brick
+    ///         every timelocked fund on the chain. `setKpkSharesMastercopy` has always rejected
+    ///         codeless values; this setter did not until the latch landed.
+    function test_setTimelockDeployer_rejectsACodelessAddress() public {
+        address codeless = makeAddr("notAContract");
+        assertEq(codeless.code.length, 0, "precondition: no code");
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+
+        vm.prank(factoryOwner);
+        vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+        unwired.setTimelockDeployer(codeless);
+    }
+
     /// @notice Same latch on the timelock deployer. Rotating this one blocks promotion outright
     ///         (`_predictStack` points elsewhere, so `deployShares` reverts `StackNotDeployed`)
     ///         rather than misplacing the proxy — still silent, still unrecoverable for funds that
@@ -1462,12 +1486,20 @@ contract KpkOivFactoryTest is OivTestConstants {
             address(0)
         );
 
+        // Both must have code — see `test_setTimelockDeployer_emitsEvent`. Constructed on their own
+        // lines so neither `new` consumes a prank.
+        address firstDeployer = address(new KpkShares());
+        address secondDeployer = address(new KpkShares());
+
         vm.prank(factoryOwner);
-        unwired.setTimelockDeployer(makeAddr("firstDeployer"));
+        unwired.setTimelockDeployer(firstDeployer);
+        assertEq(unwired.timelockDeployer(), firstDeployer, "first write must land");
 
         vm.prank(factoryOwner);
         vm.expectRevert(KpkOivFactory.InfrastructureAlreadySet.selector);
-        unwired.setTimelockDeployer(makeAddr("secondDeployer"));
+        unwired.setTimelockDeployer(secondDeployer);
+
+        assertEq(unwired.timelockDeployer(), firstDeployer, "the original must survive a rotation attempt");
     }
 
     /// @notice `onlyOwner` on this setter had NO coverage — deleting the modifier left the whole
@@ -1487,7 +1519,9 @@ contract KpkOivFactoryTest is OivTestConstants {
     }
 
     function test_setTimelockDeployer_emitsEvent() public {
-        address newDeployer = makeAddr("newTimelockDeployer");
+        // A real deployment, not `makeAddr`: the setter now rejects codeless values, because
+        // write-once makes a codeless mistake permanent.
+        address newDeployer = address(new KpkShares());
         // Unwired, because the setter is write-once and the shared fixture is already wired.
         KpkOivFactory unwired = new KpkOivFactory(
             factoryOwner,
