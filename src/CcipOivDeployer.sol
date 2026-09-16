@@ -127,8 +127,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
     /// @notice Emitted when a chain outside the fund's declared topology gains its shares token.
     /// @param  chainId  The promoted chain.
-    /// @param  instance The fund's addresses there. Asset approvals are NOT yet granted — see
-    ///                  `promoteShares`.
+    /// @param  instance The fund's addresses there. Asset approvals are already in place: since the
+    ///                  precondition landed, `promoteShares` REQUIRES maximum allowances on the base
+    ///                  asset and every redeemable `additionalAssets` entry before it calls
+    ///                  `deployShares`, so this event cannot signal an approval-pending state. It
+    ///                  said the opposite while the approvals were still described as deferred.
     event SharesPromoted(uint256 indexed chainId, KpkOivFactory.OivInstance instance);
 
     /// @notice Emitted when `configure` wires the per-chain CCIP parameters.
@@ -181,6 +184,18 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
     /// @notice Thrown when a `sharesChains` entry has a zero chain id or a zero asset.
     error InvalidSharesChain();
+
+    /// @notice Thrown when a CCIP chain selector is already mapped to a different chain id. Two ids
+    ///         sharing one selector would make a fan-out pay for two deliveries to the same chain.
+    /// @param  selector The selector already in use.
+    /// @param  chainId  The chain id that already holds it.
+    error SelectorAlreadyMapped(uint64 selector, uint256 chainId);
+
+    /// @notice Thrown when the manager Safe has more owners than a destination can afford to set up
+    ///         within CCIP's 3,000,000-gas execution cap.
+    /// @param  count The configured owner count.
+    /// @param  max   `MAX_CCIP_MANAGER_OWNERS`.
+    error ManagerOwnersExceedCcipBudget(uint256 count, uint256 max);
 
     /// @notice Thrown when `sharesChains` is empty. A fund with no shares chain is not a fund: every
     ///         chain would take the stack-only branch, those stacks are wired, and the canonical
@@ -308,6 +323,20 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             // lane the registry still advertises from accepting inbound stacks.
             _forgetSelectorIfUnused(chainSelectorOf[chainId], chainId);
         }
+        // Two chain ids must never share a selector. `_stackSelectors` and `_resolveStackSelectors`
+        // emit one destination per CHAIN ID, so a shared selector means two paid messages to the same
+        // chain: the first deploys, the second reverts `StackAlreadyDeployedHere`, and its fee is
+        // spent either way. `_forgetSelectorIfUnused` already treated this as a reachable state —
+        // it is now unreachable instead. The scan is over the registry (tens of entries) and runs
+        // only on the constructor and owner `configure` paths.
+        uint256 n = _chainIds.length;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 other = _chainIds[i];
+            if (other != chainId && chainSelectorOf[other] == ccipChainSelector) {
+                revert SelectorAlreadyMapped(ccipChainSelector, other);
+            }
+        }
+
         chainSelectorOf[chainId] = ccipChainSelector;
         _isKnownSelector[ccipChainSelector] = true;
     }
@@ -715,6 +744,26 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      `dispatchTo` so the quoted and charged fees can never drift. The `StackConfig` payload comes
     ///      from `factory.oivToStackConfig` so it also cannot drift from `deployOiv`'s mapping. Reverts
     ///      `NotConfigured` if the router is unset.
+    /// @notice Upper bound on `managerSafe.owners` for anything sent over CCIP.
+    /// @dev    `KpkTimelockDeployer.MAX_ROLE_MEMBERS` bounds the timelock arrays and was described as
+    ///         making the largest ACCEPTED `deployStack` fit the 3M destination cap. It does not, on
+    ///         its own: `managerSafe.owners` was unbounded, Safe setup does storage work per owner,
+    ///         and `KpkOivFactory._validateManagerOwners` is O(n^2). Measured on the worst timelock
+    ///         `MAX_ROLE_MEMBERS` permits, `deployStack` alone costs
+    ///
+    ///             10 owners 2,778,274 | 15 owners 2,920,639 | 18 owners 3,010,564 | 20 owners 3,072,264
+    ///
+    ///         and the destination pays a further ~80k for the `ccipReceive` frame around it. So a
+    ///         perfectly valid config with ~15 owners passes every source-side check, spends every
+    ///         lane's non-refundable fee, and then runs out of gas on arrival. (Figures carry ~35k of
+    ///         address-dependent storage noise; pinned by
+    ///         `test_deployStack_worstPermittedConfigStillFitsTheCcipGasCap`.)
+    ///
+    ///         10 leaves roughly 140k of headroom. Bounded HERE rather than in the factory on
+    ///         purpose: the 3M cap is a CCIP constraint, and a fund deployed directly on one chain
+    ///         has no reason to be limited by it.
+    uint256 public constant MAX_CCIP_MANAGER_OWNERS = 10;
+
     function _price(
         KpkOivFactory.OivConfig memory config,
         uint64[] memory destSelectors,
@@ -722,6 +771,13 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         uint256 gasLimit
     ) internal view returns (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) {
         if (router == address(0)) revert NotConfigured();
+        // Every send AND every quote reaches this function, which is why the bound lives here: a
+        // quote that cannot be delivered should fail loudly at quote time rather than return a fee
+        // for a fan-out that dies on arrival.
+        uint256 ownerCount = config.managerSafe.owners.length;
+        if (ownerCount > MAX_CCIP_MANAGER_OWNERS) {
+            revert ManagerOwnersExceedCcipBudget(ownerCount, MAX_CCIP_MANAGER_OWNERS);
+        }
         // The topology rides along so every destination can refuse a stack aimed at a shares chain,
         // independently of the source having excluded it.
         message = _buildMessage(abi.encode(factory.oivToStackConfig(config), sharesChainIds), gasLimit);
