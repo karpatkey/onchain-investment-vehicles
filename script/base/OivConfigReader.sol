@@ -182,7 +182,6 @@ abstract contract OivConfigReader is Script {
         return vm.keyExists(json, key) ? json.readAddress(key) : json.readAddress(".oiv.sharesParams.asset");
     }
 
-    /// @dev Whether this chain should receive the shares token as well as the operational stack.
     /// @dev The fund's cross-chain topology, as the orchestrator wants it: `(chainId, asset)` for
     ///      every chain in `.sharesChains`, ascending, with each chain's own asset resolved from
     ///      `.oiv.assetOverrides` exactly as `_assetForThisChain` would resolve it there.
@@ -244,6 +243,9 @@ abstract contract OivConfigReader is Script {
     ///      Note this is the OPPOSITE contract to `_buildSharesChains`, which hard-requires the key:
     ///      that one feeds the salt, where a per-chain default would make a fund's addresses depend
     ///      on where it was launched from.
+    /// @dev Whether this chain should receive the shares token as well as the operational stack.
+    ///      Note the deliberate contract difference from `_buildSharesChains`: an ABSENT
+    ///      `.sharesChains` is "no opinion" here and answers true, while the builder requires the key.
     function _shouldDeployShares(string memory json) internal view returns (bool) {
         if (!vm.keyExists(json, ".sharesChains")) return true;
         uint256[] memory ids = json.readUintArray(".sharesChains");

@@ -1409,6 +1409,59 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(unwired.kpkSharesMastercopy(), mastercopy, "owner can wire the mastercopy");
     }
 
+    /// @notice The constructor bypassed the very validation write-once makes necessary. Both setters
+    ///         reject a codeless address BECAUSE the value can never be corrected, while the
+    ///         constructor assigned the same fields unchecked and `InfrastructureAlreadySet` latches
+    ///         on the first non-zero value whichever path wrote it — so the stricter guard was
+    ///         reachable only on the path that did not need it, and a codeless constructor argument
+    ///         was permanent.
+    ///
+    ///         `address(0)` stays legal: the canonical deploy path passes zero for both and wires
+    ///         them afterwards (`OivChainDeploy._factoryInitCode`).
+    function test_constructor_rejectsACodelessWriteOnceValue() public {
+        address codeless = makeAddr("notAContract");
+
+        vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+        new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            codeless,
+            address(0)
+        );
+
+        vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+        new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            codeless
+        );
+
+        // The production shape — zero for both — must still construct.
+        KpkOivFactory unwired = new KpkOivFactory(
+            factoryOwner,
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY,
+            address(0),
+            address(0)
+        );
+        assertEq(unwired.kpkSharesMastercopy(), address(0), "zero stays legal, it is the deploy path");
+    }
+
     /// @notice The infrastructure setters are WRITE-ONCE, and this is the fund-breaking direction:
     ///         `deployShares` re-derives an existing fund's stack from the factory's CURRENT
     ///         infrastructure, so rotating the mastercopy lands a promoted proxy at an address that

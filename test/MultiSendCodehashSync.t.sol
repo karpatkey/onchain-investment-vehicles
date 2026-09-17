@@ -33,8 +33,9 @@ contract MultiSendCodehashSyncTest is Test, OivChainDeploy {
             address(4),
             address(5),
             address(6),
-            address(7),
-            address(8)
+            // Coded: the constructor now rejects a codeless write-once value.
+            address(this),
+            address(this)
         );
     }
 

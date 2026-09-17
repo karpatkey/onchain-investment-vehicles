@@ -34,7 +34,7 @@ contract DeployOiv is OivConfigReader {
     ///      discovered at deploy time. It was previously left pointing at `0x0d94…d420`, which
     ///      `OivChainDeploy.LEGACY_FACTORY` labels as the pre-v2.1.1 build embedding the vulnerable
     ///      Roles Modifier v2.1.0 — funds deployed through it would have carried that bug.
-    address public constant FACTORY = 0x865C3e4ae14C07D02dA18e4Da316A31be68ff3Bf;
+    address public constant FACTORY = 0x778611aA143c82DB865Ea885794df69B6892478E;
 
     // ── Entry points ───────────────────────────────────────────────────────────
 

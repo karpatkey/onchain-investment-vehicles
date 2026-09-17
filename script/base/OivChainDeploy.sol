@@ -366,6 +366,26 @@ abstract contract OivChainDeploy is Script {
         }
 
         KpkOivFactory f = KpkOivFactory(factory);
+        // Ownership is checked BEFORE either setter, because both are `onlyOwner` and now WRITE-ONCE.
+        // A first run whose `transferOwnership` landed but whose setter transaction did not leaves a
+        // factory owned by the Safe with an unwired value: the re-run takes the `== address(0)`
+        // branch, calls an `onlyOwner` setter as an EOA that no longer owns the factory, and reverts
+        // with nothing telling the operator what to do. The remedy is a Safe transaction, so say so.
+        //
+        // Before write-once this was survivable a different way — the value could be corrected later
+        // from whoever did own it. Latching removed the second chance, which is what makes the
+        // ordering worth guarding rather than merely tidy.
+        bool needsWiring = f.kpkSharesMastercopy() == address(0) || f.timelockDeployer() == address(0);
+        if (needsWiring && f.owner() != eoaOwner) {
+            console.log("[ACTION REQUIRED] factory is owned by:", f.owner());
+            console.log("                  but still needs kpkSharesMastercopy / timelockDeployer wired.");
+            console.log("                  Both setters are onlyOwner and write-once, so this EOA cannot");
+            console.log("                  finish onboarding. Submit from the owner:");
+            console.log("                    setKpkSharesMastercopy:", sharesMastercopy);
+            console.log("                    setTimelockDeployer:   ", timelockDeployer);
+            revert("factory already handed over with wiring incomplete - submit the setters from the owner");
+        }
+
         if (f.kpkSharesMastercopy() == address(0)) {
             f.setKpkSharesMastercopy(sharesMastercopy);
             console.log("[OK]   factory.kpkSharesMastercopy set");

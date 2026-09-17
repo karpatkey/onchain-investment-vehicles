@@ -185,6 +185,17 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice Thrown when a `sharesChains` entry has a zero chain id or a zero asset.
     error InvalidSharesChain();
 
+    /// @notice Thrown when the topology is longer than `MAX_SHARES_CHAINS`.
+    /// @param  count The configured length.
+    /// @param  max   `MAX_SHARES_CHAINS`.
+    error TooManySharesChains(uint256 count, uint256 max);
+
+    /// @notice Thrown when promoting a fund to a chain where one of its salt-bound `additionalAssets`
+    ///         has no code. Those addresses are fixed at the fund's birth and cannot be restated per
+    ///         chain, so promotion only works where the same address is a live token.
+    /// @param  asset The entry with no code on this chain.
+    error AdditionalAssetHasNoCodeHere(address asset);
+
     /// @notice Thrown when a CCIP chain selector is already mapped to a different chain id. Two ids
     ///         sharing one selector would make a fan-out pay for two deliveries to the same chain.
     /// @param  selector The selector already in use.
@@ -460,9 +471,17 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @param gasLimit       Destination `ccipReceive` gas limit. Measured 2026-09-04 on this
     ///                       branch: `deployStack` ~1.58M, ~1.95M with an exec timelock, and the
     ///                       destination pays for the whole `ccipReceive` frame around that (payload
-    ///                       decode, the shares-chain loop, event). **Pass at least 2.5M**; the
-    ///                       previous 2.0M floor left under 3% headroom on a timelocked fund.
-    ///                       Capped at 3M by CCIP.
+    ///                       decode, the shares-chain loop, event).
+    ///
+    ///                       Those figures were measured on a SMALL timelock role set, and the
+    ///                       "at least 2.5M" floor they justified is wrong for a fund at
+    ///                       `KpkTimelockDeployer.MAX_ROLE_MEMBERS`: `deployStack` alone then costs
+    ///                       2,608,449 with one manager owner and 2,778,274 at
+    ///                       `MAX_CCIP_MANAGER_OWNERS`, plus ~80k for the frame, against a 3M cap.
+    ///                       **Pass 3,000,000 for any timelocked fund**; 2.0M remains ample for a
+    ///                       fund with no exec timelock (~1.58M measured). This function bounds the
+    ///                       owner count but NOT `gasLimit`, so an under-size is caught by nothing
+    ///                       here and is not refundable.
     ///                       The measured figure rose from ~1.38M when the factory began registering
     ///                       MultiSend unwrap adapters (six `setTransactionUnwrapper` writes across
     ///                       the three Roles Modifiers, ~155k gas). An under-sized `gasLimit` is not
@@ -958,6 +977,29 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             revert AdditionalAssetsNeedASingleSharesChain();
         }
 
+        // `_validateOivConfig`'s duplicate check compares `additionalAssets` against
+        // `config.sharesParams.asset` — the ONE field deliberately left out of the salt because it
+        // differs per chain. On a stack-only origin that field holds whatever this chain resolves to,
+        // not what the topology commits the fund's shares chain to, so the check runs against an
+        // asset the fund will never use.
+        //
+        // Concretely: topology says Gnosis/DAI, `additionalAssets` contains DAI, origin is mainnet
+        // where the field falls back to USDC. `USDC != DAI` passes, every lane's non-refundable fee
+        // is spent, every stack lands — and then Gnosis forces the asset to DAI (`AssetMismatch`
+        // otherwise) and `deployOiv` reverts `DuplicateAsset` forever. No value of the one field the
+        // caller may still vary helps, and `additionalAssets` is salt-bound, so correcting it moves
+        // every address and orphans every stack already paid for.
+        //
+        // Checked here because `_effectiveConfig` is the choke point every entry point passes
+        // through, so the failure lands before the first fee instead of after the last.
+        for (uint256 i = 0; i < config.additionalAssets.length; i++) {
+            for (uint256 j = 0; j < sharesChains.length; j++) {
+                if (config.additionalAssets[i].asset == sharesChains[j].asset) {
+                    revert KpkOivFactory.DuplicateAsset();
+                }
+            }
+        }
+
         eff.sharesParams.asset = address(0);
         eff.salt = uint256(keccak256(abi.encode(eff, sharesChains)));
         eff.sharesParams.asset = config.sharesParams.asset;
@@ -998,6 +1040,22 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     {
         _validateSharesChains(sharesChains);
         if (_assetFor(sharesChains, block.chainid) != address(0)) revert SharesChainAlreadyDeclared();
+        // `additionalAssets` entries are salt-bound, so their addresses are fixed at birth and cannot
+        // be restated per chain the way the base asset can. On the promoted chain they are therefore
+        // whatever address the original chain used, which usually has no code there — and the
+        // resulting failure was a bare revert on undecodable empty returndata: a `canRedeem` entry
+        // dies in the allowance loop below, a deposit-only entry survives as far as
+        // `KpkShares._updateAsset`'s `symbol()` call and dies there.
+        //
+        // Not refused outright, because a token deployed at the SAME address on both chains is
+        // legitimate and promotion should still work for it — `_effectiveConfig`'s
+        // `AdditionalAssetsNeedASingleSharesChain` bans the multi-chain TOPOLOGY case, which is
+        // different: there the asset cannot be expressed per chain at all. Checked for every entry,
+        // not just `canRedeem` ones, because `_updateAsset` calls `symbol()` on all of them.
+        for (uint256 i = 0; i < config.additionalAssets.length; i++) {
+            address extra = config.additionalAssets[i].asset;
+            if (extra.code.length == 0) revert AdditionalAssetHasNoCodeHere(extra);
+        }
 
         KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
 
@@ -1085,6 +1143,16 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @dev Rejects a topology that is unordered, degenerate, or would make one fund's addresses
     ///      ambiguous. Strictly ascending by `chainId` gives one canonical encoding per topology and
     ///      kills duplicates in the same pass.
+    /// @notice Upper bound on topology length.
+    /// @dev    `sharesChainIds` rides in the CCIP payload and is decoded and looped in
+    ///         `ccipReceive`, so it spends destination gas like the other two bounded arrays —
+    ///         measured at ~290 gas per entry, with roughly 480 entries enough to exhaust the
+    ///         3,000,000 cap alongside a worst-case stack. Not a third-party hazard, because the
+    ///         topology is salt-bound and a bloated one describes only the sender's own fund; bounded
+    ///         because it was the one member of the family (`MAX_CCIP_MANAGER_OWNERS`,
+    ///         `KpkTimelockDeployer.MAX_ROLE_MEMBERS`) left open. 20 sits above the 19 wired chains.
+    uint256 public constant MAX_SHARES_CHAINS = 20;
+
     function _validateSharesChains(SharesChain[] memory sharesChains) internal pure {
         // A bare loop accepts a zero-length array by doing nothing, so every one of this function's
         // call sites — including three public `deployEverywhere` overloads — took `[]` as valid.
@@ -1092,6 +1160,9 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // born with, and `effectiveSalt`'s own comment says validation exists so the helper cannot
         // answer for a topology no deployment can use.
         if (sharesChains.length == 0) revert EmptySharesChains();
+        if (sharesChains.length > MAX_SHARES_CHAINS) {
+            revert TooManySharesChains(sharesChains.length, MAX_SHARES_CHAINS);
+        }
 
         uint256 previous;
         for (uint256 i = 0; i < sharesChains.length; i++) {
