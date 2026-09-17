@@ -12,6 +12,7 @@ import {
 } from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/interfaces/IAny2EVMMessageReceiver.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {KpkOivFactory} from "./KpkOivFactory.sol";
+import {IRoles} from "./interfaces/IRoles.sol";
 
 /// @title  CcipOivDeployer
 /// @author KPK
@@ -152,8 +153,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @param fee               Native fee paid for this message.
     event StackDispatched(uint64 indexed destChainSelector, bytes32 indexed messageId, uint256 fee);
 
-    /// @notice Emitted on a sidechain when an inbound CCIP message deploys the stack.
-    /// @param sourceChainSelector Source chain selector (always the mainnet selector).
+    /// @notice Emitted on a destination chain when an inbound CCIP message deploys the stack, OR
+    ///         finds it already present at the fund's canonical addresses. The two cases are
+    ///         indistinguishable to a consumer by design: the stack is byte-identical either way,
+    ///         because every field the addresses depend on is bound into the salt.
+    /// @param sourceChainSelector Selector of the chain the message originated from.
     /// @param messageId           CCIP message id of the inbound message.
     /// @param instance            Addresses of the five stack contracts deployed.
     event StackReceived(
@@ -912,8 +916,53 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             if (sharesChainIds[i] == block.chainid) revert SharesChainRefusesStack();
         }
 
-        KpkOivFactory.StackInstance memory inst = factory.deployStack(stackConfig);
-        emit StackReceived(message.sourceChainSelector, message.messageId, inst);
+        // IDEMPOTENT, and this is a security fix rather than a convenience. `deployLocal` is
+        // permissionless and the orchestrator is the factory's uniform `msg.sender`, so any stranger
+        // holding a fund's config — which is public in the victim's own calldata — can land that
+        // fund's fully WIRED stack on a destination chain before delivery arrives. A strict
+        // `deployStack` then reverts `StackAlreadyDeployedHere`, CCIP manual re-execution replays the
+        // same revert for ever, and every lane's non-refundable fee is lost. Destination gas on an L2
+        // is cheap relative to the source fee for a 3M-gas execution, so the economics favoured the
+        // griefer. (Distinct from third-party occupation through the Safe/Zodiac factories, which the
+        // factory ADOPTS: that lands unwired components, and a wired stack is the one state adoption
+        // refuses.)
+        //
+        // Treating "already there" as success is sound because the pre-wired stack is not merely at
+        // the right addresses, it IS this fund's stack: the salt binds the whole config, and the one
+        // field left out — the base asset — is not used by the stack half at all. A griefer cannot
+        // wire different owners or a different admin at these addresses without changing the salt and
+        // therefore the addresses. The destination ends in exactly the state the message asked for.
+        //
+        // It also makes an honest duplicate delivery succeed instead of failing.
+        // Structured so the HAPPY path pays nothing for it. Predicting first cost ~108k on every
+        // delivery and pushed the worst permitted config from 2,862,999 to 2,970,960 against the
+        // 3,000,000 cap — measured, and it failed an at-the-cap delivery outright. The already-wired
+        // case is the rare one, so it is the one that should pay.
+        try factory.deployStack(stackConfig) returns (KpkOivFactory.StackInstance memory inst) {
+            emit StackReceived(message.sourceChainSelector, message.messageId, inst);
+        } catch (bytes memory err) {
+            // ONLY `StackAlreadyDeployedHere` is absorbed. Everything else — including an
+            // out-of-gas, which returns empty data and therefore cannot match — is re-thrown with its
+            // original revert data, so no other failure is masked by this.
+            bytes4 reason;
+            if (err.length >= 4) {
+                assembly {
+                    reason := mload(add(err, 0x20))
+                }
+            }
+            if (reason != KpkOivFactory.StackAlreadyDeployedHere.selector) {
+                assembly {
+                    revert(add(err, 0x20), mload(err))
+                }
+            }
+            // Already present, and necessarily THIS fund's stack: the salt binds the whole config,
+            // and the one field left out — the base asset — the stack half never reads. Nobody can
+            // wire different owners or a different admin at these addresses without changing the
+            // salt and therefore the addresses. The destination is already in exactly the state the
+            // message asked for, so report success rather than burning the lane's fee for ever.
+            KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(stackConfig, address(this));
+            emit StackReceived(message.sourceChainSelector, message.messageId, present);
+        }
     }
 
     // ── Treasury management ──────────────────────────────────────────────────────
