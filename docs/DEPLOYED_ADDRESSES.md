@@ -29,7 +29,7 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
 | `CcipOivDeployer` (orchestrator) | `0x53357d247672226e3DBad0067B8c17bCf9A805eb` |
-| `KpkTimelockDeployer` | `0x9Cf6169440CFeBCAe47c5e615Df950d93a2e3A83` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer`'s constructor takes the timelock mastercopy address

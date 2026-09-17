@@ -326,12 +326,21 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         // breaks the cross-chain sweep this function documents itself as being for: a fund is
         // routinely stack-only on some chains and absent from others.
         //
-        // `timelock` with no code is the same false positive wearing a different hat. Ownership
-        // transferred to a codeless address leaves the modifier permanently unownable, and without
-        // this check the sweep reports that fund as correctly timelocked — the exact inversion the
-        // zero check above exists to prevent. Unreachable through `KpkOivFactory`, whose owner is
-        // always a `Clones` deployment and therefore always has code; this guards the standalone and
-        // adopted paths, where the modifier's owner has a history this contract did not create.
+        // `timelock` with no code is the same false positive wearing a different hat, and it covers
+        // two different situations rather than the one an earlier version of this comment claimed.
+        //
+        // A TIMELOCKED fund cannot reach it: the only address `KpkOivFactory` ever hands a timelocked
+        // exec modifier to is a `Clones` deployment, which necessarily has code. But a fund with NO
+        // timelock has its exec modifier transferred to `finalOwner`
+        // (`KpkOivFactory._wireExecModifier` -> `transferOwnership(finalOwner)`), which is an
+        // arbitrary address and routinely an EOA. Passing that address as `timelock` would have
+        // answered TRUE — reporting an EOA-governed fund as delay-governed, which is the inversion
+        // the zero check exists to prevent, one step removed. It also covers a modifier whose
+        // ownership was transferred to a codeless address and is therefore permanently unownable.
+        //
+        // In practice a sweep feeds `OivInstance.execTimelock`, which is zero for a non-timelocked
+        // fund and caught by the check above; this closes the case where a caller supplies the owner
+        // it actually observed instead.
         if (timelock == address(0) || timelock.code.length == 0) return false;
         if (execRolesModifier.code.length == 0) return false;
         return IRoles(execRolesModifier).owner() == timelock;
