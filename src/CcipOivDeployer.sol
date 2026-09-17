@@ -358,8 +358,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///
     ///      Nothing about the address invariant depended on that. The orchestrator is the uniform
     ///      `msg.sender` into the factory on every chain, and the salt is
-    ///      `keccak256(abi.encode(config))` composed once on the origin chain and shipped — so the
-    ///      origin never entered the derivation. A fund fanned out from Base lands at exactly the
+    ///      `keccak256(abi.encode(config-with-zeroed-base-asset, sharesChains))` — see
+    ///      `_effectiveConfig` — composed once on the origin chain and shipped, so the origin never
+    ///      entered the derivation. (This line described the pre-topology
+    ///      `keccak256(abi.encode(config))` until now, omitting both the zeroed asset and the
+    ///      topology that is part of fund identity.) A fund fanned out from Base lands at exactly the
     ///      addresses it would have from Ethereum.
     ///
     ///      The check that remains is worth keeping: fanning out from a chain absent from the

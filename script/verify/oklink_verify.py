@@ -148,13 +148,27 @@ def prepare():
             print("skip %s: %s is not in this tree (kept as a record of what was verified)" % (name, src))
             continue
 
-        with open(std_path(name), "w") as fh:
-            subprocess.run(
-                ["forge", "verify-contract",
-                 "0x0000000000000000000000000000000000000000",
-                 meta["identifier"], "--show-standard-json-input"],
-                cwd=REPO, stdout=fh, check=True,
-            )
+        # Generated to a temporary path and moved into place only on success. The source-existence
+        # check above narrows ONE cause of the truncation described there; it does not prevent it.
+        # `open(dest, "w")` truncates before `forge` runs, so a stale identifier, a compile error, or
+        # any other non-zero exit still replaced the committed artifact with an empty file — and an
+        # empty file passes the existence precondition further down, which is how a plain run came to
+        # submit an empty standard-JSON body.
+        tmp = std_path(name) + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                subprocess.run(
+                    ["forge", "verify-contract",
+                     "0x0000000000000000000000000000000000000000",
+                     meta["identifier"], "--show-standard-json-input"],
+                    cwd=REPO, stdout=fh, check=True,
+                )
+            if os.path.getsize(tmp) == 0:
+                raise RuntimeError("forge produced an empty standard-JSON input for %s" % name)
+            os.replace(tmp, std_path(name))
+        except Exception:
+            os.path.exists(tmp) and os.remove(tmp)
+            raise
         print("wrote %s (%d bytes)" % (std_path(name), os.path.getsize(std_path(name))))
 
 

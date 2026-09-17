@@ -53,11 +53,16 @@ abstract contract OivConfigReader is Script {
             // stack exists here: it redeploys the stack and collides. The three routes actually
             // differ by path and by whether the topology declares this chain.
             console.log("  Adding shares here later:");
+            console.log("    FIRST: grant the Avatar Safe's max allowances to the predicted shares");
+            console.log("    proxy, for the base asset and every redeemable additional asset.");
+            console.log("    This applies to EVERY route below, not just promoteShares:");
+            console.log("    deployShares is permissionless and does NOT check them, so a fund");
+            console.log("    added without them takes deposits immediately while redemption");
+            console.log("    settlement reverts. promoteShares is the only one that enforces it.");
             console.log("    direct factory path:      KpkOivFactory.deployShares(config)");
             console.log("    orchestrator, chain IN .sharesChains:  deployLocal(config, sharesChains)");
             console.log("    orchestrator, chain NOT in it:         promoteShares(config, sharesChains)");
-            console.log("    (promoteShares is gated - admin or exec timelock - and needs max");
-            console.log("     allowances from the Avatar Safe first)");
+            console.log("    (promoteShares is additionally gated - admin or exec timelock)");
         }
     }
 
@@ -275,7 +280,7 @@ abstract contract OivConfigReader is Script {
         // with a different caller AND a different salt, so it cannot reach a fund deployed this way.
         require(
             ids.length != 0,
-            "config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to"
+            "config: .sharesChains is empty - every chain would take the stack-only branch, including the one meant to carry the fund. Unrecoverable on the orchestrator path (StackAlreadyDeployedHere, and promoteShares cannot reach a differently-salted fund); recoverable on this direct EOA path via KpkOivFactory.deployShares"
         );
         for (uint256 i = 0; i < ids.length; i++) {
             // Ascending is the orchestrator's contract, not a preference: the topology is hashed, so

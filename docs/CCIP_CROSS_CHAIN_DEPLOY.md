@@ -138,8 +138,7 @@ correct, and is not what "deploy everywhere from any chain" sounds like.
   `quoteDeployEverywhere(config, sharesChains, destChainIds, gasLimit)` to size the `msg.value`; any
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
-- **Gas limit.** Measured 2026-09-04: `deployStack` ~1.58M, or ~1.95M with an exec timelock
-  `gasLimit` must cover the destination's WHOLE `ccipReceive` frame, and the floor depends on the
+- **Gas limit.** `gasLimit` must cover the destination's WHOLE `ccipReceive` frame, and the floor depends on the
   config far more than the older advice implied. Measured on this branch with the worst timelock
   `KpkTimelockDeployer.MAX_ROLE_MEMBERS` permits, `deployStack` ALONE costs:
   

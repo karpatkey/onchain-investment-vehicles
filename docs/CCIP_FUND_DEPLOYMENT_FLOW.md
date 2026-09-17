@@ -9,7 +9,11 @@ supported-network list, see [CCIP_CROSS_CHAIN_DEPLOY.md](CCIP_CROSS_CHAIN_DEPLOY
 > **Assumed already deployed & configured** on every target chain (all at the same address):
 > `KpkOivFactory`, the `KpkShares` mastercopy, `KpkTimelockDeployer` and its `TimelockController`
 > mastercopy, the `Empty` contract, and `CcipOivDeployer` — the latter `configure`d with each chain's
-> CCIP router (the LINK token is optional). There is no designated source chain: the
+> CCIP router and LINK token. `configure` itself accepts a zero LINK address, but BOTH onboarding
+> entry points require a non-zero one (`OivChainDeploy._runChain`,
+> `DeployCcipOivDeployer.run`), so a lane with no LINK token cannot be onboarded with the
+> shipped tooling — LINK is optional to the contract, not to the scripts. There is no
+> designated source chain: the
 > `chainId → selector` registry is baked in at construction, and **any wired chain can originate a
 > fan-out**. CCIP fees are paid in **native gas by the caller** via `msg.value`, so no LINK
 > pre-funding is required. This doc is only about deploying a **fund** through them.

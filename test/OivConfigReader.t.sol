@@ -333,7 +333,9 @@ contract OivConfigReaderTest is Test {
     ///         caller and a different salt, so it cannot reach a fund deployed this way.
     function test_sharesChains_refusesAnEmptyTopology() public {
         vm.expectRevert(
-            bytes("config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to")
+            bytes(
+                "config: .sharesChains is empty - every chain would take the stack-only branch, including the one meant to carry the fund. Unrecoverable on the orchestrator path (StackAlreadyDeployedHere, and promoteShares cannot reach a differently-salted fund); recoverable on this direct EOA path via KpkOivFactory.deployShares"
+            )
         );
         reader.sharesChains(_topologyJson("[]"));
     }
@@ -366,7 +368,9 @@ contract OivConfigReaderTest is Test {
     ///         fund at addresses nothing can reclaim.
     function test_shouldDeployShares_refusesEveryTopologyTheBuilderRefuses() public {
         vm.expectRevert(
-            bytes("config: .sharesChains is empty - a fund with no shares chain would strand every chain it deploys to")
+            bytes(
+                "config: .sharesChains is empty - every chain would take the stack-only branch, including the one meant to carry the fund. Unrecoverable on the orchestrator path (StackAlreadyDeployedHere, and promoteShares cannot reach a differently-salted fund); recoverable on this direct EOA path via KpkOivFactory.deployShares"
+            )
         );
         reader.shouldDeployShares(_topologyJson("[]"));
 
