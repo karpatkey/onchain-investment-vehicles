@@ -326,18 +326,26 @@ from; no Foundry script is required.
 2. Nothing to seed. The orchestrator bakes the `chainId → CCIP selector` registry into its
    CONSTRUCTOR, so a freshly deployed instance already knows every wired chain — confirm with
    **Read** `getChainIds()`. Calling `setChainSelectors` afterwards is redundant, not dangerous:
-   the repo helper `CcipDeployEverywhere.seedSelectors` filters `script/ccip-networks.json` through
+   the repo helper `CcipDeployEverywhere.setChainSelectors(address,string)` filters
+   `script/ccip-networks.json` through
    `_seedable`, which rejects rows marked `excluded: true`, so `bob` and `katana` are never emitted
    — pinned by `test/SelectorSeedScope.t.sol`. What IS dangerous is supplying an unfiltered array
    by hand: adding those two makes the no-array `deployEverywhere` spend non-refundable fees on two
    dead lanes. An earlier version of this step attributed that hazard to the helper itself.
-3. **Anyone**: **Read** `quoteDeployEverywhere(config, gasLimit)` to get the total native fee.
-4. **Anyone**: **Write** `deployEverywhere(config, gasLimit)` — set the call's payable value (ETH) to
-   the quoted fee (a little extra is fine; surplus is refunded). This deploys the origin chain's part
-   of the fund — full OIV if the origin is in `sharesChains`, stack only if not — and fans the stack
-   out to every selected chain in one transaction. To target only a subset, use the
-   `deployEverywhere(config, sharesChains, destChainIds, gasLimit)` overload with an explicit
-   chain-ID array. To fill a declared shares chain, or add one later, use `deployLocal` /
+3. **Anyone**: **Read** `quoteDeployEverywhere(config, sharesChains, gasLimit)` to get the total
+   native fee.
+4. **Anyone**: **Write** `deployEverywhere(config, sharesChains, gasLimit)` — set the call's payable
+   value (ETH) to the quoted fee (a little extra is fine; surplus is refunded). This deploys the
+   origin chain's part of the fund — full OIV if the origin appears in `sharesChains`, stack only if
+   not — and fans the stack out to every wired chain in one transaction. To target only a subset, add
+   an explicit chain-ID array: `deployEverywhere(config, sharesChains, destChainIds, gasLimit)`.
+
+   **Pass the topology explicitly, as above.** The two-argument sugar
+   `deployEverywhere(config, gasLimit)` does NOT read a topology — it CONSTRUCTS one naming this
+   chain as the sole shares chain (`_localTopology`). That is a different fund: the topology is
+   salt-bound, so the sugar lands a different salt and a different address set than the config you
+   intended, and the "stack only if not" case above cannot arise through it at all. The sugar is for
+   the single-shares-chain-here case and nothing else. To fill a declared shares chain, or add one later, use `deployLocal` /
    `promoteShares` on that chain — both are documented in `DEPLOYMENT.md`.
 5. Watch the [CCIP Explorer](https://ccip.chain.link); manually re-execute any failed destination
    message. To add a chain later (or re-send a permanently-failed one), call `dispatchTo`.

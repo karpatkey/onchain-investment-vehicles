@@ -99,8 +99,19 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Gas limit per dest:   ", gasLimit);
+        // `_resolveStackSelectors` skips the LOCAL chain — deliberately, so naming it stays a no-op
+        // rather than a revert — so `feePerDestination` is shorter than `destChainIds` whenever the
+        // local id appears. Indexing both with `i` therefore read past the array, or, with the local
+        // id in the middle, silently attached every later fee to the wrong chain. (Shares chains and
+        // duplicates revert instead of being skipped, so the local chain is the only source of the
+        // mismatch.)
+        uint256 f;
         for (uint256 i = 0; i < destChainIds.length; i++) {
-            console.log("  chainId / fee (native wei):", destChainIds[i], feePerDestination[i]);
+            if (destChainIds[i] == block.chainid) {
+                console.log("  chainId (local, not messaged - no fee):", destChainIds[i]);
+                continue;
+            }
+            console.log("  chainId / fee (native wei):", destChainIds[i], feePerDestination[f++]);
         }
         console.log("  TOTAL fee (native wei):", totalFee);
         console.log("  >>> Send at least this as msg.value to deployEverywhere; surplus is refunded.");

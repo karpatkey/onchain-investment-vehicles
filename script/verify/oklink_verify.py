@@ -257,7 +257,10 @@ def main():
             print("%-34s still pending after 120s" % target)
             problems.append((target, "timeout"))
 
-    total = len(CHAINS) * len(CONTRACTS)
+    # `active`, not `CONTRACTS`: the submit loop already excludes historical entries, and
+    # leaving the denominator on the full set reported them as verified coverage they never
+    # contributed to — 30/30 while only 20 targets were checked.
+    total = len(CHAINS) * len(active)
     print("\n%d/%d verified (%d already, %d newly submitted), %d problem(s)"
           % (total - len(problems), total, len(verified), len(pending), len(problems)))
     for target, why in problems:
