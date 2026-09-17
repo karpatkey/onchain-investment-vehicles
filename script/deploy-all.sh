@@ -56,21 +56,30 @@ cat <<EOF
 ############################################################
 Infra deployed on all wired chains.
 
-NEXT (manual, deliberate) — fan a fund out from mainnet (permissionless; caller pays native fees):
-  1. Seed the mainnet orchestrator's chainId -> CCIP selector mapping (owner key, once):
+NEXT (manual, deliberate) — fan a fund out from ANY wired chain (permissionless; caller pays
+native fees). Substitute your origin for 'ethereum' below; there is no designated source chain.
+  0. NOTHING TO SEED. The orchestrator bakes the chainId -> CCIP selector registry into its
+     CONSTRUCTOR, so a freshly deployed instance already knows every wired chain. Confirm with
+     getChainIds(). The old 'setChainSelectors' step here was an owner-only call that is now
+     redundant.
+  1. Size the native CCIP fee (no pre-funding — paid from msg.value, surplus refunded):
        forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
-         --rpc-url ethereum --private-key \$PRIVATE_KEY --broadcast \\
-         --sig "setChainSelectors(address,string)" <ORCHESTRATOR> script/ccip-networks.json
-  2. Size the native CCIP fee (no pre-funding — paid from msg.value, surplus refunded):
+         --rpc-url <origin> --sig "quote(address,string,uint256[],uint256)" \\
+         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 3000000
+  2. deployEverywhere (deploys the ORIGIN chain's part of the fund — full OIV if the origin is in
+     .sharesChains, operational stack alone if not — and CCIP-fans-out the stack; the script quotes
+     and forwards the native fee automatically). Pass destination CHAIN IDs, not selectors:
        forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
-         --rpc-url ethereum --sig "quote(address,string,uint256[],uint256)" \\
-         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 2000000
-  3. deployEverywhere (deploys the OIV on mainnet + CCIP-fans-out the stack; the script quotes and
-     forwards the native fee automatically). Pass destination CHAIN IDs, not selectors:
-       forge script script/CcipDeployEverywhere.s.sol:CcipDeployEverywhere \\
-         --rpc-url ethereum --private-key \$PRIVATE_KEY --broadcast \\
+         --rpc-url <origin> --private-key \$PRIVATE_KEY --broadcast \\
          --sig "deployEverywhere(address,string,uint256[],uint256)" \\
-         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 2000000
+         <ORCHESTRATOR> script/<fund>-config.json "[$CHAIN_IDS]" 3000000
+  3. Fill every OTHER chain named in .sharesChains with deployLocal on that chain — the fan-out
+     skips shares chains deliberately, because a stack landing on one takes the addresses its own
+     shares deployment needs.
+
+  GAS LIMIT: 3000000, not the 2000000 this helper used to print. A timelocked fund at the maximum
+  role set costs ~2.78M for deployStack alone plus ~80k for the receive frame, against a 3M cap —
+  so 2M spent every lane's non-refundable fee and then ran out of gas on arrival.
 ############################################################
 EOF
 

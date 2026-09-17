@@ -360,7 +360,7 @@ filled by its own call:
 ```bash
 # on the first shares chain — local fund + stacks everywhere else
 forge script script/CcipDeployEverywhere.s.sol --sig "deployEverywhere(address,string,uint256[],uint256)" \
-  <orchestrator> script/my-fund.json "[10,8453]" 2500000 --rpc-url ethereum --broadcast
+  <orchestrator> script/my-fund.json "[10,8453]" 3000000 --rpc-url ethereum --broadcast
 
 # on every other shares chain — local fund only, no CCIP
 forge script script/CcipDeployEverywhere.s.sol --sig "deployLocal(address,string)" \

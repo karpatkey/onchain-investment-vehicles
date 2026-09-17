@@ -76,7 +76,7 @@ Because `KpkOivFactory` mixes `msg.sender` into its salts, identical addresses a
 - **Fees.** Paid in native gas by the caller via `msg.value` (surplus refunded); size with `quoteDeployEverywhere`.
 - **Async, not atomic.** Destination stacks land after the source chain's finality (~15 min from Ethereum); a failed CCIP message is manually re-executable.
 
-**Supported networks:** 21 on-chain-verified mainnets where the full prerequisite stack exists at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2.1.1 ∩ canonical CREATE2 deployer ∩ a live CCIP lane from Ethereum). The machine-readable registry — 23 chains, the 21 wired plus 2 not-yet-ready — is **[`script/ccip-networks.json`](script/ccip-networks.json)**.
+**Supported networks:** **19 wired mainnets**, each on-chain-verified for the full prerequisite stack at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2.1.1 ∩ canonical CREATE2 deployer ∩ a live CCIP lane). These are the 19 baked into `CcipOivDeployer`'s constructor registry. The machine-readable registry — **[`script/ccip-networks.json`](script/ccip-networks.json)** — holds **23** entries: the 19 wired, **2 deliberately excluded** (`bob`, `katana`: `READY-AFTER-EMPTY` but not onboarded, and `excluded: true` keeps them out of every seeded array), and **2 not ready** (`sei`, `mode`: no Roles v2.1.1 mastercopy on-chain). Wiring a chain means adding it to the constructor, so the registry file is the record, not the source.
 
 Full reference, the supported-network table, and the new-chain onboarding checklist: **[docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md)**.
 
