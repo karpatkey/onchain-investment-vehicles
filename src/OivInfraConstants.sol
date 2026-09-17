@@ -41,10 +41,17 @@ library OivInfraConstants {
 
     // NOTE: keep the comments below free of dated operational history (which chain got what, when).
     // `foundry.toml` leaves `bytecode_hash` at its solc default, so this file's text is hashed into
-    // the metadata of every contract that imports it — editing a comment here moves the CREATE2
-    // addresses of KpkOivFactory, KpkSharesDeployer and CcipOivDeployer, forcing a salt bump and a
-    // 19-chain re-rollout. Per-chain status and deployment history belong in
-    // docs/DEPLOYED_ADDRESSES.md and script/deployed-infra.json, which cost nothing to update.
+    // the metadata of every contract whose import graph reaches it — editing a comment here moves
+    // the CREATE2 addresses of KpkOivFactory (direct import) and CcipOivDeployer (transitive, via
+    // its `import {KpkOivFactory}`), forcing a salt bump and a 19-chain re-rollout.
+    //
+    // It does NOT move either mastercopy: `kpkShares.sol` never references this file, directly or
+    // transitively, and `KpkTimelockDeployer.sol` imports only Clones, IRoles and its own interface.
+    // An earlier version of this note claimed it did. Overstating the blast radius is the safe
+    // direction to be wrong in, but it still deters edits that are free.
+    //
+    // Per-chain status and deployment history belong in docs/DEPLOYED_ADDRESSES.md and
+    // script/deployed-infra.json, which cost nothing to update.
 
     /// @notice Gnosis Safe v1.4.1 `MultiSend`.
     address internal constant MULTI_SEND = 0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526;

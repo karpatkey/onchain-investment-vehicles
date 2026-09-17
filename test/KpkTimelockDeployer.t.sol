@@ -56,8 +56,10 @@ contract Counter {
 }
 
 /// @notice Unit tests for `KpkTimelockDeployer` — no fork required.
-///         The end-to-end adoption flow against a real fund lives in
-///         `KpkTimelockDeployerFork.t.sol`.
+/// @dev    The end-to-end adoption flow against a real fund is covered by `KpkOivFactoryTest`'s
+///         timelock cases, which run on a mainnet fork. There is no separate fork file for this
+///         contract; an earlier version of this comment named one that does not exist, which
+///         invited a reader to assume coverage of the one-way `transferOwnership` step.
 contract KpkTimelockDeployerTest is Test {
     KpkTimelockDeployer kit;
 
@@ -65,7 +67,11 @@ contract KpkTimelockDeployerTest is Test {
     address superadminSafe = makeAddr("superadminSafe");
     address managerVetoSafe = makeAddr("managerVetoSafe");
     address lpVetoSafe = makeAddr("lpVetoSafe");
-    address execMod = makeAddr("execMod");
+    /// @dev A real contract, not a `makeAddr` placeholder: `_deployTimelock` now refuses to create a
+    ///      timelock for a `governed` address with no code, because on the manual path a typo'd
+    ///      address would otherwise yield a real timelock governing nothing. `MockOwnable` also gives
+    ///      `isExecTimelocked` an `owner()` to read.
+    address execMod;
     address sharesProxy = makeAddr("sharesProxy");
     address randomExecutor = makeAddr("randomExecutor");
 
@@ -73,6 +79,7 @@ contract KpkTimelockDeployerTest is Test {
 
     function setUp() public {
         kit = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
+        execMod = address(new MockOwnable(address(this)));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -306,6 +313,30 @@ contract KpkTimelockDeployerTest is Test {
     ///         address, schedule and execute `revokeRole` on the instance itself to strip the veto,
     ///         and then let the factory adopt an address that still matches its prediction.
     ///         Adoption must reject it.
+    /// @notice The symmetric case to the veto-stripped test below, which a mutation sweep found had
+    ///         no coverage: `_requireLiveConfigMatches` checks the proposer set with its own loop,
+    ///         and deleting that loop failed no test. A timelock whose PROPOSERS were reduced would
+    ///         then have been adopted as matching — handing a fund to governance narrower than its
+    ///         config describes, which is the direction that concentrates power rather than
+    ///         removing a safeguard.
+    function test_adoption_rejectsAPreDeployedTimelockWithAProposerStripped() public {
+        TimelockParams memory p = _params();
+        address predicted = kit.predictExecTimelock(execMod, p);
+
+        TimelockController tl = TimelockController(payable(kit.deployExecTimelock(execMod, p)));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer present at construction");
+
+        bytes memory payload = abi.encodeCall(tl.revokeRole, (tl.PROPOSER_ROLE(), superadminSafe));
+        vm.prank(governanceSafe);
+        tl.schedule(address(tl), 0, payload, bytes32(0), bytes32(0), 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1);
+        tl.execute(address(tl), 0, payload, bytes32(0), bytes32(0));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), superadminSafe), "proposer stripped");
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.TimelockStateMismatch.selector, predicted));
+        kit.deployExecTimelock(execMod, p);
+    }
+
     function test_adoption_rejectsAPreDeployedTimelockWithTheVetoStripped() public {
         TimelockParams memory p = _params();
         address predicted = kit.predictExecTimelock(execMod, p);
@@ -504,5 +535,106 @@ contract KpkTimelockDeployerTest is Test {
 
         vm.prank(governanceSafe);
         tl.schedule(address(counter), 0, payload, bytes32(0), bytes32(0), 2 days);
+    }
+
+    /// @notice `isExecTimelocked` must answer FALSE, not revert and not true, for the two inputs a
+    ///         cross-chain sweep actually produces. `OivInstance.execTimelock` is zero when no
+    ///         timelock was configured, and a modifier whose ownership was RENOUNCED also has owner
+    ///         zero — so comparing them would report a bricked fund as correctly timelocked.
+    function test_isExecTimelocked_isFalseForAZeroTimelock() public {
+        MockOwnable renounced = new MockOwnable(address(0));
+        assertFalse(kit.isExecTimelocked(address(renounced), address(0)), "zero must never read as timelocked");
+    }
+
+    /// @notice And a chain where the modifier does not exist must answer false rather than reverting,
+    ///         since the function documents itself as safe to sweep across every chain a fund may or
+    ///         may not live on.
+    /// @dev    The timelock argument must have CODE for this to test what it claims. It previously
+    ///         passed a bare `address(0xbeef)`, which the codeless-timelock guard now short-circuits
+    ///         first — leaving the test green while no longer exercising the absent-modifier branch
+    ///         at all. Using a real deployment keeps the two guards independently pinned.
+    function test_isExecTimelocked_isFalseWhereTheModifierDoesNotExist() public {
+        MockOwnable liveTimelock = new MockOwnable(address(this));
+        assertFalse(kit.isExecTimelocked(address(0xdead), address(liveTimelock)), "absent modifier must not revert");
+    }
+
+    /// @notice A modifier whose ownership was transferred to a CODELESS address is permanently
+    ///         unownable — nothing there can ever call `transferOwnership` back. Reporting it as
+    ///         correctly timelocked is the same inversion the zero-address check exists to prevent,
+    ///         one step removed: the sweep exists to find funds that are NOT delay-governed, and this
+    ///         is the worst case of that, since the governance is not merely missing but unrecoverable.
+    ///
+    ///         Unreachable through `KpkOivFactory`, whose timelock is always a `Clones` deployment
+    ///         and therefore always has code. This guards the standalone and adopted paths, where the
+    ///         modifier's owner has a history this contract did not create.
+    function test_isExecTimelocked_isFalseForACodelessTimelock() public {
+        address codeless = address(0xBEEF);
+        assertEq(codeless.code.length, 0, "precondition: the owner must have no code");
+
+        MockOwnable strandedModifier = new MockOwnable(codeless);
+        assertEq(strandedModifier.owner(), codeless, "precondition: ownership really was transferred there");
+
+        assertFalse(
+            kit.isExecTimelocked(address(strandedModifier), codeless),
+            "a modifier owned by a codeless address is stranded, not timelocked"
+        );
+    }
+
+    /// @notice Deploying a timelock for a `governed` address with no code produces a real,
+    ///         funded-looking timelock that governs nothing — and `isExecTimelocked` cannot flag it,
+    ///         because there is nothing there to ask. Predicting for a not-yet-deployed modifier
+    ///         stays legal, which is why the check is on the deploy path only.
+    function test_deployExecTimelock_refusesAGovernedAddressWithNoCode() public {
+        address notAContract = makeAddr("typoedModifier");
+        TimelockParams memory p = _params();
+
+        kit.predictExecTimelock(notAContract, p); // prediction is still fine
+
+        vm.expectRevert(abi.encodeWithSelector(KpkTimelockDeployer.GovernedHasNoCode.selector, notAContract));
+        kit.deployExecTimelock(notAContract, p);
+    }
+
+    // ── The mastercopy itself ───────────────────────────────────────────────────
+
+    /// @notice `TimelockControllerUpgradeable` has no constructor, so nothing calls
+    ///         `_disableInitializers()` and a raw deployment of it leaves `initialize` open —
+    ///         at an address this repo publishes as kpk infrastructure. Clones are unaffected
+    ///         (own storage), so this is not a fund compromise, but it would hand a stranger
+    ///         `DEFAULT_ADMIN_ROLE` over a fully functional `TimelockController` bearing our name.
+    ///
+    ///         `OivChainDeploy` therefore claims the initializer immediately after CREATE2.
+    ///
+    ///         Be precise about what these two tests pin, because an earlier comment here overclaimed
+    ///         it. They construct `TimelockControllerUpgradeable` directly and touch no repo code, so
+    ///         they pin UPSTREAM behaviour only: that an unclaimed mastercopy is takeable, and that
+    ///         claiming it with empty arrays leaves it inert. That is worth having — it is the
+    ///         regression check for an OZ bump that adds `_disableInitializers`, which would retire
+    ///         the hazard — but it is NOT coverage of our claim logic. The claim lives in a deploy
+    ///         script and is exercised by running one; a round-2 review found that logic had been
+    ///         changed in a way that broke every re-run, and no test noticed.
+    function test_timelockMastercopy_unclaimedIsTakeableByAnyone() public {
+        TimelockControllerUpgradeable fresh = new TimelockControllerUpgradeable();
+        address[] memory none = new address[](0);
+        address squatter = makeAddr("mastercopySquatter");
+
+        vm.prank(squatter);
+        fresh.initialize(1 days, none, none, squatter);
+
+        assertTrue(fresh.hasRole(bytes32(0), squatter), "an unclaimed mastercopy is takeable by anyone");
+    }
+
+    function test_timelockMastercopy_claimingItWithNoRolesLeavesItInert() public {
+        TimelockControllerUpgradeable mc = new TimelockControllerUpgradeable();
+        address[] memory none = new address[](0);
+
+        // Exactly what the deploy script does.
+        mc.initialize(0, none, none, address(0));
+
+        assertFalse(mc.hasRole(bytes32(0), address(this)), "claiming it must grant no admin to us either");
+
+        address squatter = makeAddr("lateSquatter");
+        vm.prank(squatter);
+        vm.expectRevert();
+        mc.initialize(1 days, none, none, squatter);
     }
 }

@@ -5,8 +5,9 @@ direct, per-chain path: `deployOiv` for the full fund (typically mainnet) and `d
 operational stack on additional chains. For the one-transaction multichain path, see
 [CCIP_FUND_DEPLOYMENT_FLOW.md](CCIP_FUND_DEPLOYMENT_FLOW.md).
 
-> **Assumed already deployed** (same address on every supported chain): `KpkOivFactory`,
-> `KpkSharesDeployer`, the `Empty` contract (Avatar Safe signer), and the canonical Safe v1.4.1 +
+> **Assumed already deployed** (same address on every supported chain): `KpkOivFactory`, the
+> `KpkShares` mastercopy, `KpkTimelockDeployer` and its `TimelockController` mastercopy, the `Empty`
+> contract (Avatar Safe signer), and the canonical Safe v1.4.1 +
 > Zodiac infrastructure. See [DEPLOYED_ADDRESSES.md](DEPLOYED_ADDRESSES.md). This doc is only about
 > deploying a **fund** through them.
 
@@ -40,7 +41,7 @@ sequenceDiagram
     participant F as KpkOivFactory
     participant Z as Zodiac ModuleProxyFactory
     participant S as Safe ProxyFactory
-    participant D as KpkSharesDeployer
+    participant D as KpkShares mastercopy (shared, pre-deployed)
     participant Av as Avatar Safe
 
     Op->>Fg: deployOiv(configPath)
@@ -50,8 +51,8 @@ sequenceDiagram
     F->>S: create Avatar Safe (signer = Empty, modules [exec, factory])
     F->>S: create Manager Safe (owners + threshold, module [manager])
     Note over F: wire exec/sub/manager modifiers<br/>(assign roles, set avatar/target, transfer ownership)
-    F->>D: deploy(implSalt) → kpkShares implementation
-    F->>F: new ERC1967Proxy(impl, initialize) → shares proxy
+    Note over F,D: no per-fund implementation is deployed — the mastercopy<br/>is a fixed, already-deployed address the factory reads
+    F->>F: new ERC1967Proxy(kpkSharesMastercopy, initialize) → shares proxy
     Note over F: register additional assets, grant OPERATOR to Manager Safe,<br/>grant admin to admin, renounce factory's own admin
     F->>Av: approve shares proxy for base + redeemable assets (via module call)
     F->>Av: disable factory module
@@ -69,7 +70,7 @@ flowchart TD
         Sub["sub Roles Modifier<br/>(automation)"]
         Mgr["Manager Safe<br/>(operators)"]
         MgrMod["manager Roles Modifier"]
-        Px["kpkShares proxy<br/>(+ per-fund impl)"]
+        Px["kpkShares proxy<br/>(delegates to the chain's<br/>shared KpkShares mastercopy)"]
     end
     Ex -->|"execTransactionFromModule"| Av
     Sub --> Ex

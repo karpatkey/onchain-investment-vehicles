@@ -4,6 +4,9 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {OivConfigReader} from "script/base/OivConfigReader.sol";
+import {DeployOiv} from "script/DeployOiv.s.sol";
+import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
+import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 
 /// @dev Exposes the reader's internals. The reader is `abstract` and its helpers are `internal`, so
 ///      without this the only way to observe a parse would be a full fork deployment.
@@ -16,8 +19,16 @@ contract ReaderHarness is OivConfigReader {
         return _buildStackConfig(json);
     }
 
+    function sharesChains(string memory json) external view returns (CcipOivDeployer.SharesChain[] memory) {
+        return _buildSharesChains(json);
+    }
+
     function shouldDeployShares(string memory json) external view returns (bool) {
         return _shouldDeployShares(json);
+    }
+
+    function timelockParams(string memory json, string memory key) external view returns (TimelockParams memory) {
+        return _readTimelockParams(json, key);
     }
 }
 
@@ -88,9 +99,22 @@ contract OivConfigReaderTest is Test {
         assertFalse(reader.shouldDeployShares(json), "arbitrum is not listed - stack only");
     }
 
+    /// @notice The CCIP path must NOT default the topology to "the chain this happens to run on":
+    ///         that makes the salt origin-dependent, which is the very defect the salt-bound topology
+    ///         exists to remove. The direct factory path has no such problem and keeps its default.
+    function test_buildSharesChains_requiresAnExplicitTopology() public {
+        string memory legacy = vm.readFile("test/fixtures/no-shares-chains.config.json");
+        vm.expectRevert(
+            bytes(
+                "config: .sharesChains is required for the CCIP path - a per-chain default would make the salt origin-dependent"
+            )
+        );
+        reader.sharesChains(legacy);
+    }
+
     /// @dev A config predating these fields must keep deploying exactly as it did.
     function test_absentBlocksMeanNoTimelockAndNoRestriction() public {
-        string memory legacy = vm.readFile("script/ccip-test-fund-config.json");
+        string memory legacy = vm.readFile("test/fixtures/no-shares-chains.config.json");
         KpkOivFactory.OivConfig memory c = reader.oivConfig(legacy);
 
         assertEq(c.execTimelock.minDelay, 0, "absent block is the no-timelock sentinel");
@@ -98,5 +122,293 @@ contract OivConfigReaderTest is Test {
         assertEq(c.execTimelock.proposers.length, 0);
         vm.chainId(42161);
         assertTrue(reader.shouldDeployShares(legacy), "absent sharesChains leaves the choice to the caller");
+    }
+
+    // ── Malformed-config guards ─────────────────────────────────────────────────
+    //
+    // Each of these rejections previously had no test, so any of them could have been deleted
+    // without a failure — which for a parser is the same as not having it: the whole point is that a
+    // wrong config is refused rather than deployed.
+
+    /// @dev The guard this PR added. `minDelay` is the factory's "no timelock" sentinel, so a block
+    ///      present without it means the operator asked for governance and silently got none.
+    function test_timelock_revertsWhenMinDelayKeyIsMissing() public {
+        string memory bad = '{"oiv":{"execTimelock":{"proposers":["0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537"]}}}';
+        vm.expectRevert(
+            bytes("config: .oiv.execTimelock exists but has no minDelay - a timelock would be silently skipped")
+        );
+        reader.timelockParams(bad, ".oiv.execTimelock");
+    }
+
+    /// @dev Same silent skip, expressed as a value rather than an omission — a placeholder left
+    ///      unfilled, or seconds/days confused.
+    function test_timelock_revertsWhenMinDelayIsZero() public {
+        string memory bad =
+            '{"oiv":{"execTimelock":{"minDelay":0,"proposers":["0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537"]}}}';
+        vm.expectRevert(
+            bytes("config: .oiv.execTimelock.minDelay is 0 - omit the block entirely to deploy without a timelock")
+        );
+        reader.timelockParams(bad, ".oiv.execTimelock");
+    }
+
+    /// @dev A MISSING `proposers` key parsed as zero proposers, and zero proposers is a timelock that
+    ///      can never schedule anything — whatever it governs is frozen with no recovery. So a typo
+    ///      like "proposer" bricked the fund at deploy time with no error.
+    function test_timelock_revertsWhenProposersKeyIsMissing() public {
+        string memory bad = '{"oiv":{"execTimelock":{"minDelay":172800,"cancellers":[]}}}';
+        // The MESSAGE is pinned, not merely the revert: without the ternary default a missing key
+        // reaches `readAddressArray` and reverts on its own, so a bare `expectRevert` would pass with
+        // the guard deleted and assert nothing about it. What the guard adds is an operator-legible
+        // reason in place of a raw stdJson parse failure.
+        vm.expectRevert(
+            bytes(
+                "config: .oiv.execTimelock exists but has no proposers - state [] explicitly to accept a frozen timelock"
+            )
+        );
+        reader.timelockParams(bad, ".oiv.execTimelock");
+    }
+
+    /// @dev But an EXPLICITLY empty list stays legal: zero proposers is a permitted choice on-chain,
+    ///      and the factory deliberately imposes no floor. The guard above distinguishes a choice
+    ///      from an omission, which is the whole distinction it exists to draw.
+    function test_timelock_allowsAnExplicitlyEmptyProposerList() public view {
+        string memory ok = '{"oiv":{"execTimelock":{"minDelay":172800,"proposers":[],"cancellers":[]}}}';
+        TimelockParams memory p = reader.timelockParams(ok, ".oiv.execTimelock");
+        assertEq(p.minDelay, 2 days, "delay parsed");
+        assertEq(p.proposers.length, 0, "an empty list is accepted as stated");
+    }
+
+    /// @dev `.execRolesModFinalOwner` and `.oiv.admin` describe the same role — the factory derives
+    ///      `finalOwner := admin`. Because `deploy` picks either branch per chain from one config,
+    ///      letting them differ would leave the stack-only chains under a different exec-modifier
+    ///      owner than the shares chains, with every address still matching.
+    function test_stackConfig_revertsWhenFinalOwnerDisagreesWithAdmin() public {
+        string memory bad = string.concat(
+            '{"managerSafe":{"owners":["',
+            vm.toString(GOV),
+            '"],"threshold":1},',
+            '"execRolesModFinalOwner":"',
+            vm.toString(GOV),
+            '",',
+            '"salt":42,"oiv":{"admin":"',
+            vm.toString(SUPERADMIN),
+            '"}}'
+        );
+        vm.expectRevert(bytes("config: .execRolesModFinalOwner must equal .oiv.admin - they are the same role"));
+        reader.stackConfig(bad);
+    }
+
+    /// @dev And agreeing is accepted, so the guard is not simply rejecting everything.
+    function test_stackConfig_acceptsAgreeingOwnerAndAdmin() public view {
+        string memory ok = string.concat(
+            '{"managerSafe":{"owners":["',
+            vm.toString(GOV),
+            '"],"threshold":1},',
+            '"execRolesModFinalOwner":"',
+            vm.toString(SUPERADMIN),
+            '",',
+            '"salt":42,"oiv":{"admin":"',
+            vm.toString(SUPERADMIN),
+            '"}}'
+        );
+        KpkOivFactory.StackConfig memory c = reader.stackConfig(ok);
+        assertEq(c.execRolesMod.finalOwner, SUPERADMIN, "owner carried through");
+    }
+
+    /// @notice Script-level coverage for the auto-branching entry point, which the helper tests
+    ///         cannot give: `_shouldDeployShares` answers "true" for a config with no
+    ///         `.sharesChains`, which is the right default for the explicit `deployOiv` /
+    ///         `deployStack` paths and the wrong one for `deploy`. Run across 19 chains with a
+    ///         silent config — and the repo ships one, `test/fixtures/no-shares-chains.config.json` — it
+    ///         would have put a live shares token on every chain, which is precisely the outcome
+    ///         chain selection exists to prevent. The guard fires before any broadcast.
+    function test_deploy_refusesAConfigThatDoesNotSayWhichChainsGetShares() public {
+        DeployOiv script = new DeployOiv();
+        string memory path = "test/fixtures/no-shares-chains.config.json";
+
+        // Guard the premise: if this file ever gains a `.sharesChains` key, this test would pass
+        // vacuously, so assert the condition it depends on.
+        assertFalse(vm.keyExists(vm.readFile(path), ".sharesChains"), "fixture must have no .sharesChains");
+
+        vm.expectRevert(
+            bytes(
+                "config: deploy(configPath) requires .sharesChains - use deployOiv or deployStack to choose per chain"
+            )
+        );
+        script.deploy(path);
+    }
+
+    /// @notice The other half of the branch contract: `deployOiv` must refuse a chain the topology
+    ///         does not list, rather than quietly creating a shares token nobody asked for. Like the
+    ///         test above, this fires before any broadcast, so it needs no RPC.
+    function test_deployOiv_refusesAChainOutsideTheTopology() public {
+        DeployOiv script = new DeployOiv();
+
+        // The example config declares [1, 100]; assert this chain really is outside it, so the test
+        // cannot pass for the wrong reason if the fixture changes.
+        assertFalse(reader.shouldDeployShares(json), "this chain must be outside the example topology");
+
+        vm.expectRevert(bytes("config: this chain is not in .sharesChains - use deployStack, or fix the config"));
+        script.deployOiv("script/oiv-config.example.json");
+    }
+
+    /// @notice Every declared shares chain must name its own asset, so the shipped example names
+    ///         both — including chain 1, whose asset happens to equal `.oiv.sharesParams.asset`.
+    ///         Repeating an address is legal; leaving it implied is not.
+    function test_sharesChains_everyDeclaredChainNamesItsOwnAsset() public view {
+        CcipOivDeployer.SharesChain[] memory t = reader.sharesChains(json);
+        assertEq(t.length, 2, "example declares two shares chains");
+        assertEq(t[0].asset, USDC, "chain 1 names its asset explicitly");
+        assertEq(t[1].asset, GNOSIS_ASSET, "chain 100 names its own");
+    }
+
+    /// @notice ANY omission is refused. An earlier rule allowed one, reasoning that the fallback
+    ///         belongs to exactly one chain — but nothing checked WHICH chain omitted, so overriding
+    ///         chain 1 and omitting chain 100 satisfied it while chain 100 silently took the mainnet
+    ///         token. Because the topology is hashed into the salt, that is unrecoverable once the
+    ///         fan-out has spent its fees.
+    function test_sharesChains_refusesAnyMissingOverride() public {
+        string memory bad = string.concat(
+            '{"sharesChains":[1,10,100],',
+            '"oiv":{"sharesParams":{"asset":"',
+            vm.toString(USDC),
+            '"},',
+            '"assetOverrides":{"100":"',
+            vm.toString(GNOSIS_ASSET),
+            '"}}}'
+        );
+        // The MESSAGE, not a bare `expectRevert`. This test used to bite with a bare one, because the
+        // asset lookup still had a `.oiv.sharesParams.asset` fallback: delete the guard and the
+        // parse succeeded. Removing that fallback as dead code — correct in itself — made
+        // `readAddress` revert on the absent key too, so a bare assertion could no longer tell the
+        // guard's revert from the parser's, and this test passed with the guard deleted. A correct
+        // cleanup silently invalidated a correct probe; only the pinned string survives that.
+        vm.expectRevert(
+            bytes(
+                "config: .oiv.assetOverrides has no entry for declared shares chain 1 - every shares chain must name its own asset, even if it repeats another"
+            )
+        );
+        reader.sharesChains(bad);
+    }
+
+    /// @notice `deployStack` on a chain the topology DECLARES omits the shares token that config
+    ///         asks for, and the guard exists to catch the mistake at the point it is made.
+    /// @dev    Be accurate about the cost, because this NatSpec previously preserved the exact false
+    ///         claim the production revert string was corrected to remove — that the chain is
+    ///         stranded permanently and only a new salt recovers it. On THIS script's direct flow
+    ///         (EOA caller, raw `config.salt`) it is recoverable: `KpkOivFactory.deployShares(config)`
+    ///         adds the shares token to the wired stack in one transaction, at the canonical
+    ///         addresses. An EOA-run `deployStack` cannot strand an ORCHESTRATOR-deployed fund at all,
+    ///         because those salts mix `msg.sender` and it never reaches those addresses.
+    ///
+    ///         The unrecoverable pairing — `deployLocal` blocked by `StackAlreadyDeployedHere` and
+    ///         `promoteShares` by `SharesChainAlreadyDeclared` — needs the ORCHESTRATOR to have wired
+    ///         the stack, which this script never does. A test that documents the failure it guards
+    ///         more direly than the failure is will outlive the message it was written beside.
+    function test_deployStack_refusesAChainInsideTheTopology() public {
+        DeployOiv script = new DeployOiv();
+
+        // The example declares [1, 100]; stand on chain 1 so this chain is inside its topology.
+        vm.chainId(1);
+        assertTrue(reader.shouldDeployShares(json), "this chain must be inside the example topology");
+
+        vm.expectRevert(
+            bytes(
+                "config: this chain IS in .sharesChains - use deployOiv; deployStack here omits the shares token this config asks for (recoverable via KpkOivFactory.deployShares)"
+            )
+        );
+        script.deployStack("script/oiv-config.example.json");
+    }
+
+    /// @dev Builds a minimal topology-only config with the given chain-id list.
+    function _topologyJson(string memory ids) internal view returns (string memory) {
+        return string.concat(
+            '{"sharesChains":',
+            ids,
+            ",",
+            '"oiv":{"sharesParams":{"asset":"',
+            vm.toString(USDC),
+            '"},',
+            '"assetOverrides":{"100":"',
+            vm.toString(GNOSIS_ASSET),
+            '"}}}'
+        );
+    }
+
+    /// @notice An EMPTY topology satisfies every presence check — `keyExists` answers true for `[]` —
+    ///         and then answers false on every chain, so each one takes the stack-only branch,
+    ///         including the chain meant to carry the fund. Those stacks are wired, so a corrected
+    ///         re-run reverts `StackAlreadyDeployedHere` and the canonical addresses are gone. There
+    ///         is no recovery via `promoteShares`: it runs on the orchestrator, with a different
+    ///         caller and a different salt, so it cannot reach a fund deployed this way.
+    function test_sharesChains_refusesAnEmptyTopology() public {
+        vm.expectRevert(
+            bytes(
+                "config: .sharesChains is empty - every chain would take the stack-only branch, including the one meant to carry the fund. Unrecoverable on the orchestrator path (StackAlreadyDeployedHere, and promoteShares cannot reach a differently-salted fund); recoverable on this direct EOA path via KpkOivFactory.deployShares"
+            )
+        );
+        reader.sharesChains(_topologyJson("[]"));
+    }
+
+    /// @notice Chain id 0 slipped past the ascending check as a leading element, and surfaced from
+    ///         the orchestrator as `InvalidSharesChain()` — which carries no id, defeating the
+    ///         stated purpose of failing here with the offending one.
+    function test_sharesChains_refusesChainIdZero() public {
+        vm.expectRevert(bytes("config: .sharesChains contains chain id 0"));
+        reader.sharesChains(_topologyJson("[0,1]"));
+    }
+
+    /// @notice The ascending requirement had no test at all — a mutation sweep found it survived
+    ///         deletion. Order is load-bearing: the topology is hashed into the salt, so two
+    ///         orderings are two different funds.
+    function test_sharesChains_refusesADescendingList() public {
+        vm.expectRevert(bytes("config: .sharesChains must be strictly ascending by chain id"));
+        reader.sharesChains(_topologyJson("[100,1]"));
+    }
+
+    /// @notice The asymmetry this fixes: the SAME malformed topology that `sharesChains` refuses
+    ///         loudly was accepted in silence by `shouldDeployShares`, which is the reader
+    ///         `DeployOiv.deploy` consults to pick its branch. Refusing in one place and
+    ///         reinterpreting in the other is worse than refusing in neither — the guarded path
+    ///         teaches you the input is checked.
+    ///
+    ///         `[]` is the dangerous member of this set. The other two produce a nonsense answer;
+    ///         `[]` produces a PLAUSIBLE one — "this chain carries no shares" — on every chain at
+    ///         once, which is a legal instruction to deploy a wired stack everywhere and strand the
+    ///         fund at addresses nothing can reclaim.
+    function test_shouldDeployShares_refusesEveryTopologyTheBuilderRefuses() public {
+        vm.expectRevert(
+            bytes(
+                "config: .sharesChains is empty - every chain would take the stack-only branch, including the one meant to carry the fund. Unrecoverable on the orchestrator path (StackAlreadyDeployedHere, and promoteShares cannot reach a differently-salted fund); recoverable on this direct EOA path via KpkOivFactory.deployShares"
+            )
+        );
+        reader.shouldDeployShares(_topologyJson("[]"));
+
+        vm.expectRevert(bytes("config: .sharesChains contains chain id 0"));
+        reader.shouldDeployShares(_topologyJson("[0,1]"));
+
+        vm.expectRevert(bytes("config: .sharesChains must be strictly ascending by chain id"));
+        reader.shouldDeployShares(_topologyJson("[100,1]"));
+    }
+
+    /// @notice The permissive default is deliberate and must SURVIVE the validator: a config with no
+    ///         `.sharesChains` key at all still answers true, because the explicit `deployOiv` /
+    ///         `deployStack` entry points are allowed to have no opinion about topology. Only
+    ///         `deploy` requires the key. Without this, tightening the validator would quietly break
+    ///         the legacy per-chain flow instead of the malformed-config case it targets.
+    function test_shouldDeployShares_keepsThePermissiveDefaultWhenTheKeyIsAbsent() public view {
+        string memory noKey = string.concat('{"oiv":{"sharesParams":{"asset":"', vm.toString(USDC), '"}}}');
+        assertTrue(reader.shouldDeployShares(noKey), "an absent .sharesChains is 'no opinion', not 'no shares'");
+    }
+
+    /// @notice `_requireAssetIsLive` also survived deletion. It runs before any broadcast, so this
+    ///         reaches it without an RPC: on this unit-test chain no token has code, and standing on
+    ///         chain 1 puts us inside the example's topology so the branch guard passes first.
+    function test_deployOiv_refusesAnAssetWithNoCodeOnThisChain() public {
+        DeployOiv script = new DeployOiv();
+        vm.chainId(1);
+
+        vm.expectRevert(bytes("config: base asset has no code on this chain - add an .oiv.assetOverrides entry for it"));
+        script.deployOiv("script/oiv-config.example.json");
     }
 }

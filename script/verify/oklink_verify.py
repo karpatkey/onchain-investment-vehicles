@@ -83,9 +83,18 @@ CONTRACTS = {
             "0000000000000000000000000000000000000000000000000000000000000000"
         ),
     },
+    # HISTORICAL, and no longer re-runnable from this tree: `src/KpkSharesDeployer.sol` was deleted
+    # when the factory moved to shared mastercopies. This contract is part of the LIVE salt-v3 stack
+    # and is already verified 30/30, so the entry is kept as the record of what was verified. To
+    # re-verify it, check out a commit that still contains the source.
     "kpkSharesDeployer": {
         "address": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
-        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",
+        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",  # deleted from HEAD
+        # Historical: kept so the record of what was verified at this address survives, but excluded
+        # from every active loop. `prepare()` already skipped regenerating it (the source is gone),
+        # while `main()` still submitted the committed artifact on every chain — re-verifying a
+        # retired contract and counting it toward the coverage total.
+        "historical": True,
         "ctor": "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f",
     },
     "ccipOivDeployer": {
@@ -126,13 +135,40 @@ def prepare():
     """Regenerate the standard-JSON inputs with forge (optimizer/viaIR live inside)."""
     os.makedirs(STD_DIR, exist_ok=True)
     for name, meta in CONTRACTS.items():
-        with open(std_path(name), "w") as fh:
-            subprocess.run(
-                ["forge", "verify-contract",
-                 "0x0000000000000000000000000000000000000000",
-                 meta["identifier"], "--show-standard-json-input"],
-                cwd=REPO, stdout=fh, check=True,
-            )
+        if meta.get("historical"):
+            print("skip %s: historical record, not regenerated" % name)
+            continue
+        # Entries whose source no longer exists in this tree are skipped, not attempted. `forge`
+        # exits non-zero on an unresolvable identifier, and because the output file is opened for
+        # writing FIRST, attempting it truncated the checked-in artifact to zero bytes and then
+        # raised — leaving every later entry unregenerated and a subsequent plain run submitting an
+        # empty standard-JSON body, which passes the existence precondition further down.
+        src = meta["identifier"].split(":")[0]
+        if not os.path.exists(os.path.join(REPO, src)):
+            print("skip %s: %s is not in this tree (kept as a record of what was verified)" % (name, src))
+            continue
+
+        # Generated to a temporary path and moved into place only on success. The source-existence
+        # check above narrows ONE cause of the truncation described there; it does not prevent it.
+        # `open(dest, "w")` truncates before `forge` runs, so a stale identifier, a compile error, or
+        # any other non-zero exit still replaced the committed artifact with an empty file — and an
+        # empty file passes the existence precondition further down, which is how a plain run came to
+        # submit an empty standard-JSON body.
+        tmp = std_path(name) + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                subprocess.run(
+                    ["forge", "verify-contract",
+                     "0x0000000000000000000000000000000000000000",
+                     meta["identifier"], "--show-standard-json-input"],
+                    cwd=REPO, stdout=fh, check=True,
+                )
+            if os.path.getsize(tmp) == 0:
+                raise RuntimeError("forge produced an empty standard-JSON input for %s" % name)
+            os.replace(tmp, std_path(name))
+        except Exception:
+            os.path.exists(tmp) and os.remove(tmp)
+            raise
         print("wrote %s (%d bytes)" % (std_path(name), os.path.getsize(std_path(name))))
 
 
@@ -195,14 +231,18 @@ def main():
         prepare()
         return 0
 
-    for name in CONTRACTS:
+    active = [n for n, m in CONTRACTS.items() if not m.get("historical")]
+    for name in active:
         if not os.path.exists(std_path(name)):
             print("missing %s -- run with --prepare first" % std_path(name))
             return 1
+    for name, meta in CONTRACTS.items():
+        if meta.get("historical"):
+            print("skip %s: historical record, not re-verified" % name)
 
     verified, pending, problems = [], [], []
     for chain in CHAINS:
-        for name in CONTRACTS:
+        for name in active:
             code, guid = submit(chain, name)
             target = "%s/%s" % (chain, name)
             if code == ALREADY_VERIFIED:
@@ -231,7 +271,10 @@ def main():
             print("%-34s still pending after 120s" % target)
             problems.append((target, "timeout"))
 
-    total = len(CHAINS) * len(CONTRACTS)
+    # `active`, not `CONTRACTS`: the submit loop already excludes historical entries, and
+    # leaving the denominator on the full set reported them as verified coverage they never
+    # contributed to — 30/30 while only 20 targets were checked.
+    total = len(CHAINS) * len(active)
     print("\n%d/%d verified (%d already, %d newly submitted), %d problem(s)"
           % (total - len(problems), total, len(verified), len(pending), len(problems)))
     for target, why in problems:

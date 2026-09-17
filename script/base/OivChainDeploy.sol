@@ -139,8 +139,10 @@ abstract contract OivChainDeploy is Script {
         );
     }
 
-    /// @dev Both mastercopies take no constructor arguments, so each lands at one address on every
-    ///      chain and the contracts that reference them stay chain-independent.
+    /// @dev The two MASTERCOPIES take no constructor arguments, so each lands at one address on
+    ///      every chain. `KpkTimelockDeployer` does take one — the timelock mastercopy — so its
+    ///      address depends on that mastercopy's, and therefore on the salt generation; it is still
+    ///      chain-independent, because every input is.
     function _sharesMastercopyInitCode() internal pure returns (bytes memory) {
         return type(KpkShares).creationCode;
     }
@@ -308,8 +310,52 @@ abstract contract OivChainDeploy is Script {
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode));
             require(ok, "timelock mastercopy CREATE2 deploy failed");
             console.log("[OK]   Timelock mastercopy deployed at:", timelockMastercopy);
+
+            // `TimelockControllerUpgradeable` has no constructor, so nothing calls
+            // `_disableInitializers()` and its `initialize` stays open at this published, canonical
+            // address. Clones are unaffected — they get their own storage — so an outsider claiming
+            // it is not a fund compromise, but it would leave a fully functional
+            // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
+            // publishes as kpk infrastructure.
+            //
+            // Claim it here — BEST EFFORT, not a guarantee, and the difference matters. The CREATE2
+            // and this `initialize` are separate broadcast transactions, so a searcher watching the
+            // mempool can claim the published address in between; this call then reverts, and a
+            // re-run takes the `[SKIP]` path because code already exists. The post-flight below is
+            // what catches that, and only partially: it detects a claimer who gave themselves a delay
+            // or open execution, not one who claimed it inert while holding PROPOSER_ROLE. Closing it
+            // properly needs a thin wrapper whose CONSTRUCTOR calls `_disableInitializers()`, which
+            // moves the mastercopy address and every timelock address with it.
+            //
+            // Note WHY the result is inert, because the obvious reason is wrong: OZ does not leave it
+            // role-free. `__TimelockController_init_unchained` grants `DEFAULT_ADMIN_ROLE` to the
+            // contract ITSELF unconditionally; the `admin == address(0)` branch only skips granting
+            // the extra admin. Inertness comes from the empty arrays alone — no proposer can
+            // schedule, and `EXECUTOR_ROLE` is not open.
+            //
+            // Inside this branch only, which is what keeps a re-run idempotent: a freshly CREATE2'd
+            // contract is definitively uninitialized, so requiring success here is safe, and the
+            // `[SKIP]` path below records no transaction at all.
+            address[] memory noMembers = new address[](0);
+            (bool claimed,) = timelockMastercopy.call(
+                abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembers, noMembers, address(0)))
+            );
+            require(claimed, "timelock mastercopy initializer could not be claimed");
+            console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
+            // NO retry here, deliberately. An earlier version attempted the claim on this path too,
+            // to cover a run whose CREATE2 landed while its `initialize` did not. It was inside
+            // `vm.startBroadcast()`, and forge records a broadcastable transaction at call-entry
+            // whether or not it reverts — so on an ALREADY-claimed mastercopy the recorded
+            // transaction failed simulation and aborted the whole run. That destroyed the idempotence
+            // every per-chain script depends on (each step is a `[SKIP]` branch precisely so a
+            // partial rollout can be resumed), on all 20 lanes, and made the `[ACTION REQUIRED]`
+            // orchestrator-recovery path below unreachable, since it is only ever reached on a
+            // re-run. It repaired a rare partial-broadcast by breaking the common case.
+            //
+            // The post-flight assertion is the right place for this: it runs OUTSIDE the broadcast,
+            // so it observes without recording, and it fails loudly if the mastercopy is unclaimed.
         }
         if (timelockDeployer.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
@@ -320,6 +366,26 @@ abstract contract OivChainDeploy is Script {
         }
 
         KpkOivFactory f = KpkOivFactory(factory);
+        // Ownership is checked BEFORE either setter, because both are `onlyOwner` and now WRITE-ONCE.
+        // A first run whose `transferOwnership` landed but whose setter transaction did not leaves a
+        // factory owned by the Safe with an unwired value: the re-run takes the `== address(0)`
+        // branch, calls an `onlyOwner` setter as an EOA that no longer owns the factory, and reverts
+        // with nothing telling the operator what to do. The remedy is a Safe transaction, so say so.
+        //
+        // Before write-once this was survivable a different way — the value could be corrected later
+        // from whoever did own it. Latching removed the second chance, which is what makes the
+        // ordering worth guarding rather than merely tidy.
+        bool needsWiring = f.kpkSharesMastercopy() == address(0) || f.timelockDeployer() == address(0);
+        if (needsWiring && f.owner() != eoaOwner) {
+            console.log("[ACTION REQUIRED] factory is owned by:", f.owner());
+            console.log("                  but still needs kpkSharesMastercopy / timelockDeployer wired.");
+            console.log("                  Both setters are onlyOwner and write-once, so this EOA cannot");
+            console.log("                  finish onboarding. Submit from the owner:");
+            console.log("                    setKpkSharesMastercopy:", sharesMastercopy);
+            console.log("                    setTimelockDeployer:   ", timelockDeployer);
+            revert("factory already handed over with wiring incomplete - submit the setters from the owner");
+        }
+
         if (f.kpkSharesMastercopy() == address(0)) {
             f.setKpkSharesMastercopy(sharesMastercopy);
             console.log("[OK]   factory.kpkSharesMastercopy set");
@@ -346,11 +412,8 @@ abstract contract OivChainDeploy is Script {
         }
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         if (orch.owner() == eoaOwner) {
-            if (
-                orch.router() != ccipRouter || orch.linkToken() != linkToken
-                    || orch.mainnetChainSelector() != MAINNET_SELECTOR
-            ) {
-                orch.configure(ccipRouter, linkToken, MAINNET_SELECTOR);
+            if (orch.router() != ccipRouter || orch.linkToken() != linkToken) {
+                orch.configure(ccipRouter, linkToken);
                 console.log("[OK]   orchestrator configured");
             }
             if (eoaOwner != finalOwner) orch.transferOwnership(finalOwner);
@@ -365,8 +428,7 @@ abstract contract OivChainDeploy is Script {
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
 
-        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken
-            && orch.mainnetChainSelector() == MAINNET_SELECTOR;
+        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken;
         if (!configured) {
             // The orchestrator is owned by finalOwner but not (correctly) configured — only reachable
             // on a re-run of a chain whose first deploy handed off ownership before `configure()` landed
@@ -374,12 +436,48 @@ abstract contract OivChainDeploy is Script {
             // Surface the exact remaining action instead of a bare revert, and do NOT print "Chain
             // ready" — so this is an [ACTION REQUIRED], not a false-positive success.
             console.log("[ACTION REQUIRED] orchestrator deployed but NOT configured; finalOwner must call");
-            console.log("  configure(router, link, mainnetSelector):");
+            console.log("  configure(router, link):");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
-            console.log("  selector:", MAINNET_SELECTOR);
             return;
         }
+        // The timelock mastercopy must be claimed AND inert before this chain is called ready. Both
+        // halves are needed, and an earlier version had only the first.
+        //
+        // Re-calling `initialize` shows the initializer is spoken for, but cannot say BY WHOM — a
+        // stranger's claim reverts exactly as ours does. So the shape is checked too: a stranger who
+        // claimed it in order to USE it must have given themselves a delay or open execution, while
+        // one who claimed it exactly as we would has left an inert contract, which is harmless.
+        //
+        // All three reads run outside `vm.startBroadcast`, so they observe without recording a
+        // transaction — which matters here, because recording one against an already-claimed
+        // mastercopy is precisely what broke idempotent re-runs in an earlier version of this file.
+        address[] memory noMembersCheck = new address[](0);
+        (bool stillOpen,) = timelockMastercopy.call(
+            abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembersCheck, noMembersCheck, address(0)))
+        );
+        require(!stillOpen, "post-flight: timelock mastercopy initializer is still open");
+
+        TimelockControllerUpgradeable mc = TimelockControllerUpgradeable(payable(timelockMastercopy));
+        require(mc.getMinDelay() == 0, "post-flight: timelock mastercopy has a delay - claimed by someone else");
+        require(
+            !mc.hasRole(mc.EXECUTOR_ROLE(), address(0)),
+            "post-flight: timelock mastercopy has open execution - claimed by someone else"
+        );
+
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
+        // Scope of the three mastercopy assertions above, stated because they look stronger than
+        // they are. They catch a claimer who gave themselves a DELAY or OPEN execution. They do not
+        // catch the dangerous case: a searcher who claimed the initializer between our CREATE2 and
+        // our `initialize` — separate broadcast transactions — taking PROPOSER_ROLE plus a PRIVATE
+        // executor with `minDelay == 0`. That passes all three and leaves them able to schedule and
+        // immediately execute arbitrary calls from this published address.
+        //
+        // `AccessControlUpgradeable` is non-enumerable, so no on-chain check can rule it out; the
+        // role set has to be inspected off-chain, or the race removed by giving the mastercopy a
+        // wrapper whose CONSTRUCTOR calls `_disableInitializers()` (which moves the mastercopy
+        // address and every timelock address with it). Until then this line means "wired as
+        // expected", not "provably uncontrolled".
+        console.log("     NOTE: timelock mastercopy control is NOT proven here - see the comment above.");
     }
 }
