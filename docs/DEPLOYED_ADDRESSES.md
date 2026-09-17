@@ -28,7 +28,7 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 | `KpkOivFactory` | `0xD973884639a6163009c292778AbF66cC543d3aB3` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0x8B8fa685B53b40E55C4507a992CD233dC73261D0` |
+| `CcipOivDeployer` (orchestrator) | `0xc49C92D91802C1c5fF4896EeB7b97128da45730C` |
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
