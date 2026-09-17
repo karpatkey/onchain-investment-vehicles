@@ -650,6 +650,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
                 || _rolesModifierMastercopy == address(0)
         ) revert ZeroAddress();
 
+        // The two write-once values are validated here as well as in their setters. Those setters
+        // reject a codeless address precisely BECAUSE the value can never be corrected — and the
+        // constructor assigns the same fields with no such check, while `InfrastructureAlreadySet`
+        // latches on the first non-zero value regardless of which path wrote it. So the stricter
+        // guard was reachable only on the path that did not need it. Before write-once the mistake
+        // was survivable; it is not any more.
+        if (_kpkSharesMastercopy != address(0) && _kpkSharesMastercopy.code.length == 0) {
+            revert InvalidMastercopy();
+        }
+        if (_timelockDeployer != address(0) && _timelockDeployer.code.length == 0) revert InvalidMastercopy();
+
         safeProxyFactory = _safeProxyFactory;
         safeSingleton = _safeSingleton;
         safeModuleSetup = _safeModuleSetup;

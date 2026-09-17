@@ -30,8 +30,11 @@ contract KpkOivFactoryRegistryTest is Test {
             address(0xA4), // safeFallbackHandler
             address(0xA5), // moduleProxyFactory
             address(0xA6), // rolesModifierMastercopy
-            address(0xA7), // kpkSharesDeployer
-            address(0xA8) //  timelockDeployer
+            // Coded addresses: the constructor now applies the write-once setters' codeless guard
+            // to these two, since latching a codeless value can never be corrected. This suite
+            // deploys no fund, so any contract address will do.
+            address(this), // kpkSharesMastercopy
+            address(this) //  timelockDeployer
         );
     }
 

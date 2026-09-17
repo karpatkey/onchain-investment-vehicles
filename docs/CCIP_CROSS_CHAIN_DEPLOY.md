@@ -139,8 +139,26 @@ correct, and is not what "deploy everywhere from any chain" sounds like.
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
 - **Gas limit.** Measured 2026-09-04: `deployStack` ~1.58M, or ~1.95M with an exec timelock
-  configured, plus the surrounding `ccipReceive` frame; pass `gasLimit` of **2.5M–2.8M**. CCIP caps destination execution at 3M — and that cap is exact on
-  10 of the 20 lanes (gnosis, polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain,
+  `gasLimit` must cover the destination's WHOLE `ccipReceive` frame, and the floor depends on the
+  config far more than the older advice implied. Measured on this branch with the worst timelock
+  `KpkTimelockDeployer.MAX_ROLE_MEMBERS` permits, `deployStack` ALONE costs:
+  
+  | manager owners | `deployStack` gas |
+  |---|---|
+  | 1  | 2,608,449 |
+  | 10 (`MAX_CCIP_MANAGER_OWNERS`) | 2,778,274 |
+  | 20 (refused) | 3,072,264 |
+  
+  plus roughly 80k for the `ccipReceive` frame around it, against CCIP's **3,000,000** destination cap.
+  So a timelocked fund at the maximum role set needs ~2.7M even with a single owner, and ~2.86M at the
+  owner bound — **pass 3,000,000 for any timelocked fund**. The older "2.0M / 2.2M-2.5M / 2.5M-2.8M"
+  figures were measured on small role sets and are below the floor for a max-timelock fund at any owner
+  count; following them spends every lane's non-refundable fee and reverts out-of-gas on arrival.
+  A fund with no exec timelock is far cheaper (~1.58M measured) and 2.0M remains ample.
+  
+  `_price` does not enforce a minimum `gasLimit` — it bounds the owner count only — so this is on the
+  caller. Quote first, and prefer over-sizing: the surplus is refunded, an under-size is not.
+
   katana), verified against the live router: `getFee` reverts above it. Unspent gas is **not**
   refunded. The timelock is an EIP-1167 clone rather than a full `TimelockController` deployment
   precisely so a timelocked stack stays inside that ceiling; deployed outright it cost ~1.45M more

@@ -162,11 +162,25 @@ would revert on the CREATE2 collision).
 
 - **Async, not atomic** — monitor delivery on the [CCIP Explorer](https://ccip.chain.link); a failed
   message enters the FAILED state and is manually re-executable within its retry window.
-- **`gasLimit`** must cover `deployStack` on the destination (~1.55M measured, ~1.86M with an exec timelock; ~2.2M–2.5M
-  recommended; CCIP caps destination execution at 3M). The figure rose from ~1.38M when the factory
-  began registering MultiSend unwrap adapters (~155k gas), so the older ~1.8M advice is now too
-  close to the floor. Under-sizing is not recoverable: the CCIP fee is spent on the source chain and
-  the destination `ccipReceive` reverts.
+- `gasLimit` must cover the destination's WHOLE `ccipReceive` frame, and the floor depends on the
+  config far more than the older advice implied. Measured on this branch with the worst timelock
+  `KpkTimelockDeployer.MAX_ROLE_MEMBERS` permits, `deployStack` ALONE costs:
+  
+  | manager owners | `deployStack` gas |
+  |---|---|
+  | 1  | 2,608,449 |
+  | 10 (`MAX_CCIP_MANAGER_OWNERS`) | 2,778,274 |
+  | 20 (refused) | 3,072,264 |
+  
+  plus roughly 80k for the `ccipReceive` frame around it, against CCIP's **3,000,000** destination cap.
+  So a timelocked fund at the maximum role set needs ~2.7M even with a single owner, and ~2.86M at the
+  owner bound — **pass 3,000,000 for any timelocked fund**. The older "2.0M / 2.2M-2.5M / 2.5M-2.8M"
+  figures were measured on small role sets and are below the floor for a max-timelock fund at any owner
+  count; following them spends every lane's non-refundable fee and reverts out-of-gas on arrival.
+  A fund with no exec timelock is far cheaper (~1.58M measured) and 2.0M remains ample.
+  
+  `_price` does not enforce a minimum `gasLimit` — it bounds the owner count only — so this is on the
+  caller. Quote first, and prefer over-sizing: the surplus is refunded, an under-size is not.
 - **`Empty` must be present** on every target chain (the Avatar Safe's sole signer).
 - **MultiSend unwrapping must be present** on every target chain — the Zodiac `MultiSendUnwrapper`
   (`0xB4Cd…9efD`) plus both Safe v1.4.1 MultiSend contracts (`0x3886…B526`, `0x9641…02e2`), each with

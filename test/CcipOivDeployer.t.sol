@@ -293,6 +293,32 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
     }
 
+    /// @notice `additionalAssets` addresses are salt-bound, so they are fixed at the fund's birth and
+    ///         cannot be restated per chain the way the base asset can. Promoting to a chain where
+    ///         one of them has no code used to fail as a bare revert on undecodable empty
+    ///         returndata — from the allowance loop for a `canRedeem` entry, or from
+    ///         `KpkShares._updateAsset`'s `symbol()` call for a deposit-only one. Named error now.
+    ///
+    ///         Deliberately not a blanket refusal: a token living at the SAME address on both chains
+    ///         is legitimate and promotion must still work for it, which is why this checks code
+    ///         rather than `additionalAssets.length`. An earlier attempt at this fix banned the case
+    ///         outright and made `test_promoteShares_requiresApprovalForEveryRedeemableAsset`
+    ///         unreachable, which is how the over-reach showed up.
+    function test_promoteShares_refusesAnAdditionalAssetWithNoCodeOnThisChain() public {
+        address ghost = address(0xA55E7);
+        assertEq(ghost.code.length, 0, "precondition: the additional asset has no code here");
+
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        extras[0] = KpkOivFactory.AssetConfig({asset: ghost, canDeposit: true, canRedeem: false});
+        oivConfig.additionalAssets = extras;
+
+        // A topology that does NOT name this chain, so promotion is the applicable path.
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.AdditionalAssetHasNoCodeHere.selector, ghost));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
     /// @notice The stack-only branches validated the stack half of a salt that commits to the WHOLE
     ///         config. A zero `feeReceiver` is the cheapest demonstration: `deployStack` does not
     ///         care about it, the effective salt does, so the stack landed at addresses derived from
@@ -339,6 +365,51 @@ contract CcipOivDeployerTest is OivTestConstants {
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ManagerOwnersExceedCcipBudget.selector, max + 1, max));
         orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
         assertEq(router.sentCount(), sentBefore, "no message may be dispatched for a rejected config");
+    }
+
+    /// @notice `_validateOivConfig`'s duplicate-asset check compares `additionalAssets` against
+    ///         `config.sharesParams.asset` — the ONE field deliberately excluded from the salt
+    ///         because it differs per chain. On a stack-only origin that field holds whatever this
+    ///         chain resolves to, NOT what the topology commits the fund's shares chain to, so the
+    ///         guard ran against an asset the fund would never use.
+    ///
+    ///         The consequence was unrecoverable rather than merely wrong: the topology names
+    ///         GNOSIS_ASSET, `additionalAssets` contains GNOSIS_ASSET, and on this stack-only origin
+    ///         the base asset is something else — so the check passed, every lane's non-refundable
+    ///         fee was spent, every stack landed, and only the shares chain then failed
+    ///         `DuplicateAsset` forever. `additionalAssets` is salt-bound, so correcting it moves
+    ///         every address and orphans every stack already paid for.
+    ///
+    ///         Cross-checked in `_effectiveConfig` because that is the choke point every entry point
+    ///         passes through, so it now fails before the first fee instead of after the last.
+    function test_deployEverywhere_refusesAnAdditionalAssetThatCollidesWithTheTopology() public {
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        extras[0] = KpkOivFactory.AssetConfig({asset: GNOSIS_ASSET, canDeposit: true, canRedeem: false});
+        oivConfig.additionalAssets = extras;
+        assertTrue(oivConfig.sharesParams.asset != GNOSIS_ASSET, "precondition: origin's asset differs");
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for a fund that cannot complete");
+
+        // And the quote refuses too, so sizing the fee surfaces it before any transaction is signed.
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.quoteDeployEverywhere(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @notice The topology is the one payload array that had no length bound, while the manager
+    ///         owners and the timelock role sets both do — and all three are decoded and looped on
+    ///         the destination inside the same 3,000,000-gas budget.
+    function test_topology_refusesMoreSharesChainsThanTheBound() public {
+        uint256 max = orchestrator.MAX_SHARES_CHAINS();
+        CcipOivDeployer.SharesChain[] memory tooMany = new CcipOivDeployer.SharesChain[](max + 1);
+        for (uint256 i = 0; i < tooMany.length; i++) {
+            tooMany[i] = CcipOivDeployer.SharesChain({chainId: i + 1, asset: address(uint160(0x900 + i))});
+        }
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.TooManySharesChains.selector, max + 1, max));
+        orchestrator.predictOiv(oivConfig, tooMany);
     }
 
     /// @notice And exactly `MAX_CCIP_MANAGER_OWNERS` must still be accepted — a bound that is off by

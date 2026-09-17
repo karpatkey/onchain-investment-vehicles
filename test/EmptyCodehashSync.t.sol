@@ -7,6 +7,9 @@ import {OivChainDeploy} from "../script/base/OivChainDeploy.sol";
 
 /// @dev Exposes the factory's internal `EXPECTED_EMPTY_CODEHASH` for cross-checking. Constructor args
 ///      only need to be non-zero (never called), so placeholders suffice.
+/// @dev Smallest thing with code, for the two constructor args that now require it.
+contract Coded {}
+
 contract FactoryCodehashExposer is KpkOivFactory {
     constructor()
         KpkOivFactory(
@@ -17,8 +20,9 @@ contract FactoryCodehashExposer is KpkOivFactory {
             address(0x5),
             address(0x6),
             address(0x7),
-            address(0x8),
-            address(0x9)
+            // Coded: the constructor now rejects a codeless write-once value.
+            address(new Coded()),
+            address(new Coded())
         )
     {}
 
