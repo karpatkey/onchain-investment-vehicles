@@ -277,7 +277,17 @@ contract OivConfigReaderTest is Test {
             vm.toString(GNOSIS_ASSET),
             '"}}}'
         );
-        vm.expectRevert();
+        // The MESSAGE, not a bare `expectRevert`. This test used to bite with a bare one, because the
+        // asset lookup still had a `.oiv.sharesParams.asset` fallback: delete the guard and the
+        // parse succeeded. Removing that fallback as dead code — correct in itself — made
+        // `readAddress` revert on the absent key too, so a bare assertion could no longer tell the
+        // guard's revert from the parser's, and this test passed with the guard deleted. A correct
+        // cleanup silently invalidated a correct probe; only the pinned string survives that.
+        vm.expectRevert(
+            bytes(
+                "config: .oiv.assetOverrides has no entry for declared shares chain 1 - every shares chain must name its own asset, even if it repeats another"
+            )
+        );
         reader.sharesChains(bad);
     }
 

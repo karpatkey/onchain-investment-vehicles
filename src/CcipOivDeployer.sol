@@ -808,6 +808,12 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         uint256 gasLimit
     ) internal view returns (Client.EVM2AnyMessage memory message, uint256 totalFee, uint256[] memory fees) {
         if (router == address(0)) revert NotConfigured();
+        // Here, not only in the two deploy paths. The explicit-array quote resolves its own
+        // selectors and never reached their `NoDestinations` check, so a `destChainIds` of `[]` — or
+        // one naming only the local chain, which `_resolveStackSelectors` skips — quoted a fee of
+        // ZERO while the matching `deployEverywhere` reverted. A quote that answers where execution
+        // refuses is the wrong direction to disagree in: it reads as "this fan-out is free".
+        if (destSelectors.length == 0) revert NoDestinations();
         // Every send AND every quote reaches this function, which is why the bound lives here: a
         // quote that cannot be delivered should fail loudly at quote time rather than return a fee
         // for a fan-out that dies on arrival.
