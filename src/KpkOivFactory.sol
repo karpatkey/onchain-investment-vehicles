@@ -101,6 +101,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      recently enabled to oldest: SENTINEL → newest → … → oldest → SENTINEL.
     address private constant SENTINEL_MODULES = address(0x1);
 
+    /// @dev Safe's owner-list sentinel. The same literal as `SENTINEL_MODULES`, kept separate
+    ///      because they are different Safe concepts and only this one belongs in owner validation.
+    address private constant SENTINEL_OWNERS = address(0x1);
+
     /// @dev Mirror of `KpkShares.MAX_FEE_RATE`. Duplicated rather than read, because reading it costs
     ///      368 bytes of a contract that is near EIP-170; pinned by `test_maxFeeRateMirrorsKpkShares`.
     uint256 private constant MAX_FEE_RATE = 2000;
@@ -616,8 +620,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         must then call `setKpkSharesMastercopy` to wire it before `deployOiv` can be
     ///         invoked. Once set, `setKpkSharesMastercopy`'s non-zero check prevents resetting it
     ///         back to zero. This is the deterministic-cross-chain deploy pattern used in
-    ///         `script/DeployKpkOivFactory.s.sol`. Infrastructure addresses can be updated
-    ///         post-deployment by the owner via the corresponding setter functions.
+    ///         `script/DeployKpkOivFactory.s.sol`. Infrastructure addresses can NOT be updated
+    ///         post-deployment: the six Safe/Zodiac addresses have no setters at all, and
+    ///         `kpkSharesMastercopy` / `timelockDeployer` are write-once.
     /// @param _owner                   Address that will own this factory and may call
     ///                                 the infrastructure setters.
     /// @param _safeProxyFactory        Gnosis Safe v1.4.1 proxy factory.
@@ -673,18 +678,24 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
     //
-    // SECURITY: All setters take effect immediately with no timelock. A malicious or
-    //           compromised owner can swap `kpkSharesMastercopy`, `rolesModifierMastercopy`,
-    //           `safeSingleton`, or `safeModuleSetup` to backdoor every future `deployOiv` /
-    //           `deployStack` call. FULLY deployed funds are unaffected — each references its own
-    //           already-deployed implementation — but a fund that is stack-only on some chains is
-    //           NOT: `timelockDeployer` is a CREATE2 deployer, so every timelock address depends on
-    //           it, and a later `deployShares` on such a chain would place that fund's shares
-    //           timelock at a different address than on the chains completed before the swap. That
-    //           is precisely the cross-chain divergence the timelock address fields promise cannot
-    //           happen. The blast radius for FUTURE deployments is unbounded. The factory `owner` MUST therefore be a
-    //           TimelockController or governance multisig — never an EOA — and any value
-    //           change SHOULD go through a public proposal/timelock cycle.
+    // SECURITY: these are WRITE-ONCE, and the two that remain are the only ones. `safeProxyFactory`,
+    //           `safeSingleton`, `safeModuleSetup`, `safeFallbackHandler`, `moduleProxyFactory` and
+    //           `rolesModifierMastercopy` are constructor-fixed and have no setters at all, so a
+    //           compromised owner can no longer swap any of them to backdoor future deployments.
+    //           This block previously described exactly those swaps as the reason the owner must be
+    //           a timelock; that capability is gone.
+    //
+    //           What write-once BUYS is the property the old text said could not be guaranteed: a
+    //           fund that is stack-only on some chains can no longer have its shares or timelock
+    //           addresses diverge from the chains completed before a swap, because there is no swap.
+    //
+    //           What it COSTS: each value gets exactly one write per chain, and a code-bearing but
+    //           WRONG address latches permanently — `deployOiv` then reverts inside
+    //           `ERC1967Utils`/`initialize` with no setter left to correct it. The guards here check
+    //           only that the address has code, so onboarding correctness is an off-chain
+    //           post-flight assertion (`script/DeployKpkOivFactory.s.sol`), not an on-chain one.
+    //           The owner SHOULD still be a TimelockController or governance multisig for what it
+    //           does retain: `registerFund` / `unregisterFund`, and that single permitted write.
 
     /// @notice Updates the KpkTimelockDeployer address.
     /// @dev    Same blast radius as `setKpkSharesMastercopy`: a hostile deployer could hand every
@@ -1877,6 +1888,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             for (uint256 j = i + 1; j < len; j++) {
                 if (asset == config.additionalAssets[j].asset) revert DuplicateAsset();
             }
+            // Mirrors `KpkShares._updateAsset`, which refuses a NEW asset that is neither
+            // depositable nor redeemable (`InvalidArguments`). This validator exists so a prediction
+            // never succeeds where deployment would refuse, and it mirrored
+            // `_validateInitializationParams` but not `_updateAsset` — so an entry with both flags
+            // false passed every source-chain check `CcipOivDeployer` runs, including
+            // `predictOivAddresses`, and reverted inside `deployOiv` on arrival.
+            //
+            // That is unrecoverable rather than merely late: a fan-out originating from a
+            // STACK-ONLY chain never touches `additionalAssets` locally, so every lane's
+            // non-refundable fee is spent and every remote stack lands before the fund's own shares
+            // chain fails — and `additionalAssets` is salt-bound, so correcting the flags moves every
+            // address and orphans every stack just paid for.
+            if (!config.additionalAssets[i].canDeposit && !config.additionalAssets[i].canRedeem) {
+                revert InvalidSharesParams();
+            }
         }
     }
 
@@ -1890,7 +1916,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         if (managerSafe.threshold == 0 || managerSafe.threshold > len) revert InvalidThreshold();
         for (uint256 i = 0; i < len; i++) {
             address owner = managerSafe.owners[i];
-            if (owner == address(0)) revert ZeroAddress();
+            // Zero AND the sentinel. This function's NatSpec claims to mirror Safe v1.4.1 `setup()`,
+            // and `OwnerManager.setupOwners` rejects `address(1)` as well (GS203). `deployEverywhere`
+            // caught the omission by accident, because its local branch deploys before it sends —
+            // `dispatchTo` runs no local deploy, so a sentinel owner priced and paid every lane and
+            // then reverted inside `SafeProxyFactory.deployProxy` on arrival, as a bare
+            // `revert(0,0)` that names nothing.
+            if (owner == address(0) || owner == SENTINEL_OWNERS) revert ZeroAddress();
             for (uint256 j = i + 1; j < len; j++) {
                 if (owner == managerSafe.owners[j]) revert DuplicateOwner();
             }

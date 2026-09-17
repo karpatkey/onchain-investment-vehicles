@@ -293,6 +293,51 @@ contract CcipOivDeployerTest is OivTestConstants {
         orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
     }
 
+    /// @notice `_validateOivConfig` mirrors `KpkShares._validateInitializationParams` so a prediction
+    ///         never succeeds where deployment would refuse — but it did NOT mirror `_updateAsset`,
+    ///         which additionally rejects a new asset that is neither depositable nor redeemable.
+    ///
+    ///         The gap was only reachable expensively. A fan-out from a STACK-ONLY origin never
+    ///         touches `additionalAssets` locally: `predictOivAddresses` passed, every lane was
+    ///         priced and paid, every remote stack landed, and the fund's own shares chain then
+    ///         reverted `InvalidArguments` inside `deployOiv`. `additionalAssets` is salt-bound, so
+    ///         correcting the flags moves every address and orphans every stack already paid for.
+    function test_deployEverywhere_refusesAnAssetThatIsNeitherDepositableNorRedeemable() public {
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        // DAI: neither the fixture's base asset (which would trip `DuplicateAsset` first) nor the
+        // topology's asset (which would trip the topology cross-check first).
+        extras[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: false
+        });
+        oivConfig.additionalAssets = extras;
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for a config deployOiv refuses");
+
+        // `dispatchTo` has the same exposure and runs no local deploy at all.
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @notice `_validateManagerOwners` claims to mirror Safe v1.4.1 `setup()`, which rejects the
+    ///         owner-list SENTINEL (`address(1)`, GS203) as well as zero and duplicates. The omission
+    ///         was invisible through `deployEverywhere`, whose local branch deploys before it sends;
+    ///         `dispatchTo` runs no local deploy, so a sentinel owner paid every lane and then
+    ///         reverted inside `SafeProxyFactory.deployProxy` on arrival as a bare `revert(0,0)`.
+    function test_dispatchTo_refusesTheSafeOwnerSentinelBeforeSpendingFees() public {
+        address[] memory owners = new address[](1);
+        owners[0] = address(0x1);
+        oivConfig.managerSafe.owners = owners;
+        oivConfig.managerSafe.threshold = 1;
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "a sentinel owner must cost nothing");
+    }
+
     /// @notice `additionalAssets` addresses are salt-bound, so they are fixed at the fund's birth and
     ///         cannot be restated per chain the way the base asset can. Promoting to a chain where
     ///         one of them has no code used to fail as a bare revert on undecodable empty
