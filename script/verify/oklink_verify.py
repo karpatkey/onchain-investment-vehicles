@@ -243,6 +243,23 @@ def main():
         return 0
 
     active = [n for n, m in CONTRACTS.items() if not m.get("historical")]
+
+    # A verifier must never report success it did not earn. Every `CONTRACTS` entry is currently
+    # marked historical, which makes `active` empty — and without this guard the submit loop ran zero
+    # times, `total` came out as `len(CHAINS) * 0`, and the script printed "0/0 verified ... 0
+    # problem(s)" and exited 0. A caller reading that exit code concludes the sweep passed, when in
+    # fact no API call was made at all. Same failure this repo already called out in
+    # `script/DeployKpkOivFactory.s.sol`, which used to print "[OK] deployed at ..." for state that
+    # never reached a chain.
+    #
+    # To verify a new generation, add its entries to `CONTRACTS` without `historical`. The historical
+    # ones are kept deliberately, as the record of what was verified at the salt-v3 addresses.
+    if not active:
+        print("NOTHING TO VERIFY: every CONTRACTS entry is marked historical, so no target was")
+        print("checked and no API call was made. This is not a successful sweep.")
+        print("Add the current generation's entries to CONTRACTS to verify them.")
+        return 1
+
     for name in active:
         if not os.path.exists(std_path(name)):
             print("missing %s -- run with --prepare first" % std_path(name))

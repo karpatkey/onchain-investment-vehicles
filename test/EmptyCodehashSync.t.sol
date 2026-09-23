@@ -5,17 +5,20 @@ import {Test} from "forge-std/Test.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {OivChainDeploy} from "../script/base/OivChainDeploy.sol";
 
-/// @dev Exposes the factory's internal `EXPECTED_EMPTY_CODEHASH` for cross-checking. Constructor args
-///      only need to be non-zero (never called), so placeholders suffice.
-/// @dev Smallest thing with code, for the two constructor args that now require it.
+/// @dev Exposes the factory's internal `EXPECTED_EMPTY_CODEHASH` for cross-checking. The constructor
+///      rejects a zero OR codeless value for all EIGHT infrastructure arguments, so every placeholder
+///      below has to be a real contract — an earlier version of this comment said they "only need to
+///      be non-zero", which is why the `Coded` stub exists at all.
+/// @dev Smallest thing with code. Used for all eight infrastructure args, not two.
 contract Coded {}
 
 contract FactoryCodehashExposer is KpkOivFactory {
     constructor()
         KpkOivFactory(
-            // Nine args: owner, then the six Safe/Zodiac infra addresses, then the two write-once
-            // values. The constructor now rejects a CODELESS value for all eight infra args, so every
-            // one gets a real (empty) contract. This exposer never calls any of them.
+            // Nine args: owner, then the six Safe/Zodiac infra addresses, then the shares mastercopy
+            // and timelock deployer (constructor-mandatory, no setters). The constructor rejects a
+            // CODELESS value for all eight infra args, so every one gets a real (empty) contract.
+            // This exposer never calls any of them.
             address(new Coded()), // owner
             address(new Coded()), // safeProxyFactory
             address(new Coded()), // safeSingleton

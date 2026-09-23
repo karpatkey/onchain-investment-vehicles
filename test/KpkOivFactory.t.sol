@@ -1016,6 +1016,45 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(req.sharesAmount, minSharesOut, "request minSharesOut mismatch");
     }
 
+    /// @notice The codeless guard covers all SIX Safe/Zodiac infrastructure arguments, but until this
+    ///         test only `kpkSharesMastercopy` and `timelockDeployer` were probed — `_newFactory`
+    ///         supplies the other six at real addresses, so **deleting the six-address guard left the
+    ///         whole suite green**. Same shape as the ascending-owners rule: a check with coverage
+    ///         only in its passing direction.
+    /// @dev    Each index is probed on its own. A single call replacing all six would pass just as
+    ///         well against a guard that only examined one of them.
+    function test_constructor_refusesACodelessInfrastructureAddress_everyOneOfTheSix() public {
+        address codeless = makeAddr("notAContractEither");
+        (address mc, address dep) = _realInfraPair();
+        for (uint256 i = 0; i < 6; i++) {
+            vm.expectRevert(KpkOivFactory.InvalidMastercopy.selector);
+            _newFactoryWithInfra(i, codeless, mc, dep);
+        }
+    }
+
+    /// @dev And zero, which is caught by the earlier `ZeroAddress` check rather than the codehash one
+    ///      — a different error, so the two guards cannot be collapsed without the suite noticing.
+    function test_constructor_refusesAZeroInfrastructureAddress_everyOneOfTheSix() public {
+        (address mc, address dep) = _realInfraPair();
+        for (uint256 i = 0; i < 6; i++) {
+            vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+            _newFactoryWithInfra(i, address(0), mc, dep);
+        }
+    }
+
+    function _realInfraPair() internal returns (address mastercopy, address deployer) {
+        mastercopy = address(new KpkShares());
+        deployer = address(new KpkTimelockDeployer(address(new TimelockControllerUpgradeable())));
+    }
+
+    /// @dev The positive control: unchanged, all six real, it constructs. Without this the two loops
+    ///      above pass against a constructor that rejects everything.
+    function test_constructor_acceptsTheRealInfrastructureSet() public {
+        (address mc, address dep) = _realInfraPair();
+        KpkOivFactory ok = _newFactoryWithInfra(0, SAFE_PROXY_FACTORY, mc, dep);
+        assertGt(address(ok).code.length, 0, "the unmodified infrastructure set constructs");
+    }
+
     // ── Manager owner canonicalisation ─────────────────────────────────────────
 
     /// @notice `managerSafe.owners` is address-bearing: `createProxyWithNonce` salts on
@@ -1537,6 +1576,31 @@ contract KpkOivFactoryTest is OivTestConstants {
     }
 
     /// @dev Builds a factory varying only the two values under test.
+    /// @dev Builds a factory with exactly ONE of the six Safe/Zodiac infrastructure arguments
+    ///      replaced, so each can be probed independently. `_newFactory` holds all six at real
+    ///      addresses, which is why the codeless guard over them had no failing-direction coverage.
+    ///      `mastercopy` and `deployer` are passed IN rather than constructed here, and that is
+    ///      load-bearing: `vm.expectRevert` arms the next call or create, so a `new KpkShares()`
+    ///      inside this helper absorbed the expectation and every probe failed with "next call did
+    ///      not revert as expected" while the guard was working perfectly.
+    function _newFactoryWithInfra(uint256 index, address replacement, address mastercopy, address deployer)
+        internal
+        returns (KpkOivFactory)
+    {
+        address[6] memory infra = [
+            SAFE_PROXY_FACTORY,
+            SAFE_SINGLETON,
+            SAFE_MODULE_SETUP,
+            SAFE_FALLBACK_HANDLER,
+            MODULE_PROXY_FACTORY,
+            ROLES_MODIFIER_MASTERCOPY
+        ];
+        infra[index] = replacement;
+        return new KpkOivFactory(
+            factoryOwner, infra[0], infra[1], infra[2], infra[3], infra[4], infra[5], mastercopy, deployer
+        );
+    }
+
     function _newFactory(address mastercopy, address deployer) internal returns (KpkOivFactory) {
         return new KpkOivFactory(
             factoryOwner,

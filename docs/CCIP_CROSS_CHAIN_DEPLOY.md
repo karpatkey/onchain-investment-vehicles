@@ -268,7 +268,7 @@ source .env && script/deploy-all.sh                # every wired chain, then pri
 ```
 
 Or run the per-chain Solidity script directly (`script/chains/Deploy_<Chain>.s.sol`). Both perform,
-in one broadcast: `Empty` preflight → `MultiSendUnwrapper` → `KpkOivFactory` → the `KpkShares` and
+in one broadcast: `Empty` preflight → `MultiSendUnwrapper` → the `KpkShares` and
 `TimelockController` mastercopies (the latter's initializer claimed immediately — **best effort, not
 a guarantee**: the CREATE2 and the `initialize` are separate broadcast transactions, so a searcher
 can claim the published address in between, after which the claim reverts and a re-run reports
@@ -277,7 +277,13 @@ they do **not** catch one who claimed it inert while holding `PROPOSER_ROLE`. Cl
 means a wrapper whose constructor calls `_disableInitializers()`, which moves the mastercopy address
 and every timelock address with it — a rollout-scale change. Clones are unaffected either way, since
 each has its own storage; what is at stake is a kpk-published address under a stranger's control)
-→ `KpkTimelockDeployer` → wire both into the factory → `CcipOivDeployer` + `configure`. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
+→ `KpkTimelockDeployer` → **then** `KpkOivFactory` → `CcipOivDeployer` + `configure`.
+
+**That order is mandatory, not stylistic.** The factory takes the shares mastercopy and the timelock
+deployer as constructor arguments and rejects a zero or codeless value for either, so it cannot be
+deployed before them. The `setKpkSharesMastercopy` / `setTimelockDeployer` wiring step this runbook
+used to describe no longer exists — those setters were deleted. Following the old order reverts at
+factory construction. To onboard a brand-new chain not yet in the registry: confirm the prerequisites on-chain
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.

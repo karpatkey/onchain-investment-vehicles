@@ -29,7 +29,9 @@ to a salt in the factory but not the orchestrator; a deploy path changed without
 
 **The comment that outlived its code.** Deleting a setter and leaving its NatSpec; adding a
 replacement paragraph and leaving the stale one directly above it; a doc instructing operators to
-call a function that no longer exists. Sweep with `git grep` (plain `grep -r` skips `docs/`).
+call a function that no longer exists. Sweep with `git grep`, and include `docs/` — the onboarding
+order and the pinned addresses both live there, and a fix applied to one doc and not its sibling is
+the most common way this class survives review.
 
 **The vacuous test.** Shapes seen repeatedly:
 - `assertGt(logs.length, 0)` instead of decoding the event payload.

@@ -48,8 +48,11 @@ set. Both are required strictly ascending.
 
 ## Repo mechanics worth knowing
 
-- `docs/` is listed in `.gitignore` but the files are **tracked**. Plain `grep -r` silently skips it;
-  use `git grep` for any sweep, and `git add -f` to stage a doc change.
+- Documentation under `docs/` carries load-bearing claims — pinned CREATE2 addresses, onboarding
+  order — so a sweep for a stale claim has to include it. `git grep` is the reliable way; some
+  ignore-aware search tools skip directories that plain `grep -r` would not. (`docs/` was itself
+  listed in `.gitignore` while every file in it was tracked; that line is removed in this PR, so
+  `git add -f` is no longer needed for a doc change.)
 - `via_ir` common-subexpression-eliminates `block.timestamp`, so two `vm.warp(block.timestamp + X)`
   calls in one test warp to the **same** time. Use `vm.getBlockTimestamp()`.
 - The Avatar Safe's sole signer is the always-reverting `Empty` contract — no key executes on it.
