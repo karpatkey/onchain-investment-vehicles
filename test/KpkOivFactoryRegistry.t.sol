@@ -24,12 +24,15 @@ contract KpkOivFactoryRegistryTest is Test {
     function setUp() public {
         factory = new KpkOivFactory(
             owner,
-            address(0xA1), // safeProxyFactory
-            address(0xA2), // safeSingleton
-            address(0xA3), // safeModuleSetup
-            address(0xA4), // safeFallbackHandler
-            address(0xA5), // moduleProxyFactory
-            address(0xA6), // rolesModifierMastercopy
+            // Coded addresses: the constructor now rejects a CODELESS value for these six too, and
+            // needs to — they lost their setters, so a codeless one is permanent. This suite deploys
+            // no fund, so any contract address satisfies it.
+            address(this), // safeProxyFactory
+            address(this), // safeSingleton
+            address(this), // safeModuleSetup
+            address(this), // safeFallbackHandler
+            address(this), // moduleProxyFactory
+            address(this), // rolesModifierMastercopy
             // Coded addresses: the constructor now applies the write-once setters' codeless guard
             // to these two, since latching a codeless value can never be corrected. This suite
             // deploys no fund, so any contract address will do.

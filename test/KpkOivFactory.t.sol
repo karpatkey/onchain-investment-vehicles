@@ -2449,6 +2449,19 @@ contract KpkOivFactoryUnitTest is OivTestConstants {
     KpkOivFactoryHarness harness;
 
     function setUp() public {
+        // These are the REAL canonical Safe/Zodiac addresses, and this suite deliberately runs
+        // without a fork, so nothing is deployed at them. The factory constructor now rejects a
+        // CODELESS value for all six — correctly, since they lost their setters and a codeless one is
+        // permanent — so a single byte is etched at each. Etching rather than substituting
+        // placeholders keeps these tests asserting against the constants they exist to pin.
+        bytes memory oneByte = hex"00";
+        vm.etch(SAFE_PROXY_FACTORY, oneByte);
+        vm.etch(SAFE_SINGLETON, oneByte);
+        vm.etch(SAFE_MODULE_SETUP, oneByte);
+        vm.etch(SAFE_FALLBACK_HANDLER, oneByte);
+        vm.etch(MODULE_PROXY_FACTORY, oneByte);
+        vm.etch(ROLES_MODIFIER_MASTERCOPY, oneByte);
+
         // can be constructed with it: this contract's next nonce produces the deployer,
         // and the one after that produces the harness.
         KpkTimelockDeployer harnessTimelockDeployer =

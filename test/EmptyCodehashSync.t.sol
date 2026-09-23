@@ -13,16 +13,18 @@ contract Coded {}
 contract FactoryCodehashExposer is KpkOivFactory {
     constructor()
         KpkOivFactory(
-            address(0x1),
-            address(0x2),
-            address(0x3),
-            address(0x4),
-            address(0x5),
-            address(0x6),
-            address(0x7),
-            // Coded: the constructor now rejects a codeless write-once value.
-            address(new Coded()),
-            address(new Coded())
+            // Nine args: owner, then the six Safe/Zodiac infra addresses, then the two write-once
+            // values. The constructor now rejects a CODELESS value for all eight infra args, so every
+            // one gets a real (empty) contract. This exposer never calls any of them.
+            address(new Coded()), // owner
+            address(new Coded()), // safeProxyFactory
+            address(new Coded()), // safeSingleton
+            address(new Coded()), // safeModuleSetup
+            address(new Coded()), // safeFallbackHandler
+            address(new Coded()), // moduleProxyFactory
+            address(new Coded()), // rolesModifierMastercopy
+            address(new Coded()), // kpkSharesMastercopy
+            address(new Coded()) //  timelockDeployer
         )
     {}
 

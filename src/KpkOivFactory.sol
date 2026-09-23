@@ -655,6 +655,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
                 || _rolesModifierMastercopy == address(0)
         ) revert ZeroAddress();
 
+        // CODELESS is rejected for these six as well, and they need it MORE than the two below, not
+        // less. They lost their setters in this change, so they are permanently immutable: a factory
+        // constructed on a chain where (say) `SAFE_SINGLETON` or `MODULE_PROXY_FACTORY` is absent
+        // constructs fine and is dead forever at a CREATE2 address that can never be reused, because
+        // the init code is fixed and a corrected redeploy lands elsewhere. The earlier version of
+        // this guard covered only the two values that still HAVE setters — i.e. the recoverable
+        // ones — which is exactly backwards.
+        //
+        // Free in runtime terms: constructor code is init code, so this costs 0 of the factory's
+        // EIP-170 budget (+88 bytes of init code, against EIP-3860's 49,152).
+        if (
+            _safeProxyFactory.code.length == 0 || _safeSingleton.code.length == 0 || _safeModuleSetup.code.length == 0
+                || _safeFallbackHandler.code.length == 0 || _moduleProxyFactory.code.length == 0
+                || _rolesModifierMastercopy.code.length == 0
+        ) revert InvalidMastercopy();
+
         // The two write-once values are validated here as well as in their setters. Those setters
         // reject a codeless address precisely BECAUSE the value can never be corrected — and the
         // constructor assigns the same fields with no such check, while `InfrastructureAlreadySet`
