@@ -818,7 +818,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // below before being disabled.
         StackInstance memory stack = _deployAndWireStack(stackConfig);
 
-        bytes32 proxySalt = _deriveSharesSalt(config.salt, msg.sender);
+        bytes32 proxySalt = _deriveSharesSalt(config, msg.sender);
         (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
             config.sharesParams,
             stack.managerSafe,
@@ -860,11 +860,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         `ccipReceive` refuses stacks on it.
     ///
     ///         It works because the shares proxy's address is a function of `(factory, proxySalt,
-    ///         impl)` ALONE — see `_predictSharesProxy`. It depends on neither the Avatar Safe nor
-    ///         anything else in the stack. So on a stack-only chain that slot is still free, the Avatar
-    ///         Safe already sits at the fund's canonical address (same salt), and reusing the ORIGINAL
-    ///         salt lands the promoted shares token at the same address as every other shares chain.
-    ///         Nothing moves.
+    ///         impl)` alone, and `proxySalt` commits to the shares half but NOT to the Avatar Safe or
+    ///         anything else in the stack (see `_deriveSharesSalt`). So on a stack-only chain that slot
+    ///         is still free, the Avatar Safe already sits at the fund's canonical address (same salt),
+    ///         and reusing the ORIGINAL salt with the ORIGINAL shares half lands the promoted shares
+    ///         token at the same address as every other shares chain. Nothing moves — but note the
+    ///         second requirement: promoting with a different shares half now lands somewhere else, by
+    ///         design.
     ///
     ///         APPROVALS ARE NOT GRANTED HERE, deliberately. `_grantApprovals` needs the factory to be
     ///         an enabled Avatar Safe module, and the factory disables itself at the end of every flow;
@@ -941,7 +943,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             stack.avatarSafe,
             config.admin,
             config.additionalAssets,
-            _deriveSharesSalt(config.salt, msg.sender),
+            _deriveSharesSalt(config, msg.sender),
             config.sharesTimelock
         );
 
@@ -1137,7 +1139,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // already refuses to give.
         if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
 
-        bytes32 proxySalt = _deriveSharesSalt(config.salt, caller);
+        bytes32 proxySalt = _deriveSharesSalt(config, caller);
         address predictedImpl = kpkSharesMastercopy;
         address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl);
 
@@ -1243,18 +1245,17 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Mirrors the deployment exactly: empty constructor data, initialization performed
     ///      afterwards.
     ///
-    ///      Accepted consequence: the proxy address used to act as a checksum over the WHOLE
-    ///      `sharesParams` struct, and now covers none of it. `name`, `symbol`, `feeReceiver`, both
-    ///      fee rates and both TTLs are as chain-invariant in intent as `asset` is chain-specific,
-    ///      but nothing enforces that any more — a fee rate fat-fingered on one chain still yields
-    ///      the same address, so `DeployOiv.predict`'s "addresses match everywhere" signal will not
-    ///      catch it. Cross-chain parameter equality is now the config's job, not the address's.
+    ///      This function takes neither the shares parameters nor the Avatar Safe, which reads like a
+    ///      gap and is not one: the parameters reach the address through `proxySalt`, which commits to
+    ///      the shares half in `_deriveSharesSalt`. Moving initialization out of the constructor did
+    ///      briefly leave them covering NOTHING, and that gap was the proven drain — see that
+    ///      function's SECURITY note. So a fee rate fat-fingered on one chain DOES move the address
+    ///      and `DeployOiv.predict`'s "addresses match everywhere" signal does catch it.
     ///
-    ///      It takes neither the shares parameters nor the Avatar Safe, and that absence is the point
-    ///      rather than an omission: the proxy address is a function of `(factory, proxySalt, impl)`
-    ///      alone. Since `impl` is identical on every chain, so is the proxy — including across chains
-    ///      whose funds use DIFFERENT base assets, which is what lets one fund present the same shares
-    ///      address everywhere.
+    ///      `asset` is the deliberate exception, and the reason the constructor is empty at all: it is
+    ///      excluded from the commitment, so `impl` and the salt are identical on every chain and so is
+    ///      the proxy — including across chains whose funds hold DIFFERENT base assets, which is what
+    ///      lets one fund present the same shares address everywhere.
     function _predictSharesProxy(bytes32 proxySalt, address impl) internal view returns (address predicted) {
         bytes memory initCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, ""));
         predicted = _create2Address(address(this), proxySalt, keccak256(initCode));
@@ -1481,16 +1482,63 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      seven OIV addresses are deterministic from `(caller, baseSalt)`. Same caller-mixing
     ///      rationale: prevents salt-squat front-running while keeping cross-chain determinism.
     ///      Index 6. Index 5 belonged to the retired per-fund implementation and is left unused.
-    /// @param baseSalt The user-supplied base salt from `OivConfig.salt`.
-    /// @param caller   The address calling `deployOiv`.
+    ///
+    ///      SECURITY — the shares-half commitment. `(caller, baseSalt)` alone is NOT enough, and the
+    ///      gap was a drain, proven on a mainnet fork: the deployStack caller could call
+    ///      `deployShares` against its OWN honest, already-live stack with a hostile shares half —
+    ///      itself as sole timelock proposer, `feeReceiver` redirected, fees at `MAX_FEE_RATE` — and
+    ///      the proxy landed at EXACTLY the address `predictOivAddresses` gives for the honest
+    ///      config, holding `DEFAULT_ADMIN_ROLE` under the attacker's timelock while the honest
+    ///      admin held nothing. An investor's subscription escrows in that proxy, and
+    ///      `upgradeToAndCall` after the delay sweeps it.
+    ///
+    ///      `main` used to prevent this implicitly, by hashing the whole `initialize` calldata into
+    ///      the proxy's init code. Moving to an empty-constructor proxy — necessary so one fund can
+    ///      hold a different base asset on each chain — dropped that binding as a side effect. This
+    ///      commitment restores it explicitly and keeps the per-chain asset.
+    ///
+    ///      Excluded, each for a reason:
+    ///        - `sharesParams.asset` — per-chain BY DESIGN; the whole point of the empty constructor.
+    ///        - `sharesParams.admin` / `.safe` — overwritten by `_deploySharesProxy` with `config.admin`
+    ///          and the deployed Safes, so whatever a caller passes is discarded and carries no
+    ///          meaning. Binding them would split a fund across chains over ignored bytes.
+    ///        - `config.admin`, `managerSafe` — `admin` deliberately stays out so that rotating exec
+    ///          ownership does not strand `promoteShares`; `managerSafe` is already bound through the
+    ///          stack addresses this proxy is checked against.
+    ///      `additionalAssets` is included and is safe to include: the orchestrator refuses a
+    ///      non-empty `additionalAssets` with more than one shares chain
+    ///      (`AdditionalAssetsNeedASingleSharesChain`), so it cannot legitimately differ per chain.
+    /// @param config The full fund config; its shares half is hashed into the salt.
+    /// @param caller The address calling `deployOiv` / `deployShares`.
     /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
-    function _deriveSharesSalt(uint256 baseSalt, address caller) internal pure returns (bytes32 proxySalt) {
+    function _deriveSharesSalt(OivConfig calldata config, address caller) internal pure returns (bytes32 proxySalt) {
+        KpkShares.ConstructorParams calldata p = config.sharesParams;
         // Index 5 was the per-fund implementation's salt and is deliberately left unused, so this
-        // SALT is unchanged by the move to a shared mastercopy. The proxy's ADDRESS is not: the
-        // ERC-1967 init code embeds `impl`, which moved from a per-fund implementation to the shared
-        // mastercopy, so every prediction of the proxy changed with it. Keeping index 6 costs
-        // nothing and avoids reusing a retired index; it preserves no prediction.
-        proxySalt = keccak256(abi.encode(caller, baseSalt, uint8(6)));
+        // index is unchanged by the move to a shared mastercopy. Note the proxy's ADDRESS moved
+        // anyway when the ERC-1967 init code started embedding the shared mastercopy, and moves
+        // again here — no prediction is preserved across either change.
+        proxySalt = keccak256(
+            abi.encode(
+                caller,
+                config.salt,
+                uint8(6),
+                keccak256(
+                    abi.encode(
+                        p.name,
+                        p.symbol,
+                        p.subscriptionRequestTtl,
+                        p.redemptionRequestTtl,
+                        p.feeReceiver,
+                        p.managementFeeRate,
+                        p.redemptionFeeRate,
+                        p.performanceFeeModule,
+                        p.performanceFeeRate,
+                        config.additionalAssets,
+                        config.sharesTimelock
+                    )
+                )
+            )
+        );
     }
 
     // ── Internal: deployment helpers ────────────────────────────────────────────

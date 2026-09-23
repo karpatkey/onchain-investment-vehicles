@@ -1016,6 +1016,145 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(req.sharesAmount, minSharesOut, "request minSharesOut mismatch");
     }
 
+    // ── The shares-half commitment (the §1 drain) ──────────────────────────────
+
+    /// @notice The regression test for the proven drain. `deployShares` binds `(msg.sender, salt,
+    ///         manager owners/threshold)` and `_recordedExecTimelock` binds EXEC governance — so
+    ///         before the shares-half commitment landed in `_deriveSharesSalt`, the deployStack
+    ///         caller could point a wholly hostile shares half at its own honest, already-live stack
+    ///         and have the proxy land at EXACTLY the address `predictOivAddresses` publishes for the
+    ///         honest config: attacker as sole timelock proposer, `feeReceiver` redirected, fees at
+    ///         the cap, `DEFAULT_ADMIN_ROLE` under the attacker's timelock and the honest admin
+    ///         holding nothing. Subscriptions escrow in the proxy, so `upgradeToAndCall` after the
+    ///         delay swept them.
+    /// @dev    The capability was exactly the deployStack caller's key, which is why the honest stack
+    ///         is deployed here from `address(this)` — a stranger gets `StackNotDeployed` and never
+    ///         reaches this code.
+    function test_deployShares_aHostileSharesHalfCannotLandAtTheCanonicalProxy() public {
+        address attacker = makeAddr("sharesHalfAttacker");
+
+        // What the operator publishes and an investor pre-funds against.
+        address canonical = factory.predictOivAddresses(oivConfig, address(this)).kpkSharesProxy;
+        factory.deployStack(factory.oivToStackConfig(oivConfig));
+
+        // Same caller, same salt, same manager Safe, so the live stack satisfies every
+        // `StackNotDeployed` guard and the exec timelock resolves. ONLY the shares half is hostile.
+        address[] memory soleProposer = new address[](1);
+        soleProposer[0] = attacker;
+        KpkOivFactory.OivConfig memory hostile = oivConfig;
+        hostile.sharesParams.feeReceiver = attacker;
+        hostile.sharesParams.managementFeeRate = 2000; // KpkShares.MAX_FEE_RATE
+        hostile.sharesParams.redemptionFeeRate = 2000;
+        hostile.sharesTimelock =
+            TimelockParams({minDelay: 12 hours, proposers: soleProposer, cancellers: new address[](0)});
+
+        address landed = factory.deployShares(hostile).kpkSharesProxy;
+
+        assertTrue(landed != canonical, "a hostile shares half must NOT reach the fund's canonical proxy");
+
+        // The positive control, and the half that makes the assertion above mean something: the
+        // honest config still lands exactly where it was published. Without this, the test passes
+        // just as well if `deployShares` stops reaching the prediction at all.
+        assertEq(
+            factory.deployShares(oivConfig).kpkSharesProxy,
+            canonical,
+            "the honest shares half must still land at its published address"
+        );
+    }
+
+    /// @notice Each field of the commitment must actually move the address — the binding is worth
+    ///         nothing for a field it silently omits, and a single "hostile != honest" assertion
+    ///         cannot tell the difference between all eleven fields binding and one of them binding.
+    function test_deriveSharesSalt_everyCommittedFieldMovesTheProxy() public {
+        address canonical = factory.predictOivAddresses(oivConfig, address(this)).kpkSharesProxy;
+
+        KpkOivFactory.OivConfig memory c;
+
+        c = oivConfig;
+        c.sharesParams.name = "Not The Same Fund";
+        _assertMovesProxy(c, canonical, "name");
+
+        c = oivConfig;
+        c.sharesParams.symbol = "kOTHER";
+        _assertMovesProxy(c, canonical, "symbol");
+
+        c = oivConfig;
+        c.sharesParams.subscriptionRequestTtl = 7 days;
+        _assertMovesProxy(c, canonical, "subscriptionRequestTtl");
+
+        c = oivConfig;
+        c.sharesParams.redemptionRequestTtl = 7 days;
+        _assertMovesProxy(c, canonical, "redemptionRequestTtl");
+
+        c = oivConfig;
+        c.sharesParams.feeReceiver = makeAddr("otherFeeReceiver");
+        _assertMovesProxy(c, canonical, "feeReceiver");
+
+        c = oivConfig;
+        c.sharesParams.managementFeeRate = 2000;
+        _assertMovesProxy(c, canonical, "managementFeeRate");
+
+        c = oivConfig;
+        c.sharesParams.redemptionFeeRate = 2000;
+        _assertMovesProxy(c, canonical, "redemptionFeeRate");
+
+        c = oivConfig;
+        c.sharesParams.performanceFeeModule = makeAddr("otherPerfModule");
+        _assertMovesProxy(c, canonical, "performanceFeeModule");
+
+        c = oivConfig;
+        c.sharesParams.performanceFeeRate = 1000;
+        _assertMovesProxy(c, canonical, "performanceFeeRate");
+
+        c = oivConfig;
+        c.sharesTimelock = _timelockParams(12 hours);
+        _assertMovesProxy(c, canonical, "sharesTimelock");
+    }
+
+    /// @notice The three fields deliberately left OUT of the commitment must NOT move the address —
+    ///         and each omission is load-bearing, not an oversight:
+    ///         `asset` is per-chain by design (the reason the proxy has an empty constructor);
+    ///         `sharesParams.admin` / `.safe` are overwritten by `_deploySharesProxy`, so binding
+    ///         bytes the factory discards would split one fund across chains over nothing.
+    function test_deriveSharesSalt_theDeliberateOmissionsDoNotMoveTheProxy() public {
+        address canonical = factory.predictOivAddresses(oivConfig, address(this)).kpkSharesProxy;
+
+        KpkOivFactory.OivConfig memory c = oivConfig;
+        c.sharesParams.asset = OTHER_ASSET;
+        c.sharesParams.admin = makeAddr("ignoredAdmin");
+        c.sharesParams.safe = makeAddr("ignoredSafe");
+
+        assertEq(
+            factory.predictOivAddresses(c, address(this)).kpkSharesProxy,
+            canonical,
+            "asset/admin/safe are excluded from the commitment and must not move the proxy"
+        );
+    }
+
+    /// @notice `config.admin` stays out of the commitment so that rotating exec-modifier ownership
+    ///         after deployment does not strand the fund: `_recordedExecTimelock` checks CURRENT
+    ///         governance, so the rotated owner must be passable as `admin` and still reach the
+    ///         canonical proxy. Binding `admin` would have made a rotation permanently unpromotable.
+    function test_deriveSharesSalt_adminIsExcludedSoRotationStillReachesTheCanonicalProxy() public {
+        address canonical = factory.predictOivAddresses(oivConfig, address(this)).kpkSharesProxy;
+
+        KpkOivFactory.OivConfig memory rotated = oivConfig;
+        rotated.admin = makeAddr("rotatedAdmin");
+
+        assertEq(
+            factory.predictOivAddresses(rotated, address(this)).kpkSharesProxy,
+            canonical,
+            "admin must stay out of the commitment"
+        );
+    }
+
+    function _assertMovesProxy(KpkOivFactory.OivConfig memory c, address canonical, string memory field) internal view {
+        assertTrue(
+            factory.predictOivAddresses(c, address(this)).kpkSharesProxy != canonical,
+            string.concat("changing ", field, " must move the shares proxy")
+        );
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
     function _buildStackConfig() internal view returns (KpkOivFactory.StackConfig memory cfg) {

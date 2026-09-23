@@ -1023,12 +1023,16 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // breaking the invariant this whole design exists to provide. It is zeroed for the hash and
         // committed to through `sharesChains` instead, which is identical everywhere.
         //
-        // Everything else stays bound verbatim, and that is deliberate. The shares proxy's address does
-        // not depend on its initialization parameters (see `KpkOivFactory._predictSharesProxy`), so a
-        // salt that omitted `sharesParams` would let anyone deploy this fund at its CANONICAL
-        // addresses with a hostile `feeReceiver`, hostile fee rates, or no `sharesTimelock`. Binding
-        // the whole config is what keeps a hostile replay an availability problem rather than a
-        // capture of the fund's economics.
+        // Everything else stays bound verbatim, and that is deliberate: a salt that omitted
+        // `sharesParams` would let anyone replay this fund at its CANONICAL addresses with a hostile
+        // `feeReceiver`, hostile fee rates, or no `sharesTimelock`. Binding the whole config is what
+        // keeps a hostile replay an availability problem rather than a capture of the fund's economics.
+        //
+        // The factory now commits to the shares half in its OWN proxy salt too
+        // (`KpkOivFactory._deriveSharesSalt`), which closed the direct-path drain this comment used to
+        // describe as unreachable from here. These are two independent bindings of the same fields, not
+        // one made redundant by the other: this one covers the orchestrator's cross-chain salt, that one
+        // covers a direct `deployShares` against an already-live stack, and neither implies the other.
         // `additionalAssets[i].asset` is just as chain-specific as the base asset, and unlike the
         // base asset the topology has nowhere to put it — `SharesChain` carries one address per
         // chain. It therefore stays in the salt, which makes the combination undeployable rather
