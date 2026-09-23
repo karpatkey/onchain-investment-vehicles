@@ -874,7 +874,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @dev Called by the CCIP Router on the destination chain. Validates the router, source chain,
     ///      and source sender, then deploys the operational stack. Reverts propagate so a failed
     ///      delivery enters CCIP's FAILED state and can be manually re-executed.
-    function ccipReceive(Client.Any2EVMMessage calldata message) external override {
+    function ccipReceive(Client.Any2EVMMessage calldata message) external override nonReentrant {
         if (msg.sender != router) revert InvalidRouter(msg.sender);
         // Any chain in the registry may be a source, not just Ethereum. The registry is seeded at
         // construction with the same 19 chains everywhere, so every orchestrator accepts every other
@@ -940,10 +940,15 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // therefore the addresses. The destination ends in exactly the state the message asked for.
         //
         // It also makes an honest duplicate delivery succeed instead of failing.
-        // Structured so the HAPPY path pays nothing for it. Predicting first cost ~108k on every
-        // delivery and pushed the worst permitted config from 2,862,999 to 2,970,960 against the
-        // 3,000,000 cap — measured, and it failed an at-the-cap delivery outright. The already-wired
-        // case is the rare one, so it is the one that should pay.
+        // Structured so the HAPPY path pays nothing for it — which is also why the catch branch's
+        // owner assert below is free. Predicting first, unconditionally, cost ~108k on every delivery
+        // and pushed the worst permitted config from 2,862,999 to 2,970,960 against the 3,000,000 cap
+        // — measured, and it failed an at-the-cap delivery outright. The already-wired case is the
+        // rare one, so it is the one that should pay.
+        //
+        // Worst permitted frame, measured 2026-09-23 by `test/poc/CcipDestinationBudget.t.sol`:
+        // 2,868,869, i.e. 131,131 of headroom. `nonReentrant` on this function accounts for 5,154 of
+        // that; the catch branch accounts for none of it.
         try factory.deployStack(stackConfig) returns (KpkOivFactory.StackInstance memory inst) {
             emit StackReceived(message.sourceChainSelector, message.messageId, inst);
         } catch (bytes memory err) {
@@ -961,12 +966,38 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
                     revert(add(err, 0x20), mload(err))
                 }
             }
-            // Already present, and necessarily THIS fund's stack: the salt binds the whole config,
-            // and the one field left out — the base asset — the stack half never reads. Nobody can
-            // wire different owners or a different admin at these addresses without changing the
-            // salt and therefore the addresses. The destination is already in exactly the state the
-            // message asked for, so report success rather than burning the lane's fee for ever.
+            // Already present — but NOT necessarily in the state the message asked for, and an
+            // earlier version of this comment claimed the opposite ("necessarily THIS fund's stack
+            // ... nobody can wire different owners or a different admin at these addresses without
+            // changing the salt"). That is false for the one field that matters here: the five stack
+            // addresses derive from `(salt, manager owners, threshold)`, and `execRolesMod.finalOwner`
+            // is NOT among them. So a stack can sit at exactly these addresses under DIFFERENT exec
+            // governance than the payload describes, and absorbing the revert then reported a capture
+            // as a success, emitting `StackReceived` with the message's governance rather than the
+            // owner actually in place. That silence is what made it covert: the fund extends here
+            // later, sees a green delivery, and nobody reads `owner()`.
+            //
+            // So verify the one thing the addresses do not pin. If the present exec modifier is owned
+            // by someone other than the governance this message describes, re-throw the original
+            // `StackAlreadyDeployedHere` — a FAILED lane is the correct outcome, because the
+            // destination is genuinely not in the requested state.
+            //
+            // This removes the silence, not the capture. The root causes are upstream — a re-callable
+            // `configure` and `finalOwner` not being salt-bound — and the precondition is the
+            // orchestrator owner or a compromised router, so this is a trusted-role escalation with a
+            // covert path rather than an external-attacker hole.
             KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(stackConfig, address(this));
+            // A timelocked stack's modifier is owned by the timelock, not by `finalOwner` directly —
+            // `predictStackAddresses` fills in `execTimelock` exactly when `minDelay != 0`, which is
+            // the same condition `deployStack` wires on.
+            address expectedOwner = present.execTimelock == address(0)
+                ? stackConfig.execRolesMod.finalOwner
+                : present.execTimelock;
+            if (IRoles(present.execRolesModifier).owner() != expectedOwner) {
+                assembly {
+                    revert(add(err, 0x20), mload(err))
+                }
+            }
             emit StackReceived(message.sourceChainSelector, message.messageId, present);
         }
     }

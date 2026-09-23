@@ -980,6 +980,109 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
     }
 
+    /// @notice The five stack addresses derive from `(salt, manager owners, threshold)` — and
+    ///         `execRolesMod.finalOwner` is NOT among them. So a stack can already sit at exactly the
+    ///         addresses a payload describes while being owned by someone else entirely, and the
+    ///         `StackAlreadyDeployedHere` absorption then reported that as a successful delivery,
+    ///         emitting `StackReceived` with the MESSAGE's governance rather than the owner actually in
+    ///         place. That silence is what made a capture covert: the fund extends here later, sees a
+    ///         green lane, and nobody reads `owner()`.
+    /// @dev    Precondition, stated so the severity is not overread: forging this payload needs the
+    ///         orchestrator owner or a compromised router. `deployLocal`/`dispatchTo` cannot produce
+    ///         it, because they derive the salt through `_effectiveConfig`, which binds `admin`.
+    function test_ccipReceive_refusesToReportSuccessForAStackUnderForeignExecGovernance() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        Client.Any2EVMMessage memory honest = _messageFor(remote);
+        // Decoded TWICE on purpose. A memory-to-memory struct assignment in Solidity copies the
+        // pointer, not the struct, so `hostile = cfg` would mutate the honest config too and the test
+        // would compare a forgery against itself.
+        (KpkOivFactory.StackConfig memory cfg,) = abi.decode(honest.data, (KpkOivFactory.StackConfig, uint256[]));
+        (KpkOivFactory.StackConfig memory hostile, uint256[] memory ids) =
+            abi.decode(honest.data, (KpkOivFactory.StackConfig, uint256[]));
+
+        address captor = makeAddr("stackCaptor");
+        hostile.execRolesMod.finalOwner = captor;
+
+        // Built field by field rather than as `forged = honest; forged.data = ...`, for the same
+        // reason `cfg` and `hostile` are decoded twice: that assignment aliases, so it turned the
+        // honest message INTO the forgery and the test compared a payload against itself — it failed
+        // with "next call did not revert", which reads like the fix not working.
+        Client.Any2EVMMessage memory forged = Client.Any2EVMMessage({
+            messageId: keccak256("forged"),
+            sourceChainSelector: honest.sourceChainSelector,
+            sender: honest.sender,
+            data: abi.encode(hostile, ids),
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+        _deliver(forged);
+
+        KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(cfg, address(orchestrator));
+        assertEq(
+            IRoles(present.execRolesModifier).owner(),
+            captor,
+            "precondition: only finalOwner differed, so the capture landed at the canonical addresses"
+        );
+
+        // The honest delivery must now FAIL the lane instead of absorbing and reporting success.
+        vm.prank(address(router));
+        vm.expectRevert(KpkOivFactory.StackAlreadyDeployedHere.selector);
+        orchestrator.ccipReceive(honest);
+
+        assertEq(
+            IRoles(present.execRolesModifier).owner(),
+            captor,
+            "and the capture is NOT undone - this removes the silence, not the capture"
+        );
+    }
+
+    /// @notice The positive control for the assert above, and the reason it is a fresh `owner()` read
+    ///         rather than a caller gate: honest idempotency must survive. A duplicate delivery of the
+    ///         SAME payload still succeeds, because the owner in place is the one the message
+    ///         describes. Without this test, the §2 assert could be tightened into something that
+    ///         fails every re-delivery and the suite would not notice.
+    function test_ccipReceive_stillAbsorbsAnHonestDuplicateDelivery() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        _deliver(m);
+
+        // Deliberately the SAME payload with a fresh message id, which is what CCIP manual
+        // re-execution and an honest duplicate both look like.
+        m.messageId = keccak256("redelivery");
+        _deliver(m); // must not revert
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+        assertGt(pred.avatarSafe.code.length, 0, "the stack is there exactly once and the lane succeeded");
+    }
+
+    /// @notice Same, for a TIMELOCKED stack: the modifier is owned by the timelock rather than by
+    ///         `finalOwner`, so the assert has to compare against the predicted timelock or every
+    ///         timelocked re-delivery would fail the lane. This is the branch that would break if the
+    ///         expected-owner derivation dropped its `execTimelock` case.
+    function test_ccipReceive_stillAbsorbsAnHonestDuplicateOfATimelockedStack() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        // `_messageFor` builds from the `oivConfig` storage variable, so the mutation goes there.
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        _deliver(m);
+
+        (KpkOivFactory.StackConfig memory cfg,) = abi.decode(m.data, (KpkOivFactory.StackConfig, uint256[]));
+        KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(cfg, address(orchestrator));
+        assertTrue(present.execTimelock != address(0), "precondition: this stack really is timelocked");
+        assertEq(IRoles(present.execRolesModifier).owner(), present.execTimelock, "and the timelock owns the modifier");
+
+        m.messageId = keccak256("timelocked redelivery");
+        _deliver(m); // must not revert
+    }
+
     /// @notice A timelock config that every destination will reject must be rejected HERE, before a
     ///         single non-refundable fee is spent. `dispatchTo` runs no local `deployOiv`, so
     ///         nothing else on the source chain ever looks at `execTimelock`: a proposer array that
