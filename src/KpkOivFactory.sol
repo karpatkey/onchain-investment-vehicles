@@ -1173,7 +1173,24 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // on-chain consumers to trust the deploy log over the registry, so that reads as "this fund
         // has no delay" about a fund that does.
         if (params.minDelay == 0) {
-            if (IRoles(execRolesModifier).owner() != expectedOwner) revert TimelockMismatch(address(0));
+            // `owner() != expectedOwner` is NOT proof that the stack is timelocked, and treating it as
+            // proof cost a documented capability. `config.admin` is salt-bound and cannot be restated,
+            // so an ordinary governance action — rotating the exec modifier to a new multisig, or
+            // hand-deploying a timelock exactly as `KpkTimelockDeployer.deployExecTimelock`'s NatSpec
+            // describes as supported — made every later `deployShares` / `promoteShares` on that chain
+            // revert `TimelockMismatch(0)` for ever. Neither branch escaped: a non-zero
+            // `execTimelock` derives from `msg.sender == factory` and cannot reproduce a hand-deployed
+            // timelock's address, and on the orchestrator path it moves the salt.
+            //
+            // What actually must not happen is recording `address(0)` for a fund a TIMELOCK governs,
+            // which would read as "no delay" about a fund that has one. So ask that question directly:
+            // an owner that is an EIP-1167 clone of this chain's timelock mastercopy is a timelock and
+            // is refused; anything else — an EOA, a Safe, new governance — is a rotation, and the fund
+            // genuinely has no timelock from this kit.
+            address liveOwner = IRoles(execRolesModifier).owner();
+            if (liveOwner != expectedOwner && IKpkTimelockDeployer(timelockDeployer).isTimelockClone(liveOwner)) {
+                revert TimelockMismatch(liveOwner);
+            }
             return address(0);
         }
 

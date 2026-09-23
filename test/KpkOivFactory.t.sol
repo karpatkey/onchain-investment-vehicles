@@ -1946,8 +1946,51 @@ contract KpkOivFactoryTest is OivTestConstants {
         // Same fund, same salt — but claiming there is no timelock.
         KpkOivFactory.OivConfig memory cfg = oivConfig; // execTimelock.minDelay == 0
 
-        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.TimelockMismatch.selector, address(0)));
+        // The error now NAMES the timelock it found rather than reporting `address(0)`, because the
+        // guard no longer infers "timelocked" from `owner() != admin` — it asks whether the owner is
+        // an EIP-1167 clone of this chain's timelock mastercopy. A legitimate ownership rotation
+        // therefore stops being fatal, while this case — a stack that genuinely IS timelocked being
+        // recorded as having no delay — still reverts.
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.TimelockMismatch.selector, st.execTimelock));
         factory.deployShares(cfg);
+    }
+
+    /// @notice The other side of that guard, and the capability it used to destroy. `config.admin` is
+    ///         SALT-BOUND, so it can never be restated — which meant that once governance rotated the
+    ///         exec modifier away from `admin`, every later `deployShares` / `promoteShares` on that
+    ///         chain reverted `TimelockMismatch(0)` for ever. Neither branch escaped: a non-zero
+    ///         `execTimelock` derives its address from `msg.sender == factory` and so cannot reproduce
+    ///         a hand-deployed timelock, and on the orchestrator path it moves the salt.
+    ///
+    ///         That rotation is not exotic — `KpkTimelockDeployer.deployExecTimelock`'s own NatSpec
+    ///         documents hand-deploying a timelock and transferring ownership to it as the supported
+    ///         way to retrofit an existing fund. The guard was forfeiting the documented escape hatch
+    ///         for "a chain whose stablecoin was unknowable at birth".
+    ///
+    ///         Now it asks the precise question instead of the convenient one: is the live owner an
+    ///         EIP-1167 clone of this chain's timelock mastercopy? A new governance Safe is not, so the
+    ///         fund records `address(0)` — which is TRUE, it has no timelock from this kit — and shares
+    ///         can still be added.
+    function test_deployShares_survivesALegitimateExecOwnershipRotation() public {
+        // A stack with NO timelock: wiring hands the exec modifier to `finalOwner` (== admin).
+        KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
+        KpkOivFactory.StackInstance memory st = factory.deployStack(stackConfig);
+        assertEq(st.execTimelock, address(0), "precondition: no timelock");
+        assertEq(IRoles(st.execRolesModifier).owner(), admin, "precondition: admin owns the modifier");
+
+        // Governance rotates ownership to a new multisig — an ordinary, supported action.
+        // Any coded account that is NOT an EIP-1167 clone of the timelock mastercopy; this test
+        // contract serves, and having code is the point — a codeless owner would answer false
+        // for the trivial reason rather than the interesting one.
+        address newGovernance = address(this);
+        vm.prank(admin);
+        IRoles(st.execRolesModifier).transferOwnership(newGovernance);
+        assertEq(IRoles(st.execRolesModifier).owner(), newGovernance, "ownership really moved");
+
+        // Shares must still be addable, and must record "no timelock", because that is the truth.
+        KpkOivFactory.OivInstance memory inst = factory.deployShares(oivConfig);
+        assertTrue(inst.kpkSharesProxy != address(0), "shares deployed after the rotation");
+        assertEq(inst.execTimelock, address(0), "and recorded as having no timelock, correctly");
     }
 
     /// @notice Prediction must refuse a fee rate deployment would refuse. `CcipOivDeployer` uses

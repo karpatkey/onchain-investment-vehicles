@@ -379,6 +379,23 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         proxy is freshly initialized with the factory as sole admin, and the factory grants
     ///         the timelock INSTEAD of `finalAdmin` before renouncing its own role. The caveat is
     ///         for callers using this deployer standalone against a proxy with a history.
+    /// @notice True when `candidate` is an EIP-1167 clone of THIS deployer's timelock mastercopy.
+    /// @dev    Exact, not heuristic: a clone's entire runtime is
+    ///         `363d3d373d3d3d363d73 ‖ implementation ‖ 5af43d82803e903d91602b57fd5bf3` (45 bytes,
+    ///         OpenZeppelin `Clones`), so one `EXTCODEHASH` comparison settles it. An account with no
+    ///         code, an EOA, a Safe, or a clone of some OTHER implementation all answer false.
+    ///
+    ///         `KpkOivFactory` needs this to tell two states apart that used to be conflated: an exec
+    ///         Roles Modifier whose owner is no longer `config.admin` because governance legitimately
+    ///         rotated it, versus one owned by a timelock. The first must not block recording "this
+    ///         fund has no timelock"; the second must.
+    function isTimelockClone(address candidate) external view returns (bool) {
+        return candidate.codehash
+            == keccak256(
+            abi.encodePacked(hex"363d3d373d3d3d363d73", timelockMastercopy, hex"5af43d82803e903d91602b57fd5bf3")
+        );
+    }
+
     /// @notice True once `timelock` holds `DEFAULT_ADMIN_ROLE` on `sharesProxy` and `previousAdmin`
     ///         no longer does.
     /// @dev    Both halves matter: granting the timelock while the old admin retains the role leaves a
