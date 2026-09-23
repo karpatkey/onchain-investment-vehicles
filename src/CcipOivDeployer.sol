@@ -1201,13 +1201,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
         KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
 
-        if (msg.sender != config.admin) {
-            KpkOivFactory.StackInstance memory stack =
-                factory.predictStackAddresses(factory.oivToStackConfig(eff), address(this));
-            if (stack.execTimelock == address(0) || msg.sender != stack.execTimelock) {
-                revert NotFundAdmin(msg.sender);
-            }
-        }
 
         // The approval must already exist, because promotion cannot grant it and the intermediate
         // state is NOT harmless: `requestSubscription` has no admin, operator or pause gate and pulls
@@ -1221,6 +1214,44 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // Checked here as well as in the factory so the more fundamental failure reports first: on a
         // chain with no stack at all, "no approval" would be a confusing thing to be told.
         if (predicted.avatarSafe.code.length == 0) revert KpkOivFactory.StackNotDeployed();
+        if (predicted.execRolesModifier.code.length == 0) revert KpkOivFactory.StackNotDeployed();
+
+        // AUTHORIZED BY LIVE GOVERNANCE, read off this chain's exec Roles Modifier — not by
+        // `config.admin`, which is the fund's governance AT BIRTH and may since have been replaced.
+        //
+        // Accepting `config.admin` was wrong in both directions at once:
+        //
+        //   * It let a SUPERSEDED admin act. Configure a timelock and `deployStack` hands the exec
+        //     modifier to the timelock on every chain, leaving `config.admin` with no authority over
+        //     the fund — yet it could still promote shares onto a fresh chain and choose that chain's
+        //     base asset, which is deliberately NOT salt-bound. The allowance precondition below does
+        //     not constrain that choice, because a hostile token's `allowance` can simply return
+        //     `type(uint256).max`. The result is a shares token at the fund's canonical address
+        //     denominated in an asset the old admin controls — the economic capture this gate exists
+        //     to prevent, performed by the one account the gate trusted unconditionally.
+        //   * It blocked CURRENT governance. After a legitimate rotation to a new multisig, neither
+        //     `config.admin` nor a timelock owns the modifier, so promotion reverted `NotFundAdmin`
+        //     with no way out: `config.admin` is salt-bound here, so restating it moves every address
+        //     the fund has.
+        //
+        // The live owner answers both. It is the fund's authoritative gatekeeper by construction, it
+        // equals `config.admin` exactly while nothing has been rotated, and it equals the timelock on a
+        // timelocked fund — so the separate "exec timelock as an alternate caller" branch this
+        // replaces is subsumed rather than dropped.
+        //
+        // Note this is necessarily PER CHAIN: each chain's exec modifier has its own owner, so a fund
+        // that rotated on mainnet and not here is still governed here by whoever owns it here. That is
+        // the honest answer rather than a gap — authority over this chain is what promoting on this
+        // chain requires.
+        //
+        // `eff.admin` is deliberately NOT rewritten to the live owner. It reaches
+        // `_recordedExecTimelock` as the expected owner, and making the two equal would disarm that
+        // check: a fund whose modifier is owned by a hand-deployed timelock clone while
+        // `execTimelock.minDelay` is 0 would then record `address(0)` and read as "no delay". The
+        // promoted shares token's `DEFAULT_ADMIN_ROLE` therefore still follows the fund's config, the
+        // same as on the origin chain, and is rotated by the same separate governance action.
+        address liveOwner = IRoles(predicted.execRolesModifier).owner();
+        if (msg.sender != liveOwner) revert NotFundAdmin(msg.sender);
         // MAXIMUM, not merely non-zero: `_grantApprovals` sets `type(uint256).max` on a normal
         // deployment and asserts it, so anything less here would let a promoted fund settle a few
         // redemptions and then start reverting — a slower version of the failure this prevents.

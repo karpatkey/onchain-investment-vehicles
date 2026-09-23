@@ -561,6 +561,112 @@ contract CcipOivDeployerTest is OivTestConstants {
         IERC20(oivConfig.sharesParams.asset).approve(p.kpkSharesProxy, type(uint256).max);
     }
 
+    // ── promoteShares authorization: live governance, not birth governance ─────
+
+    /// @notice `promoteShares` used to accept `config.admin` unconditionally. Configure a timelock and
+    ///         `deployStack` hands the exec modifier to that timelock on every chain, leaving
+    ///         `config.admin` with no authority over the fund — yet it could still promote shares onto
+    ///         a fresh chain and pick that chain's base asset, which is deliberately not salt-bound.
+    ///         The allowance precondition does not constrain the choice, because a hostile token's
+    ///         `allowance` can just return `type(uint256).max`. So the one account the gate trusted
+    ///         unconditionally could perform exactly the economic capture the gate exists to prevent.
+    function test_promoteShares_refusesTheBirthAdminOnceATimelockGovernsTheFund() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address liveOwner = IRoles(predicted.execRolesModifier).owner();
+        assertTrue(liveOwner != oivConfig.admin, "precondition: the timelock, not the admin, owns the modifier");
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, oivConfig.admin));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @dev The positive control, and the reason the old "exec timelock as an alternate caller" branch
+    ///      could be deleted rather than kept: on a timelocked fund the live owner IS the timelock, so
+    ///      it is authorized by the same single check.
+    function test_promoteShares_acceptsTheTimelockThatSupersededTheAdmin() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address liveOwner = IRoles(predicted.execRolesModifier).owner();
+        vm.prank(liveOwner);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "and it lands at the canonical address");
+    }
+
+    /// @notice The mirror failure: after a legitimate rotation to new governance, promotion used to
+    ///         revert `NotFundAdmin` with no way out — neither `config.admin` nor a timelock owned the
+    ///         modifier, and restating `config.admin` moves every address the fund has, because it is
+    ///         salt-bound on this path. The new owner is now authorized, and the fund's identity is
+    ///         untouched: the proxy still lands on the address predicted BEFORE the rotation.
+    function test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address rotated = makeAddr("rotatedGovernance");
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(rotated);
+        assertEq(IRoles(predicted.execRolesModifier).owner(), rotated, "precondition: governance rotated");
+
+        vm.prank(rotated);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(
+            promoted.kpkSharesProxy,
+            predicted.kpkSharesProxy,
+            "rotation must not move the fund - the address was predicted before it"
+        );
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "and the shares token really exists");
+    }
+
+    /// @dev And the superseded admin is refused on that same rotated fund. Without this, the test above
+    ///      would pass just as well against a gate that accepted everyone.
+    function test_promoteShares_refusesTheStaleAdminAfterRotation() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(makeAddr("rotatedGovernance2"));
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, oivConfig.admin));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @dev The compatibility case that must keep working, and the reason this is not a breaking
+    ///      change for any existing fund: while nothing has been rotated and no timelock is
+    ///      configured, the live owner IS `config.admin`, so the admin remains authorized.
+    function test_promoteShares_theAdminStillWorksWhenNothingHasBeenRotated() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        assertEq(IRoles(predicted.execRolesModifier).owner(), oivConfig.admin, "precondition: admin still owns it");
+
+        vm.prank(oivConfig.admin);
+        orchestrator.promoteShares(oivConfig, topology);
+        assertGt(predicted.kpkSharesProxy.code.length, 0, "the ordinary path is unchanged");
+    }
+
     /// @notice The whole point: a chain the topology never declared gains the shares token, at the
     ///         SAME address every declared shares chain would use. Nothing moves.
     function test_promoteShares_landsAtTheCanonicalAddressWithoutMovingAnything() public {
