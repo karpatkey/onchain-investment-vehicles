@@ -43,9 +43,6 @@ interface IKpkTimelockDeployer {
     /// @notice Deploys (or returns the existing) timelock intended to own `execRolesModifier`.
     function deployExecTimelock(address execRolesModifier, TimelockParams calldata params) external returns (address);
 
-    /// @notice True when `candidate` is an EIP-1167 clone of this deployer's timelock mastercopy.
-    function isTimelockClone(address candidate) external view returns (bool);
-
     /// @notice Deploys (or returns the existing) timelock intended to hold `DEFAULT_ADMIN_ROLE`
     ///         on `sharesProxy`.
     function deploySharesTimelock(address sharesProxy, TimelockParams calldata params) external returns (address);

@@ -37,29 +37,10 @@ interface IAccessControlView {
 ///         the 20 CCIP lanes enforce, making a timelocked fund undeliverable to those chains. A clone
 ///         costs a small fraction of that.
 ///
-///         THE DEPLOYED TIMELOCKS ARE NOT UPGRADEABLE, despite what the mastercopy's type name
-///         suggests. In OpenZeppelin's naming, the `Upgradeable` suffix means "initializer-based
-///         instead of constructor-based" — a requirement for any contract reached through a clone,
-///         because a clone cannot run a constructor. It does NOT mean the contract can be upgraded.
-///         `TimelockControllerUpgradeable` inherits `Initializable`, `AccessControlUpgradeable`,
-///         `ERC721HolderUpgradeable` and `ERC1155HolderUpgradeable` and nothing else: no
-///         `UUPSUpgradeable`, no `upgradeToAndCall`, no `_authorizeUpgrade`, no ERC-1967 slot. There
-///         is no upgrade entry point to gate.
-///
-///         Three layers each independently prevent one: the EIP-1167 stub hardcodes its
-///         implementation address in its own runtime, `timelockMastercopy` here is `immutable`, and
-///         the implementation has no upgrade mechanism at all. Rotating the mastercopy on a NEW
-///         deployer would change future clone ADDRESSES (the implementation is part of the clone's
-///         init code), never the behaviour of one already deployed.
-///
-///         The genuinely upgradeable contract in this system is the shares proxy, which IS
-///         `UUPSUpgradeable` — that is what the shares timelock exists to put a delay in front of.
-///
-///         The mastercopy takes no constructor arguments and is deployed through the canonical
-///         CREATE2 factory, so it sits at one address on every chain and clone addresses stay
-///         chain-independent. A searcher who claims the mastercopy's initializer (a known, documented
-///         race) gains roles on the MASTERCOPY only — every clone has its own storage, so no clone's
-///         role set is affected.
+///         The clone is immutable — an EIP-1167 stub always delegates to the same mastercopy — so this
+///         adds no upgrade surface. The mastercopy takes no constructor arguments and is deployed
+///         through the canonical CREATE2 factory, so it sits at one address on every chain and clone
+///         addresses stay chain-independent.
 ///
 ///         `IKpkTimelockDeployer` additionally keeps the factory's import graph free of the timelock
 ///         code while still letting it name `TimelockParams`.
@@ -190,15 +171,9 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         fund's canonical addresses by calling `deployStack` directly. The fund could never
     ///         exist on those chains at its canonical addresses at all.
     ///
-    ///         SUPERSEDED FIGURE, kept as the correction it is: this said "10 leaves ~360k of margin
-    ///         (~12%) … 2,639,682 measured". That was measured with ONE manager owner and a small
-    ///         topology. The worst configuration all three bounds now permit — 10 manager owners, 10
-    ///         proposers, 10 cancellers, a 20-entry topology — measures **2,863,715** for the full
-    ///         `ccipReceive` frame, i.e. about **136k (4.5%)** of margin, not 360k. Anyone sizing
-    ///         `gasLimit` or judging whether a bound can be raised must use the smaller number; see
-    ///         `CcipOivDeployer.MAX_CCIP_MANAGER_OWNERS` and
-    ///         `test/poc/CcipDestinationBudget.t.sol`, which measures the whole frame rather than
-    ///         `deployStack` alone. Pinned by
+    ///         10 leaves ~360k of margin (~12%) against the full `ccipReceive` frame the destination
+    ///         actually pays for — 2,639,682 measured; `deployStack` alone is 2.56M, which is the
+    ///         narrower figure the test below asserts. Pinned by
     ///         `test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap`, which measures the
     ///         largest set this constant permits rather than a typical one. This is a ceiling only —
     ///         there is deliberately no floor on either array.
@@ -379,23 +354,6 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         proxy is freshly initialized with the factory as sole admin, and the factory grants
     ///         the timelock INSTEAD of `finalAdmin` before renouncing its own role. The caveat is
     ///         for callers using this deployer standalone against a proxy with a history.
-    /// @notice True when `candidate` is an EIP-1167 clone of THIS deployer's timelock mastercopy.
-    /// @dev    Exact, not heuristic: a clone's entire runtime is
-    ///         `363d3d373d3d3d363d73 ‖ implementation ‖ 5af43d82803e903d91602b57fd5bf3` (45 bytes,
-    ///         OpenZeppelin `Clones`), so one `EXTCODEHASH` comparison settles it. An account with no
-    ///         code, an EOA, a Safe, or a clone of some OTHER implementation all answer false.
-    ///
-    ///         `KpkOivFactory` needs this to tell two states apart that used to be conflated: an exec
-    ///         Roles Modifier whose owner is no longer `config.admin` because governance legitimately
-    ///         rotated it, versus one owned by a timelock. The first must not block recording "this
-    ///         fund has no timelock"; the second must.
-    function isTimelockClone(address candidate) external view returns (bool) {
-        return candidate.codehash
-            == keccak256(
-            abi.encodePacked(hex"363d3d373d3d3d363d73", timelockMastercopy, hex"5af43d82803e903d91602b57fd5bf3")
-        );
-    }
-
     /// @notice True once `timelock` holds `DEFAULT_ADMIN_ROLE` on `sharesProxy` and `previousAdmin`
     ///         no longer does.
     /// @dev    Both halves matter: granting the timelock while the old admin retains the role leaves a
@@ -405,13 +363,6 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         view
         returns (bool)
     {
-        // Absent proxy answers FALSE rather than reverting, matching `isExecTimelocked`, whose own
-        // NatSpec promises this pair is safe to sweep across every chain a fund may or may not live
-        // on. Without this the sweep reverted on exactly the chains where the shares proxy is
-        // GUARANTEED absent — every stack-only chain — so the advertised contract held for one half
-        // of the pair and not the other.
-        if (sharesProxy.code.length == 0) return false;
-
         IAccessControlView shares = IAccessControlView(sharesProxy);
         return shares.hasRole(DEFAULT_ADMIN_ROLE, timelock) && !shares.hasRole(DEFAULT_ADMIN_ROLE, previousAdmin);
     }

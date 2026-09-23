@@ -11,7 +11,22 @@ Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonic
 
 ---
 
-## Pending — salt v4 (NOT DEPLOYED — predictions only)
+## Pending — salt v4 (MOSTLY not deployed — read the per-row status)
+
+> **⚠️ This heading used to say "NOT DEPLOYED — predictions only", and that was false.** Verified on
+> mainnet 2026-09-23 with `eth_call` / `eth_getCode`: the `KpkTimelockDeployer` and its
+> `TimelockControllerUpgradeable` mastercopy **are live**, as a matched pair — the deployer at
+> `0xdd23Ba8B…` returns `timelockMastercopy() == 0x9760280f…`, `MAX_ROLE_MEMBERS() == 10` and
+> `MIN_DELAY_FLOOR() == 43200`. The factory, the shares mastercopy and the orchestrator genuinely have
+> no code.
+>
+> **Why this mattered rather than being untidy:** believing the whole set was undeployed, a session
+> edited `src/KpkTimelockDeployer.sol` — comment-only — which moved its CREATE2 prediction off the
+> live contract, and the drift guards did not notice. **They cannot**: they compare the pinned address
+> to the PREDICTION, and both are computed from the same source. Nothing in the repo compares either
+> to chain state. Treat any edit touching that file **or its import graph** (including
+> `src/interfaces/IKpkTimelockDeployer.sol`, and any global compiler setting such as `evm_version`) as
+> a decision to fork the deployed timelock kit.
 
 `deployOiv` / `deployStack` now take timelock configuration and deploy a fund's `TimelockController`
 instances through a new `KpkTimelockDeployer`. That changed `KpkOivFactory`'s runtime, so its CREATE2
@@ -25,11 +40,11 @@ different bytecode, and therefore different addresses (see the clean-clone warni
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0xd9FDbd1f265e91fe6925a19018c2FDDe68F1C389` |
+| `KpkOivFactory` | `0x666eA3b6f6318951e1617C64e787B47F1d741418` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
-| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
-| `CcipOivDeployer` (orchestrator) | `0xF678647923d9E30ec5664d8B78b7224b4CE337F3` |
-| `KpkTimelockDeployer` | `0x6DE5087484dcB68d30185cEE4589037BB8DD0CB3` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
+| `CcipOivDeployer` (orchestrator) | `0x8D773653f5a7b353E2A5E70C0B6608d843d319a8` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer`'s constructor takes the timelock mastercopy address

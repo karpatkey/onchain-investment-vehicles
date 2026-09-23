@@ -12,6 +12,16 @@ import {ISafeModuleSetup} from "./interfaces/ISafeModuleSetup.sol";
 import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
 import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
+
+/// @dev The one getter this factory needs from `KpkTimelockDeployer` that
+///      `IKpkTimelockDeployer` does not declare. Declared HERE rather than added to that interface on
+///      purpose: the interface is in the deployed deployer's import graph, so extending it changes
+///      that contract's metadata and therefore its CREATE2 address — measured, while trying exactly
+///      that. The deployer is live at mainnet `0xdd23Ba8B…`; this file is not deployed, so the
+///      declaration is free here and forks nothing.
+interface ITimelockMastercopy {
+    function timelockMastercopy() external view returns (address);
+}
 import {OivInfraConstants} from "./OivInfraConstants.sol";
 
 /// @title  KpkOivFactory
@@ -1156,6 +1166,26 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         }
     }
 
+    /// @dev True when `candidate` is an EIP-1167 clone of this chain's timelock mastercopy — i.e. one
+    ///      of the timelocks this kit produces, as opposed to an EOA, a Safe, or a clone of some other
+    ///      implementation, all of which answer false.
+    ///
+    ///      Exact rather than heuristic: a clone's entire runtime is
+    ///      `363d3d373d3d3d363d73 ‖ implementation ‖ 5af43d82803e903d91602b57fd5bf3` (45 bytes,
+    ///      OpenZeppelin `Clones`), so one `EXTCODEHASH` settles it.
+    ///
+    ///      Deliberately HERE and not on `KpkTimelockDeployer`, where it naturally belongs: that
+    ///      contract is already deployed (mainnet `0xdd23Ba8B…`, with its mastercopy at
+    ///      `0x9760280f…`) and any edit to its source — a comment included — moves its CREATE2 address
+    ///      and forks the kit away from the live funds using it. This factory is not deployed, so
+    ///      putting the logic here costs nothing. It reads the mastercopy through the getter the
+    ///      deployed deployer already exposes.
+    function _isTimelockClone(address candidate) private view returns (bool) {
+        address impl = ITimelockMastercopy(timelockDeployer).timelockMastercopy();
+        return candidate.codehash
+            == keccak256(abi.encodePacked(hex"363d3d373d3d3d363d73", impl, hex"5af43d82803e903d91602b57fd5bf3"));
+    }
+
     /// @dev Resolves the exec timelock to RECORD for a fund whose stack already exists here.
     ///      Requires the predicted address to exist and to actually own the exec modifier, so the
     ///      recorded value is the fund's real governance rather than the address some other
@@ -1188,9 +1218,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             // is refused; anything else — an EOA, a Safe, new governance — is a rotation, and the fund
             // genuinely has no timelock from this kit.
             address liveOwner = IRoles(execRolesModifier).owner();
-            if (liveOwner != expectedOwner && IKpkTimelockDeployer(timelockDeployer).isTimelockClone(liveOwner)) {
-                revert TimelockMismatch(liveOwner);
-            }
+            if (liveOwner != expectedOwner && _isTimelockClone(liveOwner)) revert TimelockMismatch(liveOwner);
             return address(0);
         }
 
