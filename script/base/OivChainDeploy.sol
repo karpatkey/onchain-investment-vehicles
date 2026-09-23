@@ -124,8 +124,14 @@ abstract contract OivChainDeploy is Script {
                 SAFE_FALLBACK_HANDLER,
                 MODULE_PROXY_FACTORY,
                 ROLES_MODIFIER_MASTERCOPY,
-                address(0), // placeholder — wired post-deploy via setKpkSharesMastercopy
-                address(0) // placeholder — wired post-deploy via setTimelockDeployer
+                // No longer placeholders: both are constructor-MANDATORY, so they are part of the
+                // factory's CREATE2 init code and therefore of its address. A chain that wired them
+                // differently now yields a different factory address, which the address-sync guards
+                // fail on — instead of a fund whose shares proxy or timelock silently sits elsewhere
+                // on that one chain. Both are pure functions of the salt generation, so this stays
+                // chain-independent.
+                _create2Address(SALT_SHARES_MASTERCOPY, _sharesMastercopyInitCode()),
+                _predictTimelockDeployer()
             )
         );
     }
@@ -288,14 +294,13 @@ abstract contract OivChainDeploy is Script {
         _ensureEmpty();
         _ensureMultiSendUnwrapper();
 
-        // ── 2. Factory + deployer ──
-        if (factory.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
-            require(ok, "factory CREATE2 deploy failed");
-            console.log("[OK]   KpkOivFactory deployed at:    ", factory);
-        } else {
-            console.log("[SKIP] KpkOivFactory already at:     ", factory);
-        }
+        // ── 2. Mastercopies and the timelock deployer FIRST, then the factory ──
+        //
+        // Order is load-bearing now. The factory's constructor requires both `kpkSharesMastercopy`
+        // and `timelockDeployer` to be non-zero AND to have code, so neither can be a placeholder
+        // wired afterwards — which is the point: they are in its init code, so a mis-wire moves the
+        // factory's own address rather than silently moving one chain's proxies. Deploying the
+        // factory before them would simply revert `InvalidMastercopy`.
         if (sharesMastercopy.code.length == 0) {
             (bool ok,) =
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_SHARES_MASTERCOPY, sharesMastercopyInitCode));
@@ -365,6 +370,17 @@ abstract contract OivChainDeploy is Script {
             console.log("[SKIP] KpkTimelockDeployer already at:", timelockDeployer);
         }
 
+        // The factory LAST of the four, because its init code embeds the shares mastercopy and the
+        // timelock deployer. Deploying it earlier reverts `InvalidMastercopy` rather than producing a
+        // factory that needs wiring — which is the property this ordering exists to give.
+        if (factory.code.length == 0) {
+            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
+            require(ok, "factory CREATE2 deploy failed");
+            console.log("[OK]   KpkOivFactory deployed at:    ", factory);
+        } else {
+            console.log("[SKIP] KpkOivFactory already at:     ", factory);
+        }
+
         KpkOivFactory f = KpkOivFactory(factory);
         // Ownership is checked BEFORE either setter, because both are `onlyOwner` and now WRITE-ONCE.
         // A first run whose `transferOwnership` landed but whose setter transaction did not leaves a
@@ -375,29 +391,13 @@ abstract contract OivChainDeploy is Script {
         // Before write-once this was survivable a different way — the value could be corrected later
         // from whoever did own it. Latching removed the second chance, which is what makes the
         // ordering worth guarding rather than merely tidy.
-        bool needsWiring = f.kpkSharesMastercopy() == address(0) || f.timelockDeployer() == address(0);
-        if (needsWiring && f.owner() != eoaOwner) {
-            console.log("[ACTION REQUIRED] factory is owned by:", f.owner());
-            console.log("                  but still needs kpkSharesMastercopy / timelockDeployer wired.");
-            console.log("                  Both setters are onlyOwner and write-once, so this EOA cannot");
-            console.log("                  finish onboarding. Submit from the owner:");
-            console.log("                    setKpkSharesMastercopy:", sharesMastercopy);
-            console.log("                    setTimelockDeployer:   ", timelockDeployer);
-            revert("factory already handed over with wiring incomplete - submit the setters from the owner");
-        }
-
-        if (f.kpkSharesMastercopy() == address(0)) {
-            f.setKpkSharesMastercopy(sharesMastercopy);
-            console.log("[OK]   factory.kpkSharesMastercopy set");
-        } else {
-            require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
-        }
-        if (f.timelockDeployer() == address(0)) {
-            f.setTimelockDeployer(timelockDeployer);
-            console.log("[OK]   factory.timelockDeployer set");
-        } else {
-            require(f.timelockDeployer() == timelockDeployer, "factory timelock deployer mismatch");
-        }
+        // Nothing to wire any more — both values were fixed at construction. There is no
+        // ownership-dependent step here, so the "handed over with wiring incomplete" state this
+        // block used to detect and refuse can no longer exist. What remains is confirmation that the
+        // factory at this address really is the one this salt generation describes; a mismatch means
+        // the wrong generation is deployed here, not that something needs finishing.
+        require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
+        require(f.timelockDeployer() == timelockDeployer, "factory timelock deployer mismatch");
         if (f.owner() == eoaOwner && eoaOwner != finalOwner) {
             f.transferOwnership(finalOwner);
         }

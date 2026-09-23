@@ -438,12 +438,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param kpkSharesProxy    The removed fund's KpkShares proxy (its registry key).
     event FundUnregistered(uint256 indexed registeredFundId, address indexed kpkSharesProxy);
 
-    /// @notice Emitted when the owner updates the KpkShares mastercopy address.
-    event KpkSharesMastercopyUpdated(address indexed newAddress);
-
-    /// @notice Emitted when the owner updates the timelock deployer address.
-    event TimelockDeployerUpdated(address indexed newAddress);
-
     // ── Errors ─────────────────────────────────────────────────────────────────
 
     /// @notice Thrown when a required address argument is `address(0)`.
@@ -504,21 +498,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         of the same name, for the same reason: the value decides what every future fund on
     ///         this chain delegates to.
     error InvalidMastercopy();
-
-    /// @notice Thrown when an infrastructure address is set a second time. These are write-once
-    ///         because `deployShares` re-derives an existing fund's stack from the factory's CURRENT
-    ///         infrastructure: rotating any of them makes `_predictStack` point elsewhere and the
-    ///         promote-later path revert `StackNotDeployed`, while rotating `kpkSharesMastercopy`
-    ///         lands a promoted proxy at a different address from the fund's other shares chains.
-    ///         Every fund deployed before such a rotation loses its promotion route silently, and the
-    ///         trigger is an ordinary bugfix rotation rather than owner compromise.
-    ///
-    ///         The cost of closing it this way is real and deliberate: a bad mastercopy can no longer
-    ///         be swapped in place, and needs a new factory generation and a re-rollout. That is the
-    ///         accepted trade — a rotation that silently breaks existing funds is worse than one that
-    ///         is loudly impossible. Pinning infrastructure per stack would keep both properties, and
-    ///         did not fit the factory's EIP-170 budget when this was decided.
-    error InfrastructureAlreadySet();
 
     /// @notice Thrown when `deployShares` is called for a fund whose operational stack does not exist
     ///         on this chain. Shares without a live Avatar Safe would be a broken fund — and requiring
@@ -677,10 +656,26 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // latches on the first non-zero value regardless of which path wrote it. So the stricter
         // guard was reachable only on the path that did not need it. Before write-once the mistake
         // was survivable; it is not any more.
-        if (_kpkSharesMastercopy != address(0) && _kpkSharesMastercopy.code.length == 0) {
+        // MANDATORY, and this closes two findings at once.
+        //
+        // These were `address(0)` placeholders wired per chain afterwards, so neither entered this
+        // factory's CREATE2 init code. A wrong-but-codeful value on ONE chain then moved every shares
+        // proxy there (the mastercopy is hashed into the proxy's init code) or every timelock there
+        // (the deployer is the clone's CREATE2 deployer) — silently, because locally everything
+        // stayed self-consistent and nothing reverted. Making them write-once turned that slip from
+        // costly into terminal.
+        //
+        // Inside the init code, a chain wired differently yields a DIFFERENT FACTORY ADDRESS, which
+        // the address-sync guards already fail on: a silent divergence becomes a loud one.
+        //
+        // It also removes a confirmed fee burn. A destination whose `timelockDeployer` was never
+        // wired passed every SOURCE-side check — the source validates against its own factory — took
+        // the non-refundable lane fee, and reverted on arrival. A factory can no longer exist in that
+        // state at all.
+        if (_kpkSharesMastercopy == address(0) || _timelockDeployer == address(0)) revert ZeroAddress();
+        if (_kpkSharesMastercopy.code.length == 0 || _timelockDeployer.code.length == 0) {
             revert InvalidMastercopy();
         }
-        if (_timelockDeployer != address(0) && _timelockDeployer.code.length == 0) revert InvalidMastercopy();
 
         safeProxyFactory = _safeProxyFactory;
         safeSingleton = _safeSingleton;
@@ -712,47 +707,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     //           post-flight assertion (`script/DeployKpkOivFactory.s.sol`), not an on-chain one.
     //           The owner SHOULD still be a TimelockController or governance multisig for what it
     //           does retain: `registerFund` / `unregisterFund`, and that single permitted write.
-
-    /// @notice Updates the KpkTimelockDeployer address.
-    /// @dev    Same blast radius as `setKpkSharesMastercopy`: a hostile deployer could hand every
-    ///         FUTURE fund a timelock whose proposer and canceller sets it controls. Past
-    ///         deployments are unaffected — each fund's timelock is already deployed and
-    ///         self-administered.
-    /// @param _timelockDeployer New address. Must not be zero.
-    function setTimelockDeployer(address _timelockDeployer) external onlyOwner {
-        if (_timelockDeployer == address(0)) revert ZeroAddress();
-        // Codeless is rejected too, and write-once is exactly why. `setKpkSharesMastercopy` has
-        // always had this guard; here it was survivable while the value could be corrected, and is
-        // not any more — latching to a codeless address would permanently brick timelocked funds on
-        // this chain with no way back except a new factory generation. Making a value unchangeable
-        // raises the bar on validating it.
-        if (_timelockDeployer.code.length == 0) revert InvalidMastercopy();
-        // Write-once. See `InfrastructureAlreadySet`. Onboarding legitimately sets this after
-        // construction (`OivChainDeploy._runChain`), so the latch is on the first non-zero value
-        // rather than on construction.
-        if (timelockDeployer != address(0)) revert InfrastructureAlreadySet();
-        timelockDeployer = _timelockDeployer;
-        emit TimelockDeployerUpdated(_timelockDeployer);
-    }
-
-    /// @notice Updates the KpkShares mastercopy address.
-    /// @param _kpkSharesMastercopy New address. Must not be zero.
-    function setKpkSharesMastercopy(address _kpkSharesMastercopy) external onlyOwner {
-        if (_kpkSharesMastercopy == address(0)) revert ZeroAddress();
-        // Codeless is rejected as well as zero. This setter decides the implementation every future
-        // fund on this chain delegates to, and a codeless value fails only later, inside
-        // `deployOiv`, where `ERC1967Utils._setImplementation` reverts. `KpkTimelockDeployer`'s
-        // constructor already guards its own mastercopy this way (`InvalidMastercopy`); the same
-        // hazard deserves the same check here.
-        if (_kpkSharesMastercopy.code.length == 0) revert InvalidMastercopy();
-        // Write-once. See `InfrastructureAlreadySet`. This is the setter with the worse failure of
-        // the two: rotating it does not merely block promotion, it lands a promoted proxy at an
-        // address that differs from the fund's existing shares chains — breaking the one invariant
-        // the cross-chain design exists to provide.
-        if (kpkSharesMastercopy != address(0)) revert InfrastructureAlreadySet();
-        kpkSharesMastercopy = _kpkSharesMastercopy;
-        emit KpkSharesMastercopyUpdated(_kpkSharesMastercopy);
-    }
 
     // ── Main entry points ───────────────────────────────────────────────────────
 
