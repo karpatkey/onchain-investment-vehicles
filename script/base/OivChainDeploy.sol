@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {Script, console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
 import {KpkSharesDeployer} from "../../src/KpkSharesDeployer.sol";
+import {KpkTimelockDeployer} from "../../src/KpkTimelockDeployer.sol";
 import {CcipOivDeployer} from "../../src/CcipOivDeployer.sol";
 import {OivInfraConstants} from "../../src/OivInfraConstants.sol";
 
@@ -68,9 +69,10 @@ abstract contract OivChainDeploy is Script {
     // Version 2 (factory 0xfff31e99…f965) was the EOA-owned-then-handover rollout; version 1
     // (factory 0xfb76…25f0) handed ownership to the Safe at deploy time, which left owner-only
     // setup (setChainSelectors) stranded behind the multisig.
-    bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(3)));
-    bytes32 internal constant SALT_DEPLOYER = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(3)));
-    bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(3)));
+    bytes32 internal constant SALT_FACTORY = keccak256(abi.encodePacked("KpkOivFactory", uint256(4)));
+    bytes32 internal constant SALT_DEPLOYER = keccak256(abi.encodePacked("KpkSharesDeployer", uint256(4)));
+    bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(4)));
+    bytes32 internal constant SALT_TIMELOCK = keccak256(abi.encodePacked("KpkTimelockDeployer", uint256(4)));
 
     // ── MultiSend unwrap adapter ───────────────────────────────────────────────
     //
@@ -117,9 +119,16 @@ abstract contract OivChainDeploy is Script {
                 SAFE_FALLBACK_HANDLER,
                 MODULE_PROXY_FACTORY,
                 ROLES_MODIFIER_MASTERCOPY,
-                address(0) // placeholder — wired post-deploy via setKpkSharesDeployer
+                address(0), // placeholder — wired post-deploy via setKpkSharesDeployer
+                address(0) // placeholder — wired post-deploy via setTimelockDeployer
             )
         );
+    }
+
+    /// @dev `KpkTimelockDeployer` takes no constructor arguments, so it lands at the same address on
+    ///      every chain without the factory's chicken-and-egg dance.
+    function _timelockDeployerInitCode() internal pure returns (bytes memory) {
+        return type(KpkTimelockDeployer).creationCode;
     }
 
     function _deployerInitCode(address factory) internal pure returns (bytes memory) {
@@ -132,6 +141,12 @@ abstract contract OivChainDeploy is Script {
 
     function _predictFactory(address eoaOwner) internal pure returns (address) {
         return _create2Address(SALT_FACTORY, _factoryInitCode(eoaOwner));
+    }
+
+    /// @dev `KpkTimelockDeployer` has no constructor arguments, so its address depends only on the
+    ///      salt and its own creation code — the same on every chain, for any deployer EOA.
+    function _predictTimelockDeployer() internal pure returns (address) {
+        return _create2Address(SALT_TIMELOCK, _timelockDeployerInitCode());
     }
 
     /// @dev keccak256(0xff || deployer || salt || keccak256(initCode))[12:].
@@ -235,12 +250,14 @@ abstract contract OivChainDeploy is Script {
         address deployer = _create2Address(SALT_DEPLOYER, deployerInitCode);
         bytes memory ccipInitCode = _orchestratorInitCode(eoaOwner, factory);
         address orchestrator = _create2Address(SALT_CCIP, ccipInitCode);
+        address timelockDeployer = _create2Address(SALT_TIMELOCK, _timelockDeployerInitCode());
 
         console.log("==========================================");
         console.log("Chain id:                ", block.chainid);
         console.log("Predicted KpkOivFactory: ", factory);
         console.log("Predicted KpkSharesDeployer:", deployer);
         console.log("Predicted CcipOivDeployer:", orchestrator);
+        console.log("Predicted KpkTimelockDeployer:", timelockDeployer);
         console.log("CCIP router:             ", ccipRouter);
         console.log("LINK token:              ", linkToken);
         console.log("==========================================");
@@ -266,6 +283,13 @@ abstract contract OivChainDeploy is Script {
         } else {
             console.log("[SKIP] KpkSharesDeployer already at: ", deployer);
         }
+        if (timelockDeployer.code.length == 0) {
+            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
+            require(ok, "timelock deployer CREATE2 deploy failed");
+            console.log("[OK]   KpkTimelockDeployer deployed at:", timelockDeployer);
+        } else {
+            console.log("[SKIP] KpkTimelockDeployer already at:", timelockDeployer);
+        }
 
         KpkOivFactory f = KpkOivFactory(factory);
         if (f.kpkSharesDeployer() == address(0)) {
@@ -273,6 +297,12 @@ abstract contract OivChainDeploy is Script {
             console.log("[OK]   factory.kpkSharesDeployer set");
         } else {
             require(f.kpkSharesDeployer() == deployer, "factory deployer mismatch");
+        }
+        if (f.timelockDeployer() == address(0)) {
+            f.setTimelockDeployer(timelockDeployer);
+            console.log("[OK]   factory.timelockDeployer set");
+        } else {
+            require(f.timelockDeployer() == timelockDeployer, "factory timelock deployer mismatch");
         }
         if (f.owner() == eoaOwner && eoaOwner != finalOwner) {
             f.transferOwnership(finalOwner);
@@ -302,6 +332,7 @@ abstract contract OivChainDeploy is Script {
 
         // ── Post-flight: assert the END STATE, regardless of which branches ran ──
         require(KpkOivFactory(factory).kpkSharesDeployer() == deployer, "post: deployer not wired");
+        require(KpkOivFactory(factory).timelockDeployer() == timelockDeployer, "post: timelock deployer not wired");
         require(KpkOivFactory(factory).owner() == finalOwner, "post: factory owner != finalOwner");
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
