@@ -37,10 +37,29 @@ interface IAccessControlView {
 ///         the 20 CCIP lanes enforce, making a timelocked fund undeliverable to those chains. A clone
 ///         costs a small fraction of that.
 ///
-///         The clone is immutable — an EIP-1167 stub always delegates to the same mastercopy — so this
-///         adds no upgrade surface. The mastercopy takes no constructor arguments and is deployed
-///         through the canonical CREATE2 factory, so it sits at one address on every chain and clone
-///         addresses stay chain-independent.
+///         THE DEPLOYED TIMELOCKS ARE NOT UPGRADEABLE, despite what the mastercopy's type name
+///         suggests. In OpenZeppelin's naming, the `Upgradeable` suffix means "initializer-based
+///         instead of constructor-based" — a requirement for any contract reached through a clone,
+///         because a clone cannot run a constructor. It does NOT mean the contract can be upgraded.
+///         `TimelockControllerUpgradeable` inherits `Initializable`, `AccessControlUpgradeable`,
+///         `ERC721HolderUpgradeable` and `ERC1155HolderUpgradeable` and nothing else: no
+///         `UUPSUpgradeable`, no `upgradeToAndCall`, no `_authorizeUpgrade`, no ERC-1967 slot. There
+///         is no upgrade entry point to gate.
+///
+///         Three layers each independently prevent one: the EIP-1167 stub hardcodes its
+///         implementation address in its own runtime, `timelockMastercopy` here is `immutable`, and
+///         the implementation has no upgrade mechanism at all. Rotating the mastercopy on a NEW
+///         deployer would change future clone ADDRESSES (the implementation is part of the clone's
+///         init code), never the behaviour of one already deployed.
+///
+///         The genuinely upgradeable contract in this system is the shares proxy, which IS
+///         `UUPSUpgradeable` — that is what the shares timelock exists to put a delay in front of.
+///
+///         The mastercopy takes no constructor arguments and is deployed through the canonical
+///         CREATE2 factory, so it sits at one address on every chain and clone addresses stay
+///         chain-independent. A searcher who claims the mastercopy's initializer (a known, documented
+///         race) gains roles on the MASTERCOPY only — every clone has its own storage, so no clone's
+///         role set is affected.
 ///
 ///         `IKpkTimelockDeployer` additionally keeps the factory's import graph free of the timelock
 ///         code while still letting it name `TimelockParams`.
