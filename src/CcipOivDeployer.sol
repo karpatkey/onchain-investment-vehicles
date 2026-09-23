@@ -1201,7 +1201,6 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
 
         KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
 
-
         // The approval must already exist, because promotion cannot grant it and the intermediate
         // state is NOT harmless: `requestSubscription` has no admin, operator or pause gate and pulls
         // from the investor, so a promoted fund takes deposits at once — while redemption settlement
