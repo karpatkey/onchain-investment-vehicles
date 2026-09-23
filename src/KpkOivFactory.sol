@@ -13,6 +13,7 @@ import {IModuleProxyFactory} from "./interfaces/IModuleProxyFactory.sol";
 import {IRoles} from "./interfaces/IRoles.sol";
 import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
 import {OivInfraConstants} from "./OivInfraConstants.sol";
+import {SafeAdoptionLib} from "./SafeAdoptionLib.sol";
 
 /// @title  KpkOivFactory
 /// @author KPK
@@ -1298,15 +1299,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         view
         returns (address)
     {
-        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
-        bytes memory initializer = abi.encodeCall(
-            ISafe.setup,
-            (owners, threshold, safeModuleSetup, setupData, safeFallbackHandler, address(0), 0, payable(address(0)))
-        );
-        bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), nonce));
-        bytes memory deployment =
-            abi.encodePacked(ISafeProxyFactory(safeProxyFactory).proxyCreationCode(), uint256(uint160(safeSingleton)));
-        return _create2Address(safeProxyFactory, salt, keccak256(deployment));
+        return SafeAdoptionLib.predictSafe(_safeInfra(), owners, threshold, modulesToEnable, nonce);
     }
 
     /// @dev Standard CREATE2 address derivation: keccak256(0xff || deployer || salt || codeHash).
@@ -1541,71 +1534,21 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // the factory is an enabled module at the head of the list, and it asserts the removal.
         // pinned: test_premise_squattedAvatarSafeIsBornFactoryHeaded
         // pinned: test_adopt_deployOivAdoptsASquattedAvatarSafe
-        safe = _predictSafe(owners, threshold, modulesToEnable, nonce);
-        if (safe.code.length != 0) {
-            _requireSafeMatchesConfig(safe, owners, threshold, modulesToEnable);
-            emit ComponentAdopted(safe, "safe");
-            return safe;
-        }
-
-        bytes memory setupData = abi.encodeCall(ISafeModuleSetup.enableModules, (modulesToEnable));
-
-        bytes memory initializer = abi.encodeCall(
-            ISafe.setup,
-            (owners, threshold, safeModuleSetup, setupData, safeFallbackHandler, address(0), 0, payable(address(0)))
-        );
-
-        safe = ISafeProxyFactory(safeProxyFactory).createProxyWithNonce(safeSingleton, initializer, nonce);
+        // DELEGATECALLed, so `address(this)` stays this factory: `ComponentAdopted` is emitted by
+        // the factory and the revert selector is `AdoptedSafeMismatch` either way. See
+        // `SafeAdoptionLib` for why this is a linked library rather than a mixin.
+        return SafeAdoptionLib.deploySafe(_safeInfra(), owners, threshold, modulesToEnable, nonce);
     }
 
-    /// @dev Asserts an adopted Safe still matches the configuration its CREATE2 address encodes.
-    ///      The module set is compared exactly rather than with `isModuleEnabled`, because the
-    ///      dangerous drift is an ADDED module — a module can execute on the Safe unconditionally,
-    ///      so an extra one is full control. `SafeModuleSetup` enables in array order and each
-    ///      insertion goes to the front, so the live list is the reverse of `modulesToEnable`.
-    function _requireSafeMatchesConfig(
-        address safe,
-        address[] memory owners,
-        uint256 threshold,
-        address[] memory modulesToEnable
-    ) internal view {
-        if (ISafe(safe).getThreshold() != threshold) revert AdoptedSafeMismatch(safe);
-        // `setupOwners` appends, so owners come back in configuration order; `enableModule`
-        // prepends, so modules come back reversed. Both orders are pinned by
-        // test_premise_squattedAvatarSafeIsBornFactoryHeaded and test_adopt_rejectsAMutatedSafe.
-        if (!_matches(ISafe(safe).getOwners(), owners, false)) revert AdoptedSafeMismatch(safe);
-
-        (address[] memory live, address next) =
-            ISafe(safe).getModulesPaginated(SENTINEL_MODULES, modulesToEnable.length + 1);
-        if (next != SENTINEL_MODULES) revert AdoptedSafeMismatch(safe);
-        if (!_matches(live, modulesToEnable, true)) revert AdoptedSafeMismatch(safe);
-
-        // Guard and fallback handler, which the initializer leaves unset and which Safe exposes
-        // through no getter. Reachable by exactly the adversary the owner/threshold/module checks
-        // above exist for: a signer of a squatted Manager Safe, at a configured threshold that is
-        // routinely 1, can `setGuard(hostile)` — after which every manager transaction reverts and
-        // the guard cannot be removed without those same signatures — or `setFallbackHandler`, whose
-        // handler answers `isValidSignature` however it likes. Both are as dangerous as the extra
-        // module the module check already refuses, so leaving them uninspected would have made that
-        // check a half-measure.
-        if (_safeSlot(safe, GUARD_STORAGE_SLOT) != address(0)) revert AdoptedSafeMismatch(safe);
-        if (_safeSlot(safe, FALLBACK_HANDLER_STORAGE_SLOT) != safeFallbackHandler) {
-            revert AdoptedSafeMismatch(safe);
-        }
-    }
-
-    /// @dev Reads one address-sized storage slot from a Safe.
-    function _safeSlot(address safe, uint256 slot) private view returns (address) {
-        return address(uint160(uint256(bytes32(ISafe(safe).getStorageAt(slot, 1)))));
-    }
-
-    /// @dev Element-wise comparison, optionally against `expected` read backwards.
-    function _matches(address[] memory live, address[] memory expected, bool reversed) internal pure returns (bool) {
-        if (live.length != expected.length) return false;
-        for (uint256 i = 0; i < live.length; i++) {
-            if (live[i] != expected[reversed ? expected.length - 1 - i : i]) return false;
-        }
-        return true;
+    /// @dev The four Safe infrastructure addresses, packed for the library — which has no storage of
+    ///      its own to read them from.
+    function _safeInfra() private view returns (SafeAdoptionLib.SafeInfra memory) {
+        return SafeAdoptionLib.SafeInfra({
+            proxyFactory: safeProxyFactory,
+            singleton: safeSingleton,
+            moduleSetup: safeModuleSetup,
+            fallbackHandler: safeFallbackHandler
+        });
     }
 
     // ── Internal: wiring helpers ────────────────────────────────────────────────

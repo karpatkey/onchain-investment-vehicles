@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
 import {KpkOivFactory} from "../../src/KpkOivFactory.sol";
+import {SafeAdoptionLib} from "../../src/SafeAdoptionLib.sol";
 import {KpkShares} from "../../src/kpkShares.sol";
 import {
     TimelockControllerUpgradeable
@@ -79,6 +80,12 @@ abstract contract OivChainDeploy is Script {
     bytes32 internal constant SALT_CCIP = keccak256(abi.encodePacked("CcipOivDeployer", uint256(4)));
     bytes32 internal constant SALT_TIMELOCK = keccak256(abi.encodePacked("KpkTimelockDeployer", uint256(4)));
 
+    /// @dev `SafeAdoptionLib` is a LINKED library: its address is embedded in `KpkOivFactory`'s
+    ///      bytecode, so it must exist at the same address on every chain and must be deployed
+    ///      BEFORE the factory. Its address is pinned in `foundry.toml`'s `libraries=`; if that
+    ///      pin and this salt ever disagree, the factory silently lands somewhere else.
+    bytes32 internal constant SALT_SAFE_ADOPTION_LIB = keccak256(abi.encodePacked("SafeAdoptionLib", uint256(4)));
+
     // ── MultiSend unwrap adapter ───────────────────────────────────────────────
     //
     // The factory hard-reverts `MultiSendUnwrapperMissing` / `MultiSendMissing` unless all three of
@@ -132,6 +139,16 @@ abstract contract OivChainDeploy is Script {
 
     /// @dev `KpkTimelockDeployer` takes no constructor arguments, so it lands at the same address on
     ///      every chain without the factory's chicken-and-egg dance.
+    /// @dev Takes no constructor arguments, so it lands at one address on every chain.
+    function _safeAdoptionLibInitCode() internal pure returns (bytes memory) {
+        return type(SafeAdoptionLib).creationCode;
+    }
+
+    /// @notice The address `libraries=` in `foundry.toml` must pin.
+    function predictSafeAdoptionLib() public pure returns (address) {
+        return _create2Address(SALT_SAFE_ADOPTION_LIB, _safeAdoptionLibInitCode());
+    }
+
     function _timelockDeployerInitCode() internal pure returns (bytes memory) {
         return abi.encodePacked(
             type(KpkTimelockDeployer).creationCode,
