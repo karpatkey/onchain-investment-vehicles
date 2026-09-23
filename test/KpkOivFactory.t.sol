@@ -1016,6 +1016,75 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertEq(req.sharesAmount, minSharesOut, "request minSharesOut mismatch");
     }
 
+    // ── Manager owner canonicalisation ─────────────────────────────────────────
+
+    /// @notice `managerSafe.owners` is address-bearing: `createProxyWithNonce` salts on
+    ///         `keccak256(initializer)` and the initializer carries the array verbatim, so `[A,B]` and
+    ///         `[B,A]` are the same multisig to Safe but produce DIFFERENT Manager Safes. The shares
+    ///         proxy on each chain grants `OPERATOR` to ITS Manager Safe, so a config file
+    ///         re-serialized in a different order could leave a fund identical everywhere except for
+    ///         the multisig holding operator power. `KpkTimelockDeployer._validateMembers` has required
+    ///         strictly ascending arrays for exactly this reason since it shipped; the manager owners
+    ///         did not.
+    /// @dev    The rule had ZERO coverage in its failing direction when it landed — the whole suite
+    ///         happened to pass sorted owners already, so every test would have stayed green with the
+    ///         check deleted.
+    function test_validateManagerOwners_refusesADescendingArray() public {
+        address[] memory descending = new address[](2);
+        descending[0] = address(0x2222);
+        descending[1] = address(0x1111);
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: descending, threshold: 1});
+
+        vm.expectRevert(KpkOivFactory.OwnersNotAscending.selector);
+        factory.deployOiv(cfg);
+    }
+
+    /// @dev The same array sorted is accepted — without this the test above passes just as well if
+    ///      `_validateManagerOwners` rejected every two-owner config.
+    function test_validateManagerOwners_acceptsTheSameOwnersAscending() public {
+        address[] memory ascending = new address[](2);
+        ascending[0] = address(0x1111);
+        ascending[1] = address(0x2222);
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: ascending, threshold: 1});
+
+        KpkOivFactory.OivInstance memory inst = factory.deployOiv(cfg);
+        assertGt(inst.managerSafe.code.length, 0, "the sorted form of the same signer set deploys");
+    }
+
+    /// @dev Duplicates keep their own error rather than being folded into the ordering one, because
+    ///      callers already handle `DuplicateOwner` — and with ordering enforced, an ADJACENT pair is
+    ///      the only shape a duplicate can take, so the cheap check is the complete one.
+    function test_validateManagerOwners_stillReportsDuplicatesAsDuplicates() public {
+        address[] memory dup = new address[](2);
+        dup[0] = address(0x1111);
+        dup[1] = address(0x1111);
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: dup, threshold: 1});
+
+        vm.expectRevert(KpkOivFactory.DuplicateOwner.selector);
+        factory.deployOiv(cfg);
+    }
+
+    /// @notice The prediction must refuse what the deployment refuses. `CcipOivDeployer` uses
+    ///         `predictOivAddresses` as its SOURCE-chain pre-check, so a predict that accepted an
+    ///         unordered array would spend every lane's non-refundable fee and fail on arrival.
+    function test_predictOivAddresses_refusesADescendingArrayToo() public {
+        address[] memory descending = new address[](2);
+        descending[0] = address(0x2222);
+        descending[1] = address(0x1111);
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: descending, threshold: 1});
+
+        vm.expectRevert(KpkOivFactory.OwnersNotAscending.selector);
+        factory.predictOivAddresses(cfg, address(this));
+    }
+
     // ── The shares-half commitment (the §1 drain) ──────────────────────────────
 
     /// @notice The regression test for the proven drain. `deployShares` binds `(msg.sender, salt,

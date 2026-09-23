@@ -794,11 +794,16 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     /// @notice Upper bound on `managerSafe.owners` for anything sent over CCIP.
     /// @dev    `KpkTimelockDeployer.MAX_ROLE_MEMBERS` bounds the timelock arrays and was described as
     ///         making the largest ACCEPTED `deployStack` fit the 3M destination cap. It does not, on
-    ///         its own: `managerSafe.owners` was unbounded, Safe setup does storage work per owner,
-    ///         and `KpkOivFactory._validateManagerOwners` is O(n^2). Measured on the worst timelock
-    ///         `MAX_ROLE_MEMBERS` permits, `deployStack` alone costs
+    ///         its own: `managerSafe.owners` was unbounded and Safe setup does storage work per owner.
+    ///         Measured 2026-09-23 on the worst timelock `MAX_ROLE_MEMBERS` permits, `deployStack`
+    ///         alone costs
     ///
-    ///             10 owners 2,778,274 | 15 owners 2,920,639 | 18 owners 3,010,564 | 20 owners 3,072,264
+    ///             10 owners 2,824,669 | 15 owners 2,881,927 | 18 owners 2,954,033 | 20 owners 3,002,113
+    ///
+    ///         `_validateManagerOwners`' dedup used to be O(n^2) and this comment cited that as a
+    ///         contributing cause. It is O(n) now, and the figures did not fall — at n=20 the
+    ///         quadratic form was 190 comparisons, well inside the noise below. The per-owner Safe
+    ///         storage work is the whole cost.
     ///
     ///         and the destination pays a further ~80k for the `ccipReceive` frame around it. So a
     ///         perfectly valid config with ~15 owners passes every source-side check, spends every

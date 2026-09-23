@@ -465,6 +465,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Thrown when `SafeConfig.owners` contains a duplicate entry.
     error DuplicateOwner();
+    /// @dev `managerSafe.owners` must be strictly ascending. The array is address-bearing — it is
+    ///      hashed into the Manager Safe's CREATE2 salt — so an unordered array silently forks a
+    ///      fund's operator multisig across chains. See `_validateManagerOwners`.
+    error OwnersNotAscending();
 
     /// @notice Thrown when a required `OivConfig.sharesParams` field is unset
     ///         (`feeReceiver`, `subscriptionRequestTtl`, or `redemptionRequestTtl`).
@@ -1970,13 +1974,29 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     }
 
     /// @dev Validates a Manager Safe owners array: non-empty, threshold within bounds, every
-    ///      owner non-zero, no duplicates. Mirrors Gnosis Safe v1.4.1 `setup()` invariants but
-    ///      surfaces descriptive factory-level errors instead of opaque `GS20x` reverts from
-    ///      deep inside `createProxyWithNonce`.
+    ///      owner non-zero, no duplicates, STRICTLY ASCENDING. Mirrors Gnosis Safe v1.4.1 `setup()`
+    ///      invariants but surfaces descriptive factory-level errors instead of opaque `GS20x`
+    ///      reverts from deep inside `createProxyWithNonce`.
+    ///
+    ///      The ordering requirement goes BEYOND Safe's `setup()`, which accepts any order, and it is
+    ///      here because `managerSafe.owners` is address-bearing. `[A,B]` and `[B,A]` are the same
+    ///      multisig to Safe, but they produce a DIFFERENT Manager Safe address — `createProxyWithNonce`
+    ///      salts on `keccak256(initializer)`, and the initializer carries the array verbatim. Same
+    ///      caller, same salt, same signers, two different Manager Safes. The shares proxy on each chain
+    ///      grants `OPERATOR` to ITS Manager Safe, so a fund could end up identical on every chain
+    ///      except for the multisig holding operator power — from nothing more than a config file
+    ///      re-serialized in a different order. `KpkTimelockDeployer._validateMembers` already requires
+    ///      strictly ascending arrays for exactly this reason; the manager owners had no equivalent.
+    ///
+    ///      Canonicalising also collapses the dedup from O(n^2) to O(n). That is a real complexity
+    ///      change and a negligible gas one — at the 20 owners `MAX_SHARES_CHAINS`-era configs reach,
+    ///      the quadratic form ran 190 comparisons, which is inside the ~35k of address-dependent
+    ///      storage noise in the `MAX_CCIP_MANAGER_OWNERS` figures. Do not sell it as a budget win.
     function _validateManagerOwners(SafeConfig calldata managerSafe) internal pure {
         uint256 len = managerSafe.owners.length;
         if (len == 0) revert EmptyOwners();
         if (managerSafe.threshold == 0 || managerSafe.threshold > len) revert InvalidThreshold();
+        address previous;
         for (uint256 i = 0; i < len; i++) {
             address owner = managerSafe.owners[i];
             // Zero AND the sentinel. This function's NatSpec claims to mirror Safe v1.4.1 `setup()`,
@@ -1986,9 +2006,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             // then reverted inside `SafeProxyFactory.deployProxy` on arrival, as a bare
             // `revert(0,0)` that names nothing.
             if (owner == address(0) || owner == SENTINEL_OWNERS) revert ZeroAddress();
-            for (uint256 j = i + 1; j < len; j++) {
-                if (owner == managerSafe.owners[j]) revert DuplicateOwner();
-            }
+            // Equality kept as its own error because callers already handle it, and with ordering
+            // enforced an adjacent pair is the only way a duplicate can appear — so this is the whole
+            // dedup, not a cheaper approximation of it.
+            if (owner == previous) revert DuplicateOwner();
+            if (owner < previous) revert OwnersNotAscending();
+            previous = owner;
         }
     }
 }
