@@ -980,6 +980,93 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
     }
 
+    // ── Inert-but-hashed fields ────────────────────────────────────────────────
+
+    /// @notice Two configs that deploy a BYTE-IDENTICAL fund must land at the same addresses.
+    ///         `sharesParams.admin` and `.safe` are overwritten by `KpkOivFactory._deploySharesProxy`
+    ///         with `config.admin` and the deployed Safes, so whatever a caller puts there is
+    ///         discarded — but they were hashed into the fund's salt, which split one fund into two
+    ///         over bytes that never reach the chain and that nobody can read back afterwards.
+    function test_effectiveSalt_ignoresTheSharesParamsFieldsTheFactoryOverwrites() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+        uint256 canonical = orchestrator.effectiveSalt(oivConfig, topology);
+
+        KpkOivFactory.OivConfig memory noisy = oivConfig;
+        noisy.sharesParams.admin = address(0xDEAD);
+        noisy.sharesParams.safe = address(0xBEEF);
+
+        assertEq(
+            orchestrator.effectiveSalt(noisy, topology),
+            canonical,
+            "fields the factory overwrites must not move the fund"
+        );
+    }
+
+    /// @notice And the same for timelock role arrays under a ZEROED delay: no timelock is deployed at
+    ///         all, so proposers and cancellers are never read. A config file edited to disable the
+    ///         timelock by setting `minDelay` to 0 while leaving its arrays in place is the ordinary
+    ///         shape of that edit, and it used to produce a completely different fund.
+    function test_effectiveSalt_ignoresTimelockRoleArraysWhenTheDelayIsZero() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+        uint256 canonical = orchestrator.effectiveSalt(oivConfig, topology);
+
+        address[] memory leftovers = new address[](1);
+        leftovers[0] = address(0x1111);
+
+        KpkOivFactory.OivConfig memory execLeftovers = oivConfig;
+        execLeftovers.execTimelock = TimelockParams({minDelay: 0, proposers: leftovers, cancellers: leftovers});
+        assertEq(
+            orchestrator.effectiveSalt(execLeftovers, topology),
+            canonical,
+            "unread exec timelock arrays must not move the fund"
+        );
+
+        KpkOivFactory.OivConfig memory sharesLeftovers = oivConfig;
+        sharesLeftovers.sharesTimelock = TimelockParams({minDelay: 0, proposers: leftovers, cancellers: leftovers});
+        assertEq(
+            orchestrator.effectiveSalt(sharesLeftovers, topology),
+            canonical,
+            "unread shares timelock arrays must not move the fund"
+        );
+    }
+
+    /// @notice The negative control, and the one that keeps the zeroing honest: the moment the delay
+    ///         is non-zero the arrays ARE read — they decide who can propose and cancel — so they must
+    ///         move the fund again. Without this, zeroing the arrays unconditionally would pass every
+    ///         test above while letting two funds with different timelock governance collide.
+    function test_effectiveSalt_timelockRoleArraysStillMoveTheFundWhenTheDelayIsLive() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+
+        address[] memory a = new address[](1);
+        a[0] = address(0x1111);
+        address[] memory b = new address[](1);
+        b[0] = address(0x2222);
+
+        KpkOivFactory.OivConfig memory withA = oivConfig;
+        withA.execTimelock = TimelockParams({minDelay: 2 days, proposers: a, cancellers: new address[](0)});
+        KpkOivFactory.OivConfig memory withB = oivConfig;
+        withB.execTimelock = TimelockParams({minDelay: 2 days, proposers: b, cancellers: new address[](0)});
+
+        assertTrue(
+            orchestrator.effectiveSalt(withA, topology) != orchestrator.effectiveSalt(withB, topology),
+            "a LIVE timelock's proposers must still bind the fund"
+        );
+    }
+
+    /// @dev And `config.admin` — the field the whole salt binding exists to pin — must still move it.
+    ///      A test that only asserts things are ignored cannot fail when everything is ignored.
+    function test_effectiveSalt_adminStillMovesTheFund() public {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+
+        KpkOivFactory.OivConfig memory other = oivConfig;
+        other.admin = makeAddr("otherAdmin");
+
+        assertTrue(
+            orchestrator.effectiveSalt(other, topology) != orchestrator.effectiveSalt(oivConfig, topology),
+            "admin must remain salt-bound"
+        );
+    }
+
     /// @notice The five stack addresses derive from `(salt, manager owners, threshold)` — and
     ///         `execRolesMod.finalOwner` is NOT among them. So a stack can already sit at exactly the
     ///         addresses a payload describes while being owned by someone else entirely, and the

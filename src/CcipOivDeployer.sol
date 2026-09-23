@@ -1104,8 +1104,38 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             }
         }
 
+        // Inert-but-hashed fields, zeroed so that two configs which deploy a BYTE-IDENTICAL fund
+        // land at the same addresses. Each of these is written into the hash and then never reaches
+        // the chain:
+        //
+        //   - `sharesParams.admin` / `.safe` — overwritten by `KpkOivFactory._deploySharesProxy`
+        //     with `config.admin` and the deployed Safes. Whatever a caller puts here is discarded,
+        //     so hashing it split one fund into two over bytes nobody can observe afterwards. (The
+        //     factory excludes them from its own shares commitment for the same reason.)
+        //   - the timelock role arrays when `minDelay == 0` — no timelock is deployed at all in that
+        //     case, so proposers and cancellers are never read. A config carrying leftover arrays
+        //     under a zeroed delay is the ordinary shape of a config file edited to disable the
+        //     timelock, and it used to produce a completely different fund.
+        //
+        // This is address-moving and deliberately so: it is free before the salt-v4 rollout.
         eff.sharesParams.asset = address(0);
+        eff.sharesParams.admin = address(0);
+        eff.sharesParams.safe = address(0);
+        if (eff.execTimelock.minDelay == 0) {
+            eff.execTimelock.proposers = new address[](0);
+            eff.execTimelock.cancellers = new address[](0);
+        }
+        if (eff.sharesTimelock.minDelay == 0) {
+            eff.sharesTimelock.proposers = new address[](0);
+            eff.sharesTimelock.cancellers = new address[](0);
+        }
         eff.salt = uint256(keccak256(abi.encode(eff, sharesChains)));
+
+        // Restored, because `eff` is what the caller DEPLOYS with, not merely what it hashes. Only
+        // the base asset needs restoring: the four fields above are either overwritten downstream or
+        // unread, so leaving them zeroed changes nothing that is deployed — and leaving them zeroed
+        // is in fact the stronger form, since it guarantees the deployed config matches the hashed
+        // one. The asset cannot be treated that way; it is the one field the topology varies.
         eff.sharesParams.asset = config.sharesParams.asset;
     }
 
