@@ -443,7 +443,7 @@ happily — they fail on-chain, mid-rollout, like the ordering rules below.
 
 **Member arrays must be strictly ascending by address value, contain no zero and no duplicates, and `cancellers` must be disjoint from `proposers`.** `KpkTimelockDeployer` enforces all four (`MembersNotAscending`, `ZeroAddress`, `DuplicateRoleMember`), so a list written in governance-priority order reverts mid-rollout. Sort by numeric address value, not by role. The ordering is also load-bearing beyond validation: the arrays are hashed into the timelock's salt, so the same members in a different order would place the timelock at a different address on one chain while every other address still matched.
 
-A complete worked example lives in [`script/oiv-config.example.json`](script/oiv-config.example.json), which `test/OivConfigReader.t.sol` parses on every CI run — so it cannot drift from the parser.
+A complete worked example lives in [`script/oiv-config.example.json`](script/oiv-config.example.json), which `test/OivConfigReader.t.sol` parses on every CI run. That catches a **structural** break — a key the parser requires being renamed or removed — but it is not the full guarantee this sentence used to claim. The test asserts the timelock blocks, the shares-chain topology and the per-chain asset overrides; it asserts nothing about `salt`, the fee rates, the TTLs, `feeReceiver`, `symbol`, the manager owners or `additionalAssets`. A wrong VALUE in the example is not caught by CI.
 
 
 Fee rates are in basis points (100 bps = 1%). The skill handles the conversion from percentages automatically.
