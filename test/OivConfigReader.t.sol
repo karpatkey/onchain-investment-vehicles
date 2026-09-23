@@ -140,6 +140,21 @@ contract OivConfigReaderTest is Test {
         reader.timelockParams(bad, ".oiv.execTimelock");
     }
 
+    /// @dev The mirror of the `proposers` guard, which was added without it. A typo — `"canceller"` —
+    ///      was accepted and silently defaulted to `[]`, which is worse than the proposer case in one
+    ///      respect: it produces a timelock with NO veto, the property the kit exists to provide, AND
+    ///      a different `_salt`, so that chain's timelock lands at an address the operator never
+    ///      predicted. Nothing reported either. `[]` stays expressible, it just has to be explicit.
+    function test_timelock_revertsWhenCancellersKeyIsMissing() public {
+        string memory bad = string.concat(
+            '{"oiv":{"execTimelock":{"minDelay":86400,', '"proposers":["0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537"]}}}'
+        );
+        vm.expectRevert(
+            bytes("config: .oiv.execTimelock exists but has no cancellers - state [] explicitly to accept no veto")
+        );
+        reader.timelockParams(bad, ".oiv.execTimelock");
+    }
+
     /// @dev Same silent skip, expressed as a value rather than an omission — a placeholder left
     ///      unfilled, or seconds/days confused.
     function test_timelock_revertsWhenMinDelayIsZero() public {

@@ -16,10 +16,12 @@ import {IRoles} from "./interfaces/IRoles.sol";
 
 /// @title  CcipOivDeployer
 /// @author KPK
-/// @notice Cross-chain orchestrator for `KpkOivFactory`. A single mainnet transaction deploys the
-///         full OIV (`deployOiv`) on mainnet and, via Chainlink CCIP, fans out the operational
-///         stack (`deployStack`) to a set of sidechains — yielding the SAME Avatar Safe / Manager
-///         Safe / Roles Modifier addresses on every chain.
+/// @notice Cross-chain orchestrator for `KpkOivFactory`. A single transaction on ANY wired chain
+///         deploys that chain's part of the fund and, via Chainlink CCIP, fans out the operational
+///         stack (`deployStack`) to every other wired chain — yielding the SAME Avatar Safe /
+///         Manager Safe / Roles Modifier addresses on all of them. There is no designated source
+///         chain. The local half is conditional: the full OIV (`deployOiv`) when the origin appears
+///         in `sharesChains`, the operational stack alone when it does not.
 ///
 ///         ── Why this contract exists ──────────────────────────────────────────────────────────
 ///         `KpkOivFactory` mixes `msg.sender` into every CREATE2 salt (see `_deriveSalts`). Its
@@ -58,10 +60,14 @@ import {IRoles} from "./interfaces/IRoles.sol";
 ///           predict via `predictOiv(config)` (which applies the same derivation), not the factory's
 ///           raw `predictOivAddresses`.
 ///         - `ccipReceive` accepts a message only when (a) `msg.sender` is the configured router,
-///           (b) the source chain selector is the configured mainnet selector, and (c) the source
-///           sender equals `address(this)` — which, by the same-address-everywhere property, is the
-///           sibling orchestrator on mainnet. (c) blocks a forged message from pre-occupying the
-///           deterministic CREATE2 addresses for a salt and griefing the legitimate deployment.
+///           (b) the source chain selector is ANY entry in this orchestrator's baked registry
+///           (`_isKnownSelector`) — not a single designated source; that restriction is gone — and
+///           (c) the source sender equals `address(this)`, which by the same-address-everywhere
+///           property is the sibling orchestrator on whichever chain originated. (c) is the
+///           load-bearing guard: only a contract at THIS address can be the source sender, and that
+///           address is a deterministic function of this contract's creation code. (b) narrows the
+///           set further, to chains actually wired, so it is defence in depth over (c) rather than a
+///           substitute for it.
 ///         - The factory's exec Roles Modifier (owned by `config.admin`) remains the authoritative
 ///           gatekeeper of Avatar Safe execution. This contract never gains a privileged role on
 ///           any deployed fund — it is purely a deployment conduit.

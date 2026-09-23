@@ -141,13 +141,30 @@ contract DeployLocalPreWireTest is OivTestConstants {
         vm.prank(address(router));
         orchestrator.ccipReceive(m);
 
-        // And it reported the fund's real addresses, not zeros: the delivery is indistinguishable
-        // from one that deployed the stack itself, which is the point.
+        // And it reported the fund's REAL addresses, not zeros — the delivery must be
+        // indistinguishable from one that deployed the stack itself, which is the whole point of the
+        // absorb path.
+        //
+        // This decodes the payload instead of counting logs. It previously asserted only
+        // `logs.length > 0`, which passed unchanged if the catch emitted an all-zero `StackInstance`
+        // or some other event entirely — i.e. it could not fail if the `predictStackAddresses` call
+        // in the catch were deleted or mis-wired, which is precisely the line it exists to pin.
         vm.recordLogs();
         vm.prank(address(router));
         orchestrator.ccipReceive(m);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertGt(logs.length, 0, "a delivery that finds the stack present must still emit StackReceived");
+
+        bytes32 wanted = keccak256("StackReceived(uint64,bytes32,(address,address,address,address,address,address))");
+        bool seen;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != wanted) continue;
+            KpkOivFactory.StackInstance memory got = abi.decode(logs[i].data, (KpkOivFactory.StackInstance));
+            assertEq(got.avatarSafe, predicted.avatarSafe, "StackReceived must carry the fund's Avatar Safe");
+            assertEq(got.execRolesModifier, predicted.execRolesModifier, "and its exec modifier");
+            assertTrue(got.avatarSafe != address(0), "and must not be an all-zero instance");
+            seen = true;
+        }
+        assertTrue(seen, "the absorb path must emit StackReceived with the fund's real addresses");
     }
 
     address constant DAI_PLACEHOLDER = 0x6B175474E89094C44Da98b954EedeAC495271d0F;

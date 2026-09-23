@@ -163,6 +163,15 @@ abstract contract OivConfigReader is Script {
             )
         );
         params.proposers = json.readAddressArray(string.concat(key, ".proposers"));
+        // Required for the same reason `proposers` is, one line up. A typo — `"canceller"` — was
+        // accepted and produced a timelock with NO veto at all, which is the property the kit exists
+        // to provide, AND a different `_salt`, so that chain's timelock landed at an address the
+        // operator never predicted. Nothing reported either. `[]` remains expressible; it just has
+        // to be said out loud.
+        require(
+            vm.keyExists(json, string.concat(key, ".cancellers")),
+            string.concat("config: ", key, " exists but has no cancellers - state [] explicitly to accept no veto")
+        );
         params.cancellers = vm.keyExists(json, string.concat(key, ".cancellers"))
             ? json.readAddressArray(string.concat(key, ".cancellers"))
             : new address[](0);

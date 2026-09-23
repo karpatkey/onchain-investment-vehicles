@@ -558,6 +558,22 @@ contract KpkTimelockDeployerTest is Test {
         assertFalse(kit.isExecTimelocked(address(0xdead), address(liveTimelock)), "absent modifier must not revert");
     }
 
+    /// @notice `isSharesTimelocked` must answer FALSE, not revert, where the shares proxy does not
+    ///         exist. Its sibling `isExecTimelocked` carries ~25 lines promising this pair is safe to
+    ///         sweep across every chain a fund may or may not live on, and `IKpkTimelockDeployer`
+    ///         advertises that contract — but this half called `hasRole` with no code check, so the
+    ///         sweep reverted on exactly the chains where the proxy is GUARANTEED absent: every
+    ///         stack-only chain. The advertised contract held for one half of the pair and not the
+    ///         other.
+    function test_isSharesTimelocked_isFalseWhereTheProxyDoesNotExist() public view {
+        address noProxy = address(0xDEAD00);
+        assertEq(noProxy.code.length, 0, "precondition: no shares proxy on this chain");
+        assertFalse(
+            kit.isSharesTimelocked(noProxy, address(0xBEEF), address(0xCAFE)),
+            "an absent shares proxy must answer false, not revert"
+        );
+    }
+
     /// @notice A modifier whose ownership was transferred to a CODELESS address is permanently
     ///         unownable — nothing there can ever call `transferOwnership` back. Reporting it as
     ///         correctly timelocked is the same inversion the zero-address check exists to prevent,

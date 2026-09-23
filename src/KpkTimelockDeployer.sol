@@ -190,9 +190,15 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
     ///         fund's canonical addresses by calling `deployStack` directly. The fund could never
     ///         exist on those chains at its canonical addresses at all.
     ///
-    ///         10 leaves ~360k of margin (~12%) against the full `ccipReceive` frame the destination
-    ///         actually pays for — 2,639,682 measured; `deployStack` alone is 2.56M, which is the
-    ///         narrower figure the test below asserts. Pinned by
+    ///         SUPERSEDED FIGURE, kept as the correction it is: this said "10 leaves ~360k of margin
+    ///         (~12%) … 2,639,682 measured". That was measured with ONE manager owner and a small
+    ///         topology. The worst configuration all three bounds now permit — 10 manager owners, 10
+    ///         proposers, 10 cancellers, a 20-entry topology — measures **2,863,715** for the full
+    ///         `ccipReceive` frame, i.e. about **136k (4.5%)** of margin, not 360k. Anyone sizing
+    ///         `gasLimit` or judging whether a bound can be raised must use the smaller number; see
+    ///         `CcipOivDeployer.MAX_CCIP_MANAGER_OWNERS` and
+    ///         `test/poc/CcipDestinationBudget.t.sol`, which measures the whole frame rather than
+    ///         `deployStack` alone. Pinned by
     ///         `test_deployStack_worstPermittedTimelockStillFitsTheCcipGasCap`, which measures the
     ///         largest set this constant permits rather than a typical one. This is a ceiling only —
     ///         there is deliberately no floor on either array.
@@ -382,6 +388,13 @@ contract KpkTimelockDeployer is IKpkTimelockDeployer {
         view
         returns (bool)
     {
+        // Absent proxy answers FALSE rather than reverting, matching `isExecTimelocked`, whose own
+        // NatSpec promises this pair is safe to sweep across every chain a fund may or may not live
+        // on. Without this the sweep reverted on exactly the chains where the shares proxy is
+        // GUARANTEED absent — every stack-only chain — so the advertised contract held for one half
+        // of the pair and not the other.
+        if (sharesProxy.code.length == 0) return false;
+
         IAccessControlView shares = IAccessControlView(sharesProxy);
         return shares.hasRole(DEFAULT_ADMIN_ROLE, timelock) && !shares.hasRole(DEFAULT_ADMIN_ROLE, previousAdmin);
     }

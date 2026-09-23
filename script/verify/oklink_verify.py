@@ -72,6 +72,13 @@ CONTRACTS = {
     "kpkOivFactory": {
         "address": "0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F",
         "identifier": "src/KpkOivFactory.sol:KpkOivFactory",
+        # HISTORICAL until salt-v4 ships. `address` above is the LIVE salt-v3 deployment, and the
+        # checked-in std-JSON matches THAT bytecode (it still names `kpkSharesDeployer` and has no
+        # `timelockDeployer`). This branch rewrites the source to salt-v4, so regenerating from HEAD
+        # would replace a correct artifact with one that cannot verify at this address — and the
+        # atomic `os.replace` added for robustness makes that overwrite RELIABLE rather than
+        # occasional, which is worse. Flip this to False and re-pin `address` once salt-v4 is deployed.
+        "historical": True,
         "ctor": (
             "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
             "000000000000000000000000a6b71e26c5e0845f74c812102ca7114b6a896ab2"
@@ -100,6 +107,10 @@ CONTRACTS = {
     "ccipOivDeployer": {
         "address": "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b",
         "identifier": "src/CcipOivDeployer.sol:CcipOivDeployer",
+        # HISTORICAL until salt-v4 ships — same reason as the factory. The pinned artifact still
+        # carries `mainnetChainSelector` and no `_isKnownSelector`, i.e. the pre-mesh source that
+        # matches the live salt-v3 bytecode at this address.
+        "historical": True,
         "ctor": (
             "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
             "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f"

@@ -1,5 +1,5 @@
 {
-  "_comment": "Example OIV fund config. Timelock blocks, assetOverrides and sharesChains are all OPTIONAL: omit them and the fund deploys exactly as it did before those features existed. Parsed by script/base/OivConfigReader.sol and pinned by test/OivConfigReader.t.sol, so this file cannot drift from the parser.",
+  "_comment": "Example OIV fund config. NOT all optional any more: .sharesChains is REQUIRED by DeployOiv.deploy and by _buildSharesChains, which additionally requires an .oiv.assetOverrides entry for EVERY declared shares chain; and a timelock block, if present, must name .proposers explicitly even at minDelay 0. Omitting them no longer reproduces pre-feature behaviour - it is refused. An earlier version of this comment claimed all three were optional AND that this file could not drift from the parser; it had drifted. Parsed by script/base/OivConfigReader.sol and pinned by test/OivConfigReader.t.sol.",
   "fundName": "EXAMPLE FUND",
   "managerSafe": {
     "owners": [
