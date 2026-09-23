@@ -111,8 +111,13 @@ orchestrator never holds a privileged role on any deployed fund — the exec Rol
   `quoteDeployEverywhere(config, destChainIds, gasLimit)` to size the `msg.value` to send; any
   surplus is refunded to the caller. (The `CcipDeployEverywhere` script quotes and forwards this
   automatically, with a small buffer.)
-- **Gas limit.** `deployStack` measures at ~1.55M gas; pass `gasLimit` of ~2.0M–2.2M. CCIP caps
-  destination execution at 3M, so there is comfortable headroom. Unspent gas is **not** refunded.
+- **Gas limit.** `deployStack` measures at ~1.55M gas, or ~1.86M with an exec timelock configured;
+  pass `gasLimit` of ~2.2M–2.5M. CCIP caps destination execution at 3M — and that cap is exact on
+  10 of the 20 lanes (gnosis, polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain,
+  katana), verified against the live router: `getFee` reverts above it. Unspent gas is **not**
+  refunded. The timelock is an EIP-1167 clone rather than a full `TimelockController` deployment
+  precisely so a timelocked stack stays inside that ceiling; deployed outright it cost ~1.45M more
+  and put the call over the cap on those 10 chains.
   (The figure was ~1.38M before the factory began registering MultiSend unwrap adapters — six
   `setTransactionUnwrapper` writes across the three Roles Modifiers, ~155k gas.)
 - **`EMPTY_CONTRACT` precondition.** `deployStack` reverts with `EmptyContractMissing` unless the

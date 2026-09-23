@@ -14,18 +14,6 @@ import {IRoles} from "./interfaces/IRoles.sol";
 import {IKpkTimelockDeployer, TimelockParams} from "./interfaces/IKpkTimelockDeployer.sol";
 import {OivInfraConstants} from "./OivInfraConstants.sol";
 
-/// @notice Minimal interface for KpkSharesDeployer.
-/// @dev    Kept as a local interface so importing KpkSharesDeployer.sol (which imports KpkShares)
-///         does not embed KpkShares creation bytecode into this contract's runtime.
-interface IKpkSharesDeployer {
-    /// @notice Deploys a fresh KpkShares implementation at the CREATE2 address derived from
-    ///         `(deployer, salt, type(KpkShares).creationCode)` and returns its address.
-    function deploy(bytes32 salt) external returns (address);
-
-    /// @notice Predicts the address `deploy(salt)` will produce on this chain.
-    function predictImpl(bytes32 salt) external view returns (address);
-}
-
 /// @title  KpkOivFactory
 /// @author KPK
 /// @notice On-chain factory that atomically deploys a full kpk fund stack:
@@ -68,7 +56,7 @@ interface IKpkSharesDeployer {
 ///         Trust assumptions:
 ///         - The factory `owner` controls all infrastructure setters with immediate effect (no
 ///           timelock). The owner SHOULD be a TimelockController or governance multisig — never
-///           an EOA — because a compromised owner can swap `kpkSharesDeployer`,
+///           an EOA — because a compromised owner can swap `kpkSharesMastercopy`,
 ///           `rolesModifierMastercopy`, or `safeSingleton` to backdoor every future deployment.
 ///         - For `deployOiv`, the caller controls `config.managerSafe.owners`. The deployed
 ///           Manager Safe receives ownership of both the sub and manager Roles Modifiers, so
@@ -187,13 +175,22 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Zodiac Roles Modifier v2 mastercopy. All Roles Modifier proxies delegate to this.
     address public rolesModifierMastercopy;
 
-    /// @notice Deploys a fresh KpkShares implementation contract per fund.
-    ///         Isolated in its own contract so that KpkShares creation bytecode is not embedded
-    ///         in this factory's runtime, which would exceed EIP-170's 24 576-byte limit.
-    address public kpkSharesDeployer;
+    /// @notice The single `KpkShares` implementation every fund on this chain proxies to.
+    ///
+    ///         Funds used to receive one implementation each, on the stated rationale that it kept
+    ///         upgrades isolated. It does not: `UUPSUpgradeable.upgradeToAndCall` runs in the proxy's
+    ///         own context and `ERC1967Utils._setImplementation` writes to the CALLING proxy's storage
+    ///         slot, so every proxy's implementation pointer is already independent whether or not two
+    ///         funds started at the same code. Nor did it limit blast radius — byte-identical copies
+    ///         share any bug in that bytecode.
+    ///
+    ///         What it did cost was 4,608,631 gas of code deposit per fund per chain: two thirds of
+    ///         `deployOiv`, and the single reason a fund with shares could not fit inside the
+    ///         3,000,000-gas ceiling that 10 of the 20 CCIP lanes enforce.
+    address public kpkSharesMastercopy;
 
     /// @notice Deploys a fund's `TimelockController` instances. Isolated in its own contract for the
-    ///         same EIP-170 reason as `kpkSharesDeployer`: `TimelockController`'s creation bytecode
+    ///         same reason clones are used there: `TimelockController`'s creation bytecode
     ///         alone is larger than this factory's remaining runtime margin.
     address public timelockDeployer;
 
@@ -426,8 +423,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @notice Emitted when the owner updates the Zodiac Roles Modifier mastercopy address.
     event RolesModifierMastercopyUpdated(address indexed newAddress);
 
-    /// @notice Emitted when the owner updates the KpkShares deployer address.
-    event KpkSharesDeployerUpdated(address indexed newAddress);
+    /// @notice Emitted when the owner updates the KpkShares mastercopy address.
+    event KpkSharesMastercopyUpdated(address indexed newAddress);
 
     /// @notice Emitted when the owner updates the timelock deployer address.
     event TimelockDeployerUpdated(address indexed newAddress);
@@ -484,9 +481,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         deployer post-construction. This is only reachable in the brief window between
     ///         factory deployment and the post-deploy `setKpkSharesDeployer` call (see the
     ///         constructor NatSpec for the deterministic-CREATE2 deployment flow). `deployStack`
-    ///         is unaffected — it does not touch `kpkSharesDeployer` and remains callable
+    ///         is unaffected — it does not touch `kpkSharesMastercopy` and remains callable
     ///         regardless of wiring status.
-    error KpkSharesDeployerNotSet();
+    error KpkSharesMastercopyNotSet();
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
@@ -504,10 +501,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
     /// @dev    All six Safe/Zodiac infrastructure addresses are validated to be non-zero.
-    ///         `_kpkSharesDeployer` may be passed as `address(0)` so the factory's CREATE2
+    ///         `_kpkSharesMastercopy` may be passed as `address(0)` so the factory's CREATE2
     ///         creation code is independent of the (chicken-and-egg) deployer address; the owner
-    ///         must then call `setKpkSharesDeployer` to wire it before `deployOiv` can be
-    ///         invoked. Once set, `setKpkSharesDeployer`'s non-zero check prevents resetting it
+    ///         must then call `setKpkSharesMastercopy` to wire it before `deployOiv` can be
+    ///         invoked. Once set, `setKpkSharesMastercopy`'s non-zero check prevents resetting it
     ///         back to zero. This is the deterministic-cross-chain deploy pattern used in
     ///         `script/DeployKpkOivFactory.s.sol`. Infrastructure addresses can be updated
     ///         post-deployment by the owner via the corresponding setter functions.
@@ -519,8 +516,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param _safeFallbackHandler     Fallback handler applied to every deployed Safe.
     /// @param _moduleProxyFactory      Zodiac ModuleProxyFactory.
     /// @param _rolesModifierMastercopy Zodiac Roles Modifier v2 mastercopy.
-    /// @param _kpkSharesDeployer       KpkSharesDeployer contract address. May be `address(0)`
-    ///                                 at construction; must be set via `setKpkSharesDeployer`
+    /// @param _kpkSharesMastercopy     The chain's `KpkShares` implementation. May be `address(0)`
+    ///                                 at construction; must be set via `setKpkSharesMastercopy`
     ///                                 before `deployOiv` is callable.
     /// @param _timelockDeployer        KpkTimelockDeployer contract address. May be `address(0)`
     ///                                 at construction for the same chicken-and-egg reason, and is
@@ -534,7 +531,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address _safeFallbackHandler,
         address _moduleProxyFactory,
         address _rolesModifierMastercopy,
-        address _kpkSharesDeployer,
+        address _kpkSharesMastercopy,
         address _timelockDeployer
     ) Ownable(_owner) {
         if (
@@ -549,14 +546,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         safeFallbackHandler = _safeFallbackHandler;
         moduleProxyFactory = _moduleProxyFactory;
         rolesModifierMastercopy = _rolesModifierMastercopy;
-        kpkSharesDeployer = _kpkSharesDeployer;
+        kpkSharesMastercopy = _kpkSharesMastercopy;
         timelockDeployer = _timelockDeployer;
     }
 
     // ── Infrastructure setters ─────────────────────────────────────────────────
     //
     // SECURITY: All setters take effect immediately with no timelock. A malicious or
-    //           compromised owner can swap `kpkSharesDeployer`, `rolesModifierMastercopy`,
+    //           compromised owner can swap `kpkSharesMastercopy`, `rolesModifierMastercopy`,
     //           `safeSingleton`, or `safeModuleSetup` to backdoor every future `deployOiv` /
     //           `deployStack` call. Past deployments are unaffected (each fund references its
     //           own already-deployed implementation), but the blast radius for FUTURE
@@ -624,12 +621,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         emit RolesModifierMastercopyUpdated(_rolesModifierMastercopy);
     }
 
-    /// @notice Updates the KpkSharesDeployer address.
-    /// @param _kpkSharesDeployer New address. Must not be zero.
-    function setKpkSharesDeployer(address _kpkSharesDeployer) external onlyOwner {
-        if (_kpkSharesDeployer == address(0)) revert ZeroAddress();
-        kpkSharesDeployer = _kpkSharesDeployer;
-        emit KpkSharesDeployerUpdated(_kpkSharesDeployer);
+    /// @notice Updates the KpkShares mastercopy address.
+    /// @param _kpkSharesMastercopy New address. Must not be zero.
+    function setKpkSharesMastercopy(address _kpkSharesMastercopy) external onlyOwner {
+        if (_kpkSharesMastercopy == address(0)) revert ZeroAddress();
+        kpkSharesMastercopy = _kpkSharesMastercopy;
+        emit KpkSharesMastercopyUpdated(_kpkSharesMastercopy);
     }
 
     // ── Main entry points ───────────────────────────────────────────────────────
@@ -692,10 +689,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///                  was configured (`address(0)` for one that was not).
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
         // Guard the brief deploy-time window where the factory is constructed with
-        // `kpkSharesDeployer == address(0)` so its CREATE2 address is independent of the deployer
+        // `kpkSharesMastercopy == address(0)` so its CREATE2 address is independent of it
         // (see constructor NatSpec). Once `setKpkSharesDeployer` has wired the deployer the
         // setter's non-zero check prevents this from ever reverting again.
-        if (kpkSharesDeployer == address(0)) revert KpkSharesDeployerNotSet();
+        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
         // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside
         // `_deploySharesProxy` on an unwired deployer. `_deployAndWireStack` performs the same check
         // for the exec timelock at the point it needs it, which is early enough.
@@ -717,14 +714,13 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // below before being disabled.
         StackInstance memory stack = _deployAndWireStack(stackConfig);
 
-        (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, msg.sender);
+        bytes32 proxySalt = _deriveSharesSalt(config.salt, msg.sender);
         (address sharesImpl, address sharesProxy, address sharesTimelock) = _deploySharesProxy(
             config.sharesParams,
             stack.managerSafe,
             stack.avatarSafe,
             config.admin,
             config.additionalAssets,
-            implSalt,
             proxySalt,
             config.sharesTimelock
         );
@@ -882,9 +878,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         caller, config.salt, manager owners/threshold, KpkShares constructor parameters)`.
     /// @dev    The five operational-stack addresses match those of `predictStackAddresses` for
     ///         the same `(salt, caller)` — see that function's NatSpec. The shares impl is deployed
-    ///         via the wired `kpkSharesDeployer` using a CREATE2 salt derived from
-    ///         `(caller, salt, 5)`; the ERC-1967 proxy is deployed by this factory using a salt
-    ///         derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code includes the
+    ///         the chain's shared `kpkSharesMastercopy`; the ERC-1967 proxy is deployed by this
+    ///         factory using a salt derived from `(caller, salt, 6)`. The proxy's CREATE2 init-code includes the
     ///         `KpkShares.initialize(params)` calldata where `params.safe` is overridden with the
     ///         predicted Avatar Safe and `params.admin` is set to `address(this)`, mirroring
     ///         `_deploySharesProxy` exactly.
@@ -899,8 +894,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         StackInstance memory stack =
             _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
-        (bytes32 implSalt, bytes32 proxySalt) = _deriveSharesSalts(config.salt, caller);
-        address predictedImpl = IKpkSharesDeployer(kpkSharesDeployer).predictImpl(implSalt);
+        bytes32 proxySalt = _deriveSharesSalt(config.salt, caller);
+        address predictedImpl = kpkSharesMastercopy;
         address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl);
 
         inst = OivInstance({
@@ -1165,14 +1160,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      Index mapping: 5 = KpkShares implementation, 6 = ERC-1967 shares proxy.
     /// @param baseSalt The user-supplied base salt from `OivConfig.salt`.
     /// @param caller   The address calling `deployOiv`.
-    /// @return implSalt  CREATE2 salt the deployer uses for the KpkShares implementation.
     /// @return proxySalt CREATE2 salt this factory uses for the ERC-1967 proxy.
-    function _deriveSharesSalts(uint256 baseSalt, address caller)
-        internal
-        pure
-        returns (bytes32 implSalt, bytes32 proxySalt)
-    {
-        implSalt = keccak256(abi.encode(caller, baseSalt, uint8(5)));
+    function _deriveSharesSalt(uint256 baseSalt, address caller) internal pure returns (bytes32 proxySalt) {
+        // Index 5 was the per-fund implementation's salt and is deliberately left unused, so the
+        // proxy's salt — and therefore every existing prediction of it — is unaffected by the move to
+        // a shared mastercopy.
         proxySalt = keccak256(abi.encode(caller, baseSalt, uint8(6)));
     }
 
@@ -1290,7 +1282,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         IRoles(mod).setTransactionUnwrapper(MULTI_SEND_CALLS_ONLY, MULTI_SEND_SELECTOR, MULTISEND_UNWRAPPER);
     }
 
-    /// @dev Deploys a fresh KpkShares implementation via `kpkSharesDeployer` (ensuring each fund
+    /// @dev Points a new ERC-1967 proxy at the chain's shared `kpkSharesMastercopy` (each fund
     ///      has an isolated upgrade surface) and an ERC-1967 UUPS proxy pointing to it.
     ///      Role setup sequence:
     ///      1. Factory temporarily holds DEFAULT_ADMIN_ROLE (set during `initialize`).
@@ -1304,8 +1296,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param avatarSafe       Avatar Safe address — overrides `params.safe`.
     /// @param finalAdmin       Address that receives DEFAULT_ADMIN_ROLE — overrides `params.admin`.
     /// @param additionalAssets Additional assets to register via `updateAsset`.
-    /// @param implSalt        CREATE2 salt forwarded to `KpkSharesDeployer.deploy(salt)` so the
-    ///                        impl address is deterministic from `(caller, baseSalt)`.
     /// @param proxySalt       CREATE2 salt for the ERC-1967 proxy created by this factory so the
     ///                        proxy address is deterministic from `(caller, baseSalt)`.
     /// @return impl  Address of the newly deployed KpkShares implementation.
@@ -1316,11 +1306,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address avatarSafe,
         address finalAdmin,
         AssetConfig[] calldata additionalAssets,
-        bytes32 implSalt,
         bytes32 proxySalt,
         TimelockParams memory timelockParams
     ) internal returns (address impl, address proxy, address timelock) {
-        impl = IKpkSharesDeployer(kpkSharesDeployer).deploy(implSalt);
+        // The chain's single implementation, shared by every fund on it. See `kpkSharesMastercopy`
+        // for why per-fund implementations bought no isolation and cost 4.6M gas each.
+        impl = kpkSharesMastercopy;
         params.safe = avatarSafe;
         params.admin = address(this);
 

@@ -3,6 +3,9 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 
@@ -69,7 +72,7 @@ contract KpkTimelockDeployerTest is Test {
     bytes32 constant DEFAULT_ADMIN_ROLE = 0x00;
 
     function setUp() public {
-        kit = new KpkTimelockDeployer();
+        kit = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

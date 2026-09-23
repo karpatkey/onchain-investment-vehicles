@@ -3,7 +3,10 @@ pragma solidity ^0.8.0;
 
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
-import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
+import {KpkShares} from "src/kpkShares.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
@@ -66,10 +69,8 @@ contract CcipOivDeployerTest is OivTestConstants {
         // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = factory. The timelock
         // deployer must be constructed on its own line — inline in the argument list it would still
         // consume a nonce, but only after this arithmetic had already been done.
-        uint256 nextNonce = vm.getNonce(address(this));
-        address predictedFactory = vm.computeCreateAddress(address(this), nextNonce + 2);
-        KpkTimelockDeployer timelockDeployer = new KpkTimelockDeployer();
-        KpkSharesDeployer sharesDeployer = new KpkSharesDeployer(predictedFactory);
+        KpkShares sharesMastercopy = new KpkShares();
+        KpkTimelockDeployer timelockDeployer = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
         factory = new KpkOivFactory(
             factoryOwner,
             SAFE_PROXY_FACTORY,
@@ -78,10 +79,9 @@ contract CcipOivDeployerTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(sharesDeployer),
+            address(sharesMastercopy),
             address(timelockDeployer)
         );
-        require(address(factory) == predictedFactory, "factory address mismatch");
 
         router = new MockCcipRouter();
         router.setFee(FEE);
