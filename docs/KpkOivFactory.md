@@ -239,14 +239,15 @@ Fixed at factory deployment and apply to every stack deployed through it.
 | `safeFallbackHandler`      | Safe fallback handler set on every deployed Safe         |
 | `moduleProxyFactory`       | Zodiac `ModuleProxyFactory` — deploys Roles Modifier proxies |
 | `rolesModifierMastercopy`  | Zodiac Roles Modifier mastercopy all modifiers point to  |
-| `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set via `setKpkSharesMastercopy`, which rejects zero and codeless values and is **write-once** (`InfrastructureAlreadySet`). Rotation would land a promoted proxy at a different address from the fund's existing shares chains, silently, for every fund deployed beforehand; a bad mastercopy needs a new factory generation instead |
+| `kpkSharesMastercopy`     | The chain's single shared `KpkShares` implementation, which every fund's ERC-1967 proxy delegates to. Sharing it costs no isolation: `upgradeToAndCall` writes the calling proxy's ERC-1967 slot, so each fund still controls its own upgrades. Set in the CONSTRUCTOR, which rejects zero and codeless values; there is no setter. Rotation would land a promoted proxy at a different address from the fund's existing shares chains, silently, for every fund deployed beforehand, so a bad mastercopy needs a new factory generation rather than a correcting transaction |
 
 Infrastructure addresses are **not** owner-updatable. The six Safe/Zodiac addresses
 (`safeProxyFactory`, `safeSingleton`, `safeModuleSetup`, `safeFallbackHandler`, `moduleProxyFactory`,
-`rolesModifierMastercopy`) are fixed at construction and have no setters at all — they were removed,
-being constructor-set, zero-rejected and therefore permanently locked by the write-once rule anyway.
-Only `kpkSharesMastercopy` and `timelockDeployer` have setters, each usable **once**, because
-onboarding wires them after construction; a second call reverts `InfrastructureAlreadySet`.
+`rolesModifierMastercopy`) are fixed at construction and have no setters at all. Neither do
+`kpkSharesMastercopy` and `timelockDeployer`: they were write-once setters wired by onboarding after
+construction, and both were removed in favour of mandatory constructor arguments (non-zero and
+codeful). **The factory has no infrastructure setters whatsoever**, and no state in which it is live
+but unwired.
 
 The reason is `deployShares`: it re-derives an existing fund's stack from the factory's *current*
 infrastructure, so any rotation would silently break the promote-later path for every fund deployed
@@ -439,6 +440,6 @@ Calls routed through `subRolesModifier` are forwarded to `execRolesModifier` (no
 
 ## Trust assumptions
 
-- The factory `owner` no longer controls the infrastructure. The six Safe/Zodiac addresses are constructor-fixed with no setters, and `kpkSharesMastercopy` / `timelockDeployer` are **write-once** — so a compromised owner cannot swap `rolesModifierMastercopy` or `safeSingleton` to backdoor future deployments, and cannot rotate a mastercopy on a chain where onboarding has already wired it. This section previously described exactly those swaps as the reason the owner must be a `TimelockController` or governance multisig. The owner **SHOULD** still be one — it retains `registerFund`/`unregisterFund` and, on an un-onboarded chain, the single permitted write of each remaining setter — but the backdoor-every-future-fund capability is gone. Note also that funds no longer have per-fund implementations: every proxy delegates to the chain's shared, `_disableInitializers()`-protected `KpkShares` mastercopy.
+- The factory `owner` no longer controls the infrastructure. The six Safe/Zodiac addresses are constructor-fixed with no setters, and `kpkSharesMastercopy` / `timelockDeployer` are constructor arguments with no setters either — so a compromised owner cannot swap `rolesModifierMastercopy` or `safeSingleton` to backdoor future deployments, and cannot rotate a mastercopy at all. This section previously described exactly those swaps as the reason the owner must be a `TimelockController` or governance multisig. The owner **SHOULD** still be one — it retains `registerFund`/`unregisterFund` — but the backdoor-every-future-fund capability is gone. Note also that funds no longer have per-fund implementations: every proxy delegates to the chain's shared, `_disableInitializers()`-protected `KpkShares` mastercopy.
 - For `deployOiv`, the caller controls `config.managerSafe.owners`. The deployed Manager Safe receives ownership of both the sub and manager Roles Modifiers, so `managerSafe.owners` **MUST** be trusted at the same operational level as `config.admin`. The exec Roles Modifier (owned by `admin`) remains the authoritative gatekeeper of Avatar Safe execution, so direct fund drainage requires exec-modifier compromise — but the Manager Safe is **not** a purely operational signer set.
 - Both deployment entry points are permissionless. Caller mixing in salt derivation prevents address front-running, but anyone can still spend gas to deploy a fund with arbitrary parameters; consumers of the on-chain registry (`stacks` / `instances`) should not trust an entry without verifying its `admin` and `managerSafe.owners`.

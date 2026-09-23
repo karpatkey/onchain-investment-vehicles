@@ -382,15 +382,6 @@ abstract contract OivChainDeploy is Script {
         }
 
         KpkOivFactory f = KpkOivFactory(factory);
-        // Ownership is checked BEFORE either setter, because both are `onlyOwner` and now WRITE-ONCE.
-        // A first run whose `transferOwnership` landed but whose setter transaction did not leaves a
-        // factory owned by the Safe with an unwired value: the re-run takes the `== address(0)`
-        // branch, calls an `onlyOwner` setter as an EOA that no longer owns the factory, and reverts
-        // with nothing telling the operator what to do. The remedy is a Safe transaction, so say so.
-        //
-        // Before write-once this was survivable a different way — the value could be corrected later
-        // from whoever did own it. Latching removed the second chance, which is what makes the
-        // ordering worth guarding rather than merely tidy.
         // Nothing to wire any more — both values were fixed at construction. There is no
         // ownership-dependent step here, so the "handed over with wiring incomplete" state this
         // block used to detect and refuse can no longer exist. What remains is confirmation that the

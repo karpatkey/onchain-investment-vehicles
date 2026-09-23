@@ -49,7 +49,13 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
 
     // ── Documented salt-v4 predictions ─────────────────────────────────────────
     //
-    // GENERATION NOTE. These are salt-v4 values and are NOT DEPLOYED ANYWHERE YET. Adding the
+    // GENERATION NOTE. These are salt-v4 values. TWO OF THEM ARE DEPLOYED: `KpkTimelockDeployer` and
+    // its `TimelockControllerUpgradeable` mastercopy are live on mainnet, and live timelock clones
+    // govern funds against them — so an edit that moves either prediction forks the deployed kit
+    // rather than merely updating a number. `test/DeployedKitSync.t.sol` asserts those two against
+    // CHAIN STATE, which is the check these guards structurally cannot make: both sides here are
+    // computed from the same source, so they stayed green through exactly that drift. The factory and
+    // orchestrator are NOT deployed and are free to move. Adding the
     // timelock arguments to `deployOiv` changed `KpkOivFactory`'s runtime, which moved its CREATE2
     // address, which moved `KpkSharesDeployer` (factory address is a constructor argument) and
     // `CcipOivDeployer` (factory address is an immutable) with it. The salts were bumped 3 -> 4 to
@@ -64,7 +70,7 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
 
     address internal constant DOCUMENTED_SHARES_MASTERCOPY = 0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC;
     address internal constant DOCUMENTED_TIMELOCK_MASTERCOPY = 0x9760280fED9e760668186334f88b6d763A7d976E;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0x8D773653f5a7b353E2A5E70C0B6608d843d319a8;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0x599655c9F6C39a1d4A90096eeb1b0228722cfa77;
 
     /// @dev The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only
     ///      argument is one of them, so unlike the factory and orchestrator these three are
@@ -97,9 +103,12 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
     }
 
     function test_documentedTimelockDeployerAddressMatchesDeployPath() public pure {
+        // Computed first, pinned second — the same order as the three guards above. They used to
+        // disagree, which made `left != right` in a failure message ambiguous about which side was
+        // the prediction and which the published constant.
         assertEq(
-            DOCUMENTED_TIMELOCK_DEPLOYER,
             _predictTimelockDeployer(),
+            DOCUMENTED_TIMELOCK_DEPLOYER,
             "KpkTimelockDeployer prediction drifted - re-derive from a clean clone"
         );
     }

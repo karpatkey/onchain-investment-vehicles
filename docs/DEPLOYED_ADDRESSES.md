@@ -33,23 +33,38 @@ instances through a new `KpkTimelockDeployer`. That changed `KpkOivFactory`'s ru
 address moved — and with it `KpkSharesDeployer` (factory address is a constructor argument) and
 `CcipOivDeployer` (factory address is an immutable). Salts were bumped `3 → 4`.
 
-**Nothing below exists on-chain yet.** These are predictions from the source in this branch, pinned by
-[`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol). Re-derive them from a **fresh
-`git clone --recurse-submodules`** before any rollout — a drifted working tree silently produces
-different bytecode, and therefore different addresses (see the clean-clone warning further down).
+**Two of the five already exist on-chain** — `KpkTimelockDeployer` and its
+`TimelockControllerUpgradeable` mastercopy, marked in the table and verified by `eth_call` against
+mainnet on 2026-09-23. Live timelock clones govern funds against them, so an edit that moves either
+prediction **forks the deployed kit**; it is not merely a number to update. The other three are
+predictions from the source in this branch and are free to move.
+
+All five are pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol), which
+compares each pin to the PREDICTION — both sides computed from the same source, so it cannot notice
+that a prediction has drifted off a contract that is actually deployed. That is what
+[`test/DeployedKitSync.t.sol`](../test/DeployedKitSync.t.sol) is for: it forks mainnet and asserts the
+two deployed predictions still have code there.
+
+Re-derive everything from a **fresh `git clone --recurse-submodules`** before any rollout — a drifted
+working tree silently produces different bytecode, and therefore different addresses (see the
+clean-clone warning further down).
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x666eA3b6f6318951e1617C64e787B47F1d741418` |
+| `KpkOivFactory` | `0xE9f251605746084443D4A3daaED7Df2AEF2E37e5` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
-| `CcipOivDeployer` (orchestrator) | `0x8D773653f5a7b353E2A5E70C0B6608d843d319a8` |
+| `CcipOivDeployer` (orchestrator) | `0x599655c9F6C39a1d4A90096eeb1b0228722cfa77` |
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 
 `KpkTimelockDeployer`'s constructor takes the timelock mastercopy address
-(`src/KpkTimelockDeployer.sol:122`), so like the others its address depends on what it is given. `script/base/OivChainDeploy.sol` deploys it and wires it via
-`setTimelockDeployer` in the same run that wires `setKpkSharesMastercopy`.
+(`src/KpkTimelockDeployer.sol:122`), so like the others its address depends on what it is given.
+`script/base/OivChainDeploy.sol` deploys the shares mastercopy, the timelock mastercopy and the
+timelock deployer BEFORE the factory, because the factory now takes the shares mastercopy and the
+timelock deployer as mandatory constructor arguments. The `setKpkSharesMastercopy` /
+`setTimelockDeployer` setters this file used to describe no longer exist — there is no
+construct-then-wire window left, and therefore no state in which a factory is live but unwired.
 
 > **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
 > run until the rollout lands. Until then the live infra is the salt-v3 stack below.
@@ -135,7 +150,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then factory + both mastercopies + `KpkTimelockDeployer` via the canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesMastercopy` and `setTimelockDeployer` — both **write-once**, so onboarding gets exactly one attempt per chain and a mistake needs a new factory generation rather than a correcting transaction — then `transferOwnership` to the OIV Safe. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain** — it never wires `timelockDeployer`, and by the time it can run, `_runChain` has already set every value it knows how to set and moved ownership to `finalOwner`, putting the `onlyOwner` setters out of reach. It survives as a **verifier**: run it against an onboarded chain (no `--broadcast`) and it asserts the factory's owner, canonical `timelockDeployer` and expected `kpkSharesMastercopy`. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
+The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then both mastercopies and `KpkTimelockDeployer`, and only THEN the factory — that order is mandatory, because the factory takes the shares mastercopy and the timelock deployer as constructor arguments. All four go through the canonical CREATE2 deployer with the EOA as initial owner, then `transferOwnership` to the OIV Safe. There are no `setKpkSharesMastercopy` / `setTimelockDeployer` calls any more: those setters were deleted, so onboarding still gets exactly one attempt per chain and a mistake still needs a new factory generation, but the mis-wired-and-live state they made possible no longer exists. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain**: it deploys a factory without deploying the infrastructure that factory's constructor now requires. It survives as a **verifier**: run it against an onboarded chain (no `--broadcast`) and it asserts the factory's owner, canonical `timelockDeployer` and expected `kpkSharesMastercopy`. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 

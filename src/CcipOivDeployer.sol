@@ -995,9 +995,8 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             // A timelocked stack's modifier is owned by the timelock, not by `finalOwner` directly —
             // `predictStackAddresses` fills in `execTimelock` exactly when `minDelay != 0`, which is
             // the same condition `deployStack` wires on.
-            address expectedOwner = present.execTimelock == address(0)
-                ? stackConfig.execRolesMod.finalOwner
-                : present.execTimelock;
+            address expectedOwner =
+                present.execTimelock == address(0) ? stackConfig.execRolesMod.finalOwner : present.execTimelock;
             if (IRoles(present.execRolesModifier).owner() != expectedOwner) {
                 assembly {
                     revert(add(err, 0x20), mload(err))
@@ -1164,6 +1163,15 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         The exec timelock is accepted as an alternate caller because it exists at the fund's
     ///         canonical address on EVERY stack chain (`deployStack` deploys it), which covers funds
     ///         whose `admin` is a contract that only exists on one chain.
+    ///
+    ///         ROTATION, on this path only: `config.admin` is salt-bound here, and
+    ///         `KpkOivFactory._recordedExecTimelock` checks CURRENT exec governance rather than birth
+    ///         governance. So after exec ownership is rotated away from `admin`, a promotion that
+    ///         passes the ORIGINAL config no longer matches the live owner, and one that passes the
+    ///         new owner as `admin` derives a different salt and therefore different addresses.
+    ///         Promotion is blocked until ownership is rotated BACK — recoverable, but it is a live
+    ///         operational constraint rather than a theoretical one, and it has no equivalent on the
+    ///         direct `KpkOivFactory.deployShares` path, where `admin` is not part of any address.
     /// @param  config       Fund parameters, with THIS chain's base asset and the original salt.
     /// @param  sharesChains The fund's ORIGINAL topology — the same array used at birth.
     /// @return instance     The fund's addresses on this chain.

@@ -500,14 +500,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param  multiSendContract The address whose codehash did not match.
     error MultiSendMissing(address multiSendContract);
 
-    /// @notice Thrown when `deployOiv` is called before `setKpkSharesMastercopy` has wired the
-    ///         deployer post-construction. This is only reachable in the brief window between
-    ///         factory deployment and the post-deploy `setKpkSharesMastercopy` call (see the
-    ///         constructor NatSpec for the deterministic-CREATE2 deployment flow). `deployStack`
-    ///         is unaffected — it does not touch `kpkSharesMastercopy` and remains callable
-    ///         regardless of wiring status.
-    error KpkSharesMastercopyNotSet();
-
     /// @notice Thrown when a mastercopy address has no code. Mirrors `KpkTimelockDeployer`'s guard
     ///         of the same name, for the same reason: the value decides what every future fund on
     ///         this chain delegates to.
@@ -594,7 +586,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
 
     /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
     ///         `timelockDeployer` has not been wired yet.
-    error TimelockDeployerNotSet();
 
     /// @notice Thrown when `registerFund` is given a fund whose KpkShares proxy is already in the
     ///         curated registry.
@@ -607,30 +598,26 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /// @notice Deploys the factory and sets all infrastructure addresses.
-    /// @dev    All six Safe/Zodiac infrastructure addresses are validated to be non-zero.
-    ///         `_kpkSharesMastercopy` may be passed as `address(0)` so the factory's CREATE2
-    ///         creation code is independent of the (chicken-and-egg) deployer address; the owner
-    ///         must then call `setKpkSharesMastercopy` to wire it before `deployOiv` can be
-    ///         invoked. Once set, `setKpkSharesMastercopy`'s non-zero check prevents resetting it
-    ///         back to zero. This is the deterministic-cross-chain deploy pattern used in
-    ///         `script/DeployKpkOivFactory.s.sol`. Infrastructure addresses can NOT be updated
-    ///         post-deployment: the six Safe/Zodiac addresses have no setters at all, and
-    ///         `kpkSharesMastercopy` / `timelockDeployer` are write-once.
-    /// @param _owner                   Address that will own this factory and may call
-    ///                                 the infrastructure setters.
+    /// @dev    EVERY infrastructure address is mandatory: all eight are rejected if zero, and the
+    ///         two mastercopy-like ones (`_kpkSharesMastercopy`, `_timelockDeployer`) are rejected if
+    ///         codeless. There are NO setters. `_kpkSharesMastercopy` and `_timelockDeployer` used to
+    ///         be settable post-construction so the factory's creation code could be independent of
+    ///         addresses that did not exist yet; that is gone, and with it the whole class of state
+    ///         where a live factory is not yet wired. `script/base/OivChainDeploy.sol` now deploys
+    ///         both before the factory instead.
+    /// @param _owner                   Address that will own this factory. Ownership carries no
+    ///                                 infrastructure powers — there are no setters to call.
     /// @param _safeProxyFactory        Gnosis Safe v1.4.1 proxy factory.
     /// @param _safeSingleton           Gnosis Safe v1.4.1 singleton.
     /// @param _safeModuleSetup         Gnosis SafeModuleSetup utility contract.
     /// @param _safeFallbackHandler     Fallback handler applied to every deployed Safe.
     /// @param _moduleProxyFactory      Zodiac ModuleProxyFactory.
     /// @param _rolesModifierMastercopy Zodiac Roles Modifier v2 mastercopy.
-    /// @param _kpkSharesMastercopy     The chain's `KpkShares` implementation. May be `address(0)`
-    ///                                 at construction; must be set via `setKpkSharesMastercopy`
-    ///                                 before `deployOiv` is callable.
-    /// @param _timelockDeployer        KpkTimelockDeployer contract address. May be `address(0)`
-    ///                                 at construction for the same chicken-and-egg reason, and is
-    ///                                 only required by deployments that actually configure a
-    ///                                 timelock — funds with a zero `minDelay` never touch it.
+    /// @param _kpkSharesMastercopy     The chain's `KpkShares` implementation. Mandatory: non-zero
+    ///                                 and codeful.
+    /// @param _timelockDeployer        KpkTimelockDeployer contract address. Mandatory: non-zero and
+    ///                                 codeful, including for funds whose `minDelay` is zero and
+    ///                                 which therefore never call it.
     constructor(
         address _owner,
         address _safeProxyFactory,
@@ -664,20 +651,14 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
                 || _rolesModifierMastercopy.code.length == 0
         ) revert InvalidMastercopy();
 
-        // The two write-once values are validated here as well as in their setters. Those setters
-        // reject a codeless address precisely BECAUSE the value can never be corrected — and the
-        // constructor assigns the same fields with no such check, while `InfrastructureAlreadySet`
-        // latches on the first non-zero value regardless of which path wrote it. So the stricter
-        // guard was reachable only on the path that did not need it. Before write-once the mistake
-        // was survivable; it is not any more.
         // MANDATORY, and this closes two findings at once.
         //
         // These were `address(0)` placeholders wired per chain afterwards, so neither entered this
         // factory's CREATE2 init code. A wrong-but-codeful value on ONE chain then moved every shares
         // proxy there (the mastercopy is hashed into the proxy's init code) or every timelock there
         // (the deployer is the clone's CREATE2 deployer) — silently, because locally everything
-        // stayed self-consistent and nothing reverted. Making them write-once turned that slip from
-        // costly into terminal.
+        // stayed self-consistent and nothing reverted. With no setters at all, that slip is terminal
+        // rather than merely costly, which is exactly why it must be impossible to make.
         //
         // Inside the init code, a chain wired differently yields a DIFFERENT FACTORY ADDRESS, which
         // the address-sync guards already fail on: a silent divergence becomes a loud one.
@@ -701,26 +682,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         timelockDeployer = _timelockDeployer;
     }
 
-    // ── Infrastructure setters ─────────────────────────────────────────────────
+    // ── Infrastructure: there are no setters ───────────────────────────────────
     //
-    // SECURITY: these are WRITE-ONCE, and the two that remain are the only ones. `safeProxyFactory`,
-    //           `safeSingleton`, `safeModuleSetup`, `safeFallbackHandler`, `moduleProxyFactory` and
-    //           `rolesModifierMastercopy` are constructor-fixed and have no setters at all, so a
-    //           compromised owner can no longer swap any of them to backdoor future deployments.
-    //           This block previously described exactly those swaps as the reason the owner must be
-    //           a timelock; that capability is gone.
+    // SECURITY: all eight infrastructure addresses are constructor arguments and NONE of them has a
+    //           setter. `kpkSharesMastercopy` and `timelockDeployer` had write-once setters and no
+    //           longer do; the other six never had any. So a compromised owner cannot swap
+    //           `rolesModifierMastercopy` or `safeSingleton` to backdoor future deployments, and
+    //           cannot rotate a mastercopy to make a stack-only fund's shares or timelock addresses
+    //           diverge from the chains completed before the swap. There is no swap.
     //
-    //           What write-once BUYS is the property the old text said could not be guaranteed: a
-    //           fund that is stack-only on some chains can no longer have its shares or timelock
-    //           addresses diverge from the chains completed before a swap, because there is no swap.
+    //           What it COSTS is unchanged and worth stating plainly: a code-bearing but WRONG
+    //           address is permanent for this factory on this chain. The difference is where it
+    //           fails. A wrong value now lands in the factory's own CREATE2 init code, so the
+    //           factory deploys to a DIFFERENT ADDRESS than every other chain and the address-sync
+    //           guards fail loudly, before a fund exists. Previously it was wired afterwards, the
+    //           factory address matched everywhere, and the divergence surfaced only in the shares
+    //           proxy and timelock addresses of funds already deployed.
     //
-    //           What it COSTS: each value gets exactly one write per chain, and a code-bearing but
-    //           WRONG address latches permanently — `deployOiv` then reverts inside
-    //           `ERC1967Utils`/`initialize` with no setter left to correct it. The guards here check
-    //           only that the address has code, so onboarding correctness is an off-chain
-    //           post-flight assertion (`script/DeployKpkOivFactory.s.sol`), not an on-chain one.
-    //           The owner SHOULD still be a TimelockController or governance multisig for what it
-    //           does retain: `registerFund` / `unregisterFund`, and that single permitted write.
+    //           The owner SHOULD still be a TimelockController or governance multisig, for what it
+    //           does retain: `registerFund` / `unregisterFund`.
 
     // ── Main entry points ───────────────────────────────────────────────────────
 
@@ -740,11 +720,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return instance Addresses of the five deployed contracts.
     function deployStack(StackConfig calldata config) external nonReentrant returns (StackInstance memory instance) {
         _validateStackConfig(config);
-        // Fail fast, as `deployOiv` does. Without this the revert still comes — from
-        // `_requireTimelockDeployer` inside `_deployAndWireStack` — but only after both Safes and
-        // all three Roles Modifiers have been deployed, ~2M gas the caller has already paid. This
-        // is the CCIP destination's entry point, where that gas is a spent cross-chain fee.
-        if (config.execTimelock.minDelay != 0 && timelockDeployer == address(0)) revert TimelockDeployerNotSet();
 
         // Reserve the registry ID before any external calls (CEI) — defends against any
         // future callback path that might re-enter the factory and shift indices.
@@ -790,24 +765,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @return instance Addresses of the deployed contracts — seven, plus either timelock that
     ///                  was configured (`address(0)` for one that was not).
     function deployOiv(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
-        // Guard the brief deploy-time window where the factory is constructed with
-        // `kpkSharesMastercopy == address(0)` so its CREATE2 address is independent of it
-        // (see constructor NatSpec). Once `setKpkSharesMastercopy` has wired the mastercopy the
-        // setter's non-zero check prevents this from ever reverting again.
-        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
-        // Fail before spending ~7M gas on Safes, modifiers, impl and proxy only to revert inside
-        // `_deploySharesProxy` on an unwired deployer. `_deployAndWireStack` performs the same check
-        // for the exec timelock at the point it needs it, which is early enough.
-        // BOTH timelocks, not just the shares one. With an exec-only timelock and no deployer
-        // wired, this guard used to pass and the revert came later from `_deployAndWireStack` —
-        // after the whole five-contract stack had been deployed, burning exactly the gas the
-        // fail-fast exists to save.
-        if (
-            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
-        ) {
-            revert TimelockDeployerNotSet();
-        }
-
+        // No "is the mastercopy wired / is the deployer wired" fail-fast here any more, and its
+        // absence is the point. Both are constructor-MANDATORY — non-zero and codeful — with no
+        // setters, so a factory in which either is unset cannot be constructed and those guards
+        // could not fire. Keeping unreachable reverts is worse than removing them: they bought
+        // nothing and they described a lifecycle (construct-then-wire) that no longer exists.
         _validateOivConfig(config);
 
         // Reserve the registry ID before any external calls (CEI). Combined with `nonReentrant`,
@@ -907,10 +869,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      directly, and grant the approvals first either way — the proxy address is predictable
     ///      beforehand, so there is no window that requires racing.
     function deployShares(OivConfig calldata config) external nonReentrant returns (OivInstance memory instance) {
-        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
-        if (
-            (config.sharesTimelock.minDelay != 0 || config.execTimelock.minDelay != 0) && timelockDeployer == address(0)
-        ) revert TimelockDeployerNotSet();
         _validateOivConfig(config);
 
         StackInstance memory stack =
@@ -1100,8 +1058,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         inst = _predictStack(config.managerSafe.owners, config.managerSafe.threshold, config.salt, caller);
 
         if (config.execTimelock.minDelay != 0) {
-            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
-                .predictExecTimelock(inst.execRolesModifier, config.execTimelock);
+            inst.execTimelock =
+                IKpkTimelockDeployer(timelockDeployer).predictExecTimelock(inst.execRolesModifier, config.execTimelock);
         }
     }
 
@@ -1137,12 +1095,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // so correcting it afterwards moves every address and orphans the stacks already landed.
         _validateOivConfig(config);
 
-        // Guarded exactly as `deployOiv` and `deployShares` are. Without it an unwired factory
-        // predicted the proxy from `impl == address(0)` and returned a plausible-looking address
-        // that no deployment can ever produce — the same class of answer the timelock guard below
-        // already refuses to give.
-        if (kpkSharesMastercopy == address(0)) revert KpkSharesMastercopyNotSet();
-
         bytes32 proxySalt = _deriveSharesSalt(config, caller);
         address predictedImpl = kpkSharesMastercopy;
         address predictedProxy = _predictSharesProxy(proxySalt, predictedImpl);
@@ -1163,12 +1115,12 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // from the same `(caller, salt)` as everything else. Prediction mirrors deployment exactly,
         // including reverting when a timelock is configured but no deployer is wired.
         if (config.execTimelock.minDelay != 0) {
-            inst.execTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
+            inst.execTimelock = IKpkTimelockDeployer(timelockDeployer)
                 .predictExecTimelock(stack.execRolesModifier, config.execTimelock);
         }
         if (config.sharesTimelock.minDelay != 0) {
-            inst.sharesTimelock = IKpkTimelockDeployer(_requireTimelockDeployer())
-                .predictSharesTimelock(predictedProxy, config.sharesTimelock);
+            inst.sharesTimelock =
+                IKpkTimelockDeployer(timelockDeployer).predictSharesTimelock(predictedProxy, config.sharesTimelock);
         }
     }
 
@@ -1228,21 +1180,11 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             return address(0);
         }
 
-        address predicted =
-            IKpkTimelockDeployer(_requireTimelockDeployer()).predictExecTimelock(execRolesModifier, params);
-        if (!IKpkTimelockDeployer(_requireTimelockDeployer()).isExecTimelocked(execRolesModifier, predicted)) {
+        address predicted = IKpkTimelockDeployer(timelockDeployer).predictExecTimelock(execRolesModifier, params);
+        if (!IKpkTimelockDeployer(timelockDeployer).isExecTimelocked(execRolesModifier, predicted)) {
             revert TimelockMismatch(predicted);
         }
         return predicted;
-    }
-
-    /// @dev Returns `timelockDeployer`, reverting if it has not been wired. Mirrors the
-    ///      `KpkSharesMastercopyNotSet` guard: the factory may be constructed with a zero deployer so
-    ///      its CREATE2 address does not depend on it, and only deployments that actually configure a
-    ///      timelock require it to have been set since.
-    function _requireTimelockDeployer() internal view returns (address deployer) {
-        deployer = timelockDeployer;
-        if (deployer == address(0)) revert TimelockDeployerNotSet();
     }
 
     /// @dev Computes the CREATE2 address `_deploySharesProxy` will produce for the ERC-1967 proxy.
@@ -1433,8 +1375,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address execTimelock;
         address execOwner = config.execRolesMod.finalOwner;
         if (config.execTimelock.minDelay != 0) {
-            execTimelock =
-                IKpkTimelockDeployer(_requireTimelockDeployer()).deployExecTimelock(execMod, config.execTimelock);
+            execTimelock = IKpkTimelockDeployer(timelockDeployer).deployExecTimelock(execMod, config.execTimelock);
             execOwner = execTimelock;
         }
 
@@ -1830,7 +1771,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         // Leaving `admin` with DEFAULT_ADMIN_ROLE would keep a delay-free path to `upgradeToAndCall`
         // and every fee setter, which is precisely what the timelock exists to close.
         if (timelockParams.minDelay != 0) {
-            timelock = IKpkTimelockDeployer(_requireTimelockDeployer()).deploySharesTimelock(proxy, timelockParams);
+            timelock = IKpkTimelockDeployer(timelockDeployer).deploySharesTimelock(proxy, timelockParams);
             shares.grantRole(DEFAULT_ADMIN_ROLE, timelock);
         } else {
             shares.grantRole(DEFAULT_ADMIN_ROLE, finalAdmin);

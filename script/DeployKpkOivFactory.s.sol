@@ -15,8 +15,8 @@ import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 ///         needs a chain id and CCIP router this entry point does not take.
 ///
 ///         It used to try anyway. Until this revision the body still ran `vm.startBroadcast()`,
-///         `_ensureEmpty()`, `_ensureMultiSendUnwrapper()`, two CREATE2 deployments,
-///         `setKpkSharesMastercopy` and `transferOwnership` — while the header above already
+///         `_ensureEmpty()`, `_ensureMultiSendUnwrapper()`, two CREATE2 deployments, a
+///         since-removed `setKpkSharesMastercopy` and `transferOwnership` — while the header above already
 ///         described it as a verifier invoked without `--broadcast`. Run as documented, those
 ///         executed in simulation only, so the script printed `[OK] KpkOivFactory deployed at …`
 ///         and `[OK] factory.kpkSharesMastercopy set` for state that never reached the chain. A
@@ -76,8 +76,11 @@ contract DeployKpkOivFactory is OivChainDeploy {
         console.log("[OK]   MultiSend + unwrapper canonical");
 
         // The wiring that this script historically failed to perform, and the reason it must never
-        // claim a chain is ready: without it every timelocked fund reverts `TimelockDeployerNotSet`,
-        // and in a CCIP fan-out the destination reverts with the source-chain fee already spent.
+        // claim a chain is ready. The factory now takes `timelockDeployer` as a mandatory constructor
+        // argument, so it can no longer be unset — this check has shifted from "is it wired" to "is it
+        // wired to the address THIS generation predicts", which a stale deployment of either contract
+        // still gets wrong. In a CCIP fan-out that mismatch reverts on the destination with the
+        // source-chain fee already spent.
         require(
             factory.timelockDeployer() == _predictTimelockDeployer(),
             "timelockDeployer is unset or not the canonical one for this generation"
