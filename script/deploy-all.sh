@@ -99,6 +99,15 @@ native fees). Substitute your origin for 'ethereum' below; there is no designate
      skips shares chains deliberately, because a stack landing on one takes the addresses its own
      shares deployment needs.
 
+  ⚠ LANES ARE DIRECTIONAL — SIZE FROM THE CHAIN, NOT FROM THIS LIST. The registry qualifies each
+     chain by a live lane FROM ETHEREUM and holds no pairwise data, so it cannot tell you what your
+     origin can reach. The orchestrator can, because its router knows:
+       cast call <ORCHESTRATOR> "supportedChainIds()(uint256[])" --rpc-url <origin>
+     That returns this origin's real destination set. The no-array `deployEverywhere(config,gasLimit)`
+     already filters to it, so the sugar is safe from any origin; an EXPLICIT list containing a chain
+     your origin cannot reach reverts `LaneNotSupported(chainId,selector)` — from the quote as well as
+     the dispatch, so you find out before spending a fee.
+
   ⚠ THE LIST ABOVE IS FUND-AGNOSTIC. It is every wired, non-excluded destination — this script does
      not read your fund config, so it cannot remove the two kinds of chain that WILL fail:
        * your ORIGIN chain (you are dispatching FROM it), and

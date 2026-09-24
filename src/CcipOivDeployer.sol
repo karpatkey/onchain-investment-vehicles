@@ -272,6 +272,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      superseded admin — irreversibly, since it would then be the only holder. See
     ///      `promoteShares`.
     error PromotionWouldRearmTheBirthAdmin(address birthAdmin, address liveOwner);
+    /// @dev Thrown when an explicitly named destination is a chain this orchestrator knows but whose
+    ///      LANE FROM HERE the local CCIP router does not support. CCIP lanes are directional, so a
+    ///      selector being in the baked registry says nothing about reaching it from this chain. See
+    ///      `supportedChainIds`.
+    error LaneNotSupported(uint256 chainId, uint64 selector);
 
     /// @notice Thrown by `ccipReceive` when an inbound stack targets a chain this fund's topology
     ///         reserves for shares — the receiver-side half of the same guard.
@@ -464,6 +469,45 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         removal). The local chain, if present, is skipped at fan-out time.
     function getChainIds() external view returns (uint256[] memory) {
         return _chainIds;
+    }
+
+    /// @dev Is there a CCIP lane from THIS chain to `selector`? Asked of the local router, which is the
+    ///      only thing that actually knows.
+    ///
+    ///      This closes an assumption the baked registry cannot justify. `_seedKnownChains` bakes all 19
+    ///      selectors into every orchestrator, and `script/ccip-networks.json` — where those came from —
+    ///      qualifies each chain by a live lane FROM ETHEREUM (its one lane-ish field is a top-level
+    ///      `mainnetSourceChainSelector`). It carries no pairwise data at all. Since lanes are
+    ///      DIRECTIONAL, "Ethereum can reach Sonic" does not imply "Base can reach Sonic", and the
+    ///      permissionless any-origin fan-out this contract now allows was resting on exactly that
+    ///      inference. Nothing needed an off-chain 19x18 lane matrix: the router answers per origin, at
+    ///      call time, for free.
+    ///
+    ///      `router == address(0)` returns true so an unconfigured orchestrator still fails with
+    ///      `NotConfigured` from `_price` rather than reverting inside a call to the zero address.
+    function _laneSupported(uint64 selector) internal view returns (bool) {
+        if (router == address(0)) return true;
+        return IRouterClient(router).isChainSupported(selector);
+    }
+
+    /// @notice The subset of `getChainIds()` this chain can actually CCIP-message right now, excluding
+    ///         the local chain. This is the honest destination set for a fan-out originating here, and
+    ///         it is what the no-array `deployEverywhere` uses.
+    /// @dev    Per-origin by construction: the same call on two different chains can return different
+    ///         sets, which is the whole point. Operators should size a fan-out from THIS rather than
+    ///         from `getChainIds()`.
+    function supportedChainIds() external view returns (uint256[] memory ids) {
+        uint256 n = _chainIds.length;
+        uint256 count;
+        for (uint256 i = 0; i < n; i++) {
+            if (_chainIds[i] != block.chainid && _laneSupported(chainSelectorOf[_chainIds[i]])) count++;
+        }
+        ids = new uint256[](count);
+        uint256 j;
+        for (uint256 i = 0; i < n; i++) {
+            if (_chainIds[i] == block.chainid || !_laneSupported(chainSelectorOf[_chainIds[i]])) continue;
+            ids[j++] = _chainIds[i];
+        }
     }
 
     /// @notice Count of configured destination chain ids.
@@ -1420,18 +1464,29 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         }
     }
 
-    /// @dev Selectors for every configured chain id EXCEPT the local chain — so an all-chains fan-out
-    ///      never tries to CCIP-message its own chain (which the router would reject). Reverts
-    ///      `NoDestinations` if no remote chain is configured.
-    /// @dev Every wired chain except the local one AND every shares chain. Shares chains are skipped
-    ///      silently here — in the all-chains path their exclusion is the intended behaviour, not a
-    ///      caller mistake. A stack landing on one would take the addresses its `deployOiv` needs.
+    /// @dev Every wired chain except the local one, every shares chain, and every chain this one has no
+    ///      CCIP lane to. All three are skipped SILENTLY, because in the all-chains path none of them is
+    ///      a caller mistake: messaging your own chain is rejected by the router, a stack landing on a
+    ///      shares chain would take the addresses that chain's `deployOiv` needs, and an unsupported
+    ///      lane is a property of the network rather than of the config. Reverts `NoDestinations` if
+    ///      nothing is left.
+    ///
+    ///      The lane filter is what makes this overload's promise true from a NON-ETHEREUM origin. The
+    ///      baked registry qualifies destinations from Ethereum only (see `_laneSupported`), so without
+    ///      it "fan out to all configured chains" reverted inside `router.getFee` on the first pair the
+    ///      local router does not serve. An explicitly named unsupported destination still reverts —
+    ///      `_resolveStackSelectors` treats that as the caller error it is.
     function _stackSelectors(SharesChain[] memory sharesChains) internal view returns (uint64[] memory selectors) {
         uint256 n = _chainIds.length;
         uint256 count;
         for (uint256 i = 0; i < n; i++) {
             uint256 cid = _chainIds[i];
-            if (cid != block.chainid && _assetFor(sharesChains, cid) == address(0)) count++;
+            if (
+                cid != block.chainid && _assetFor(sharesChains, cid) == address(0)
+                    && _laneSupported(chainSelectorOf[cid])
+            ) {
+                count++;
+            }
         }
         if (count == 0) revert NoDestinations();
         selectors = new uint64[](count);
@@ -1439,7 +1494,9 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         for (uint256 i = 0; i < n; i++) {
             uint256 cid = _chainIds[i];
             if (cid == block.chainid || _assetFor(sharesChains, cid) != address(0)) continue;
-            selectors[j++] = chainSelectorOf[cid];
+            uint64 sel = chainSelectorOf[cid];
+            if (!_laneSupported(sel)) continue;
+            selectors[j++] = sel;
         }
     }
 
@@ -1475,6 +1532,12 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
             if (chainIds[i] == block.chainid) continue;
             uint64 sel = chainSelectorOf[chainIds[i]];
             if (sel == 0) revert UnknownChain(chainIds[i]);
+            // Named, not skipped, and distinct from `UnknownChain`: the orchestrator DOES know this
+            // chain, but the local router serves no lane to it. Without this the failure surfaced as an
+            // opaque revert from inside `router.getFee`, which reads like a broken quote rather than an
+            // unreachable destination — and it surfaced identically from `quoteDeployEverywhere`, so an
+            // operator could not tell the two apart before committing fees.
+            if (!_laneSupported(sel)) revert LaneNotSupported(chainIds[i], sel);
             selectors[j++] = sel;
         }
     }

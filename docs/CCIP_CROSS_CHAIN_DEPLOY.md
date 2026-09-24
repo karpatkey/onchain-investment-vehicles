@@ -161,11 +161,16 @@ correct, and is not what "deploy everywhere from any chain" sounds like.
   CCIP caps destination execution at 3M, and that cap was **exact** on 10 of the 20 lanes measured
   (gnosis, polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain, katana), verified against
   the live router: `getFee` reverts above it.
-  **Read that list with two caveats, both of which this branch introduced.** It was measured
-  **Ethereum-origin only**, and CCIP lanes are DIRECTIONAL — so it does not establish the cap for a
-  fan-out from any of the other origins this branch now allows. And it predates excluding `bob` and
-  `katana`, which are in the list but not in the baked 19-chain set. Re-measure per origin/destination
-  pair before relying on "pass 3,000,000" from a non-Ethereum origin. Unspent gas is **not**
+  **Read that list with two caveats.** It was measured **Ethereum-origin only**, and CCIP lanes are
+  DIRECTIONAL — so it does not establish the cap for a fan-out from another origin. And it predates
+  excluding `bob` and `katana`, which appear in the list but not in the baked 19-chain set.
+
+  **Reachability is no longer assumed, only the gas figures are.** The orchestrator asks its own router
+  whether a lane exists (`supportedChainIds()`, `IRouterClient.isChainSupported`), so an origin that
+  cannot reach a destination now says so by name — `LaneNotSupported(chainId, selector)` from the quote
+  as well as the dispatch — and the no-array `deployEverywhere` filters unreachable chains out instead
+  of reverting inside `getFee`. What remains origin-specific is the 3M **gas** measurement above: still
+  re-measure before relying on "pass 3,000,000" from a non-Ethereum origin. Unspent gas is **not**
   refunded. The timelock is an EIP-1167 clone rather than a full `TimelockController` deployment
   precisely so a timelocked stack stays inside that ceiling; deployed outright it cost ~1.45M more
   and put the call over the cap on those 10 chains.

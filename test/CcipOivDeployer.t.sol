@@ -1133,6 +1133,93 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
     }
 
+    // ── Directional CCIP lanes (per-origin reachability) ───────────────────────
+
+    /// @notice The registry bakes all 19 selectors into every orchestrator, but it was built from
+    ///         `script/ccip-networks.json`, which qualifies each chain by a live lane FROM ETHEREUM and
+    ///         carries no pairwise data at all. CCIP lanes are DIRECTIONAL, so "Ethereum reaches Sonic"
+    ///         does not imply "Base reaches Sonic" — and the any-origin fan-out this branch allows was
+    ///         resting on exactly that inference. `supportedChainIds` asks the local router instead.
+    function test_supportedChainIds_excludesALaneTheLocalRouterDoesNotServe() public {
+        uint256[] memory all = orchestrator.getChainIds();
+        uint256[] memory before = orchestrator.supportedChainIds();
+        assertEq(before.length, all.length - 1, "baseline: everything except the local chain");
+
+        router.setLaneUnsupported(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), true);
+
+        uint256[] memory after_ = orchestrator.supportedChainIds();
+        assertEq(after_.length, before.length - 1, "the unreachable chain drops out");
+        for (uint256 i = 0; i < after_.length; i++) {
+            assertTrue(after_[i] != ARBITRUM_CHAIN_ID, "and it is specifically Arbitrum that is gone");
+            assertTrue(after_[i] != block.chainid, "the local chain is never a destination");
+        }
+    }
+
+    /// @notice The no-array fan-out must do what its name says from ANY origin. Before the lane filter
+    ///         it reverted inside `router.getFee` on the first pair the local router does not serve, so
+    ///         a single missing lane made the whole convenience overload unusable.
+    function test_deployEverywhere_noArray_skipsAnUnservedLaneAndStillFansOut() public {
+        router.setLaneUnsupported(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), true);
+
+        // Counted INDEPENDENTLY of `supportedChainIds`, which is the other half of this change. Deriving
+        // the expectation from it made this test vacuous: with the filter removed, both sides moved
+        // together and it still passed. The registry minus the local chain minus the one unserved lane
+        // is an arithmetic fact about the fixture, not a restatement of the code under test.
+        uint256 expected = orchestrator.getChainIds().length - 2;
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: expected * FEE}(oivConfig, GAS_LIMIT);
+
+        assertEq(ids.length, expected, "one message per REACHABLE destination");
+        assertEq(router.sentCount(), expected, "and the router saw exactly those");
+    }
+
+    /// @notice An EXPLICITLY named unreachable destination is a caller error, so it reverts with its own
+    ///         error rather than being skipped. `UnknownChain` would be wrong — the orchestrator knows
+    ///         this chain perfectly well; there is simply no lane to it from here.
+    function test_dispatchTo_revertsLaneNotSupportedForAnExplicitUnreachableChain() public {
+        uint64 sel = orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID);
+        router.setLaneUnsupported(sel, true);
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.LaneNotSupported.selector, ARBITRUM_CHAIN_ID, sel));
+        orchestrator.dispatchTo{value: FEE}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev And the QUOTE reverts the same way, which is the half that protects money: an operator who
+    ///      cannot get a quote never sends. Previously both the quote and the dispatch failed with the
+    ///      same opaque revert from inside `getFee`, so the two were indistinguishable.
+    function test_quoteDeployEverywhere_revertsLaneNotSupportedBeforeAnyFeeIsSpent() public {
+        uint64 sel = orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID);
+        router.setLaneUnsupported(sel, true);
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.LaneNotSupported.selector, ARBITRUM_CHAIN_ID, sel));
+        orchestrator.quoteDeployEverywhere(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev The negative control that keeps the filter honest: with every lane served, the supported set
+    ///      is the full registry minus the local chain and nothing about the fan-out changes. Without
+    ///      this, a filter that dropped everything would pass the tests above.
+    function test_supportedChainIds_isTheWholeRegistryWhenEveryLaneIsServed() public view {
+        uint256[] memory all = orchestrator.getChainIds();
+        uint256[] memory supported = orchestrator.supportedChainIds();
+        assertEq(supported.length, all.length - 1, "only the local chain is excluded");
+    }
+
+    /// @dev And if NOTHING is reachable, the all-chains path reports `NoDestinations` rather than
+    ///      sending zero messages and claiming success.
+    function test_deployEverywhere_noArray_revertsNoDestinationsWhenNoLaneIsServed() public {
+        uint256[] memory all = orchestrator.getChainIds();
+        for (uint256 i = 0; i < all.length; i++) {
+            router.setLaneUnsupported(orchestrator.chainSelectorOf(all[i]), true);
+        }
+        vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
+        orchestrator.deployEverywhere{value: FEE}(oivConfig, GAS_LIMIT);
+    }
+
     // ── Inert-but-hashed fields ────────────────────────────────────────────────
 
     /// @notice Two configs that deploy a BYTE-IDENTICAL fund must land at the same addresses.
