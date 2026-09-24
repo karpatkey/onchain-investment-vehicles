@@ -54,7 +54,7 @@ clean-clone warning further down).
 | `KpkOivFactory` | `0x5f078cE56EC147cbAeb093F3d8E1cc1f465fFA26` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
-| `CcipOivDeployer` (orchestrator) | `0x44ed1Ee829cE7ecBE84C40dD40EB6b8a28Cdb43D` |
+| `CcipOivDeployer` (orchestrator) | `0x24c376D57FB861D42e0225592884d81AF867597e` |
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 

@@ -1097,7 +1097,7 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///      use this derived salt, so cross-chain stack addresses still match.
     function _effectiveConfig(KpkOivFactory.OivConfig calldata config, SharesChain[] memory sharesChains)
         internal
-        pure
+        view
         returns (KpkOivFactory.OivConfig memory eff)
     {
         eff = config;
@@ -1184,7 +1184,28 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // unread, so leaving them zeroed changes nothing that is deployed — and leaving them zeroed
         // is in fact the stronger form, since it guarantees the deployed config matches the hashed
         // one. The asset cannot be treated that way; it is the one field the topology varies.
-        eff.sharesParams.asset = config.sharesParams.asset;
+        //
+        // ON A STACK-ONLY ORIGIN, restore a DECLARED chain's asset instead of the local one, because
+        // the local one is a fallback this fund never uses. `OivConfigReader._assetForThisChain`
+        // resolves it from `.oiv.sharesParams.asset` when this chain has no override — the mainnet
+        // token, by the documented convention — and `predictOivAddresses` then runs
+        // `_validateOivConfig`, whose `DuplicateAsset` check compares `additionalAssets` against it. So
+        // a perfectly legal fund (shares on Gnosis in DAI, `additionalAssets = [USDC]`, default asset
+        // USDC) was REFUSED when fanned out from mainnet and accepted from any other origin: exactly
+        // the origin dependence this contract exists to remove. Fails safe and costs no fee, but it
+        // reads as a config error that is not one.
+        //
+        // Substituting cannot mask a real collision, which is what makes this safe rather than merely
+        // convenient: the loop above already rejects `additionalAssets` matching ANY declared chain's
+        // asset, so if `sharesChains[0].asset` collides we have already reverted. `sharesChains` is
+        // never empty (`_validateSharesChains`), and the substitution never travels — `oivToStackConfig`
+        // drops `sharesParams`, so the CCIP payload is unaffected — nor does it move an address, since
+        // the salt was hashed with this field zeroed and the proxy address does not depend on it.
+        //
+        // `promoteShares` is the one caller where an UNDECLARED local chain does host shares, so it
+        // overrides this with the real asset immediately after calling here.
+        address localAsset = _assetFor(sharesChains, block.chainid);
+        eff.sharesParams.asset = localAsset == address(0) ? sharesChains[0].asset : config.sharesParams.asset;
     }
 
     /// @notice Adds this fund's shares token to a chain its topology does NOT declare, without moving
@@ -1261,6 +1282,12 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         }
 
         KpkOivFactory.OivConfig memory eff = _effectiveConfig(config, sharesChains);
+        // THIS chain is about to host shares even though the topology does not declare it — that is what
+        // promotion IS — so the base asset it carries is real, not the stack-only fallback
+        // `_effectiveConfig` substitutes. Restored here rather than special-cased there, because this is
+        // the only caller for which an undeclared local chain is a shares chain. The salt is already
+        // computed and hashed this field as zero, so nothing moves.
+        eff.sharesParams.asset = config.sharesParams.asset;
 
         // The approval must already exist, because promotion cannot grant it and the intermediate
         // state is NOT harmless: `requestSubscription` has no admin, operator or pause gate and pulls

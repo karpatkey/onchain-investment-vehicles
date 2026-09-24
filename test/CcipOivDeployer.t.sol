@@ -1133,6 +1133,78 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
     }
 
+    /// @notice A legal fund was REFUSED depending on which chain you fanned out from. On a stack-only
+    ///         origin, `sharesParams.asset` holds whatever `OivConfigReader._assetForThisChain`
+    ///         resolved locally — by the documented convention the mainnet token, since this chain has
+    ///         no override — and `predictOivAddresses` runs `_validateOivConfig`, whose `DuplicateAsset`
+    ///         check compares `additionalAssets` against it. So a fund with shares on Gnosis in DAI and
+    ///         `additionalAssets = [USDC]` reverted from mainnet and worked from anywhere else: exactly
+    ///         the origin dependence this contract exists to remove.
+    /// @dev    Fails safe and spends no fee, which is why it was recorded rather than rushed. Fixed by
+    ///         restoring a DECLARED chain's asset on a stack-only origin instead of the local fallback.
+    function test_dispatchTo_doesNotRefuseAnAdditionalAssetMatchingTheLocalFallback() public {
+        // The additional asset IS this chain's local base asset, and is NOT the declared Gnosis asset.
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: oivConfig.sharesParams.asset, canDeposit: true, canRedeem: false});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        assertTrue(topology[0].asset != oivConfig.sharesParams.asset, "precondition: the declared asset differs");
+        assertTrue(_assetForTest(topology, block.chainid) == address(0), "precondition: this origin is stack-only");
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        // Previously reverted DuplicateAsset here, before any lane fee was priced.
+        orchestrator.quoteDeployEverywhere(oivConfig, topology, dests, GAS_LIMIT);
+        orchestrator.dispatchTo{value: FEE}(oivConfig, topology, dests, GAS_LIMIT);
+        assertEq(router.sentCount(), 1, "the fan-out proceeds from a stack-only origin");
+    }
+
+    /// @dev The negative control, and the reason the substitution is safe rather than merely convenient:
+    ///      an additional asset that collides with a DECLARED chain's asset is still refused. That check
+    ///      lives in `_effectiveConfig` and runs before the substitution, so a real collision can never
+    ///      be masked by it.
+    function test_dispatchTo_stillRefusesAnAdditionalAssetMatchingADeclaredChainsAsset() public {
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: GNOSIS_ASSET, canDeposit: true, canRedeem: false});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.dispatchTo{value: FEE}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev And promotion is unaffected: on the promoted chain the supplied base asset is REAL, not a
+    ///      fallback, so `promoteShares` overrides the substitution. Without that override the promoted
+    ///      fund would be created against another chain's token.
+    function test_promoteShares_usesTheSuppliedAssetNotTheSubstitutedOne() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertTrue(
+            KpkShares(promoted.kpkSharesProxy).isApprovedAsset(oivConfig.sharesParams.asset),
+            "the promoted fund holds THIS chain's asset"
+        );
+        assertFalse(
+            KpkShares(promoted.kpkSharesProxy).isApprovedAsset(GNOSIS_ASSET),
+            "not the declared chain's asset that _effectiveConfig substitutes for predictions"
+        );
+    }
+
+    function _assetForTest(CcipOivDeployer.SharesChain[] memory t, uint256 cid) internal pure returns (address) {
+        for (uint256 i = 0; i < t.length; i++) {
+            if (t[i].chainId == cid) return t[i].asset;
+        }
+        return address(0);
+    }
+
     // ── Directional CCIP lanes (per-origin reachability) ───────────────────────
 
     /// @notice The registry bakes all 19 selectors into every orchestrator, but it was built from
