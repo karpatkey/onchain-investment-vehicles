@@ -1213,14 +1213,26 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         canonical address on EVERY stack chain (`deployStack` deploys it), which covers funds
     ///         whose `admin` is a contract that only exists on one chain.
     ///
-    ///         ROTATION, on this path only: `config.admin` is salt-bound here, and
-    ///         `KpkOivFactory._recordedExecTimelock` checks CURRENT exec governance rather than birth
-    ///         governance. So after exec ownership is rotated away from `admin`, a promotion that
-    ///         passes the ORIGINAL config no longer matches the live owner, and one that passes the
-    ///         new owner as `admin` derives a different salt and therefore different addresses.
-    ///         Promotion is blocked until ownership is rotated BACK — recoverable, but it is a live
-    ///         operational constraint rather than a theoretical one, and it has no equivalent on the
-    ///         direct `KpkOivFactory.deployShares` path, where `admin` is not part of any address.
+    ///         ROTATION. An earlier version of this paragraph said promotion is "blocked until
+    ///         ownership is rotated BACK" after any rotation away from `admin`, and that it "has no
+    ///         equivalent on the direct `deployShares` path, where `admin` is not part of any address".
+    ///         Both statements are now false, the second because `admin` was subsequently bound into the
+    ///         factory's shares commitment — so it is part of every shares address on both paths. The
+    ///         accurate position, in the order a rotation meets it:
+    ///
+    ///           - A rotated owner CAN promote. Authorization is the exec modifier's live owner, and
+    ///             `KpkOivFactory._recordedExecTimelock` tolerates an owner that is not `admin`.
+    ///             pinned: test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything
+    ///           - Unless the fund carries no `sharesTimelock`, in which case it is refused
+    ///             `PromotionWouldRearmTheBirthAdmin` — not because the rotation broke addressing, but
+    ///             because the promoted token's `DEFAULT_ADMIN_ROLE` would go to the replaced admin.
+    ///             pinned: test_promoteShares_refusesAPromotionThatWouldRearmTheBirthAdmin
+    ///           - Rotating to a hand-deployed kit timelock is fine and is RECORDED, not refused; that
+    ///             case used to be the one rotation that genuinely bricked promotion for ever.
+    ///             pinned: test_deployShares_recordsAHandDeployedExecTimelockInsteadOfReverting
+    ///           - What has never worked and still does not: restating `admin` as the new owner. It is
+    ///             salt-bound on this path AND in the factory's shares commitment, so it moves every
+    ///             address. Pass the ORIGINAL `admin`; the live owner is read from the chain.
     /// @param  config       Fund parameters, with THIS chain's base asset and the original salt.
     /// @param  sharesChains The fund's ORIGINAL topology — the same array used at birth.
     /// @return instance     The fund's addresses on this chain.
