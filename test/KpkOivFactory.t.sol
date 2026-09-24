@@ -1055,6 +1055,51 @@ contract KpkOivFactoryTest is OivTestConstants {
         assertGt(address(ok).code.length, 0, "the unmodified infrastructure set constructs");
     }
 
+    /// @notice `KpkTimelockDeployer.deployExecTimelock`'s NatSpec advertises hand-deploying a timelock
+    ///         and transferring the exec modifier to it as a SUPPORTED path. Doing it used to make
+    ///         every later `deployShares` on that chain revert `TimelockMismatch` for ever, and on the
+    ///         orchestrator path there was no escape at all, because `admin` is salt-bound there and so
+    ///         `expectedOwner` could not be restated.
+    ///
+    ///         The branch now records the live timelock instead. That is strictly better evidenced than
+    ///         either alternative it replaces: `liveOwner` is read off `owner()` so it provably owns the
+    ///         modifier, and `_isTimelockClone` has established it is a clone of this chain's mastercopy
+    ///         — so `address(0)`, which would read as "this fund has no delay", is the one answer that
+    ///         is definitely wrong.
+    function test_deployShares_recordsAHandDeployedExecTimelockInsteadOfReverting() public {
+        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(oivConfig);
+        KpkOivFactory.StackInstance memory st = factory.deployStack(stackCfg);
+        assertEq(st.execTimelock, address(0), "precondition: deployed with no timelock");
+
+        // Hand-deploy a kit timelock for this fund's exec modifier and hand the modifier to it.
+        KpkTimelockDeployer dep = KpkTimelockDeployer(factory.timelockDeployer());
+        address handDeployed = dep.deployExecTimelock(st.execRolesModifier, _timelockParams(2 days));
+        vm.prank(oivConfig.admin);
+        IRoles(st.execRolesModifier).transferOwnership(handDeployed);
+        assertEq(IRoles(st.execRolesModifier).owner(), handDeployed, "precondition: the timelock governs");
+
+        // `execTimelock.minDelay` is still 0 in the config — the fund did not know about this timelock.
+        KpkOivFactory.OivInstance memory inst = factory.deployShares(oivConfig);
+
+        assertEq(inst.execTimelock, handDeployed, "the live timelock is recorded, not address(0) and not a revert");
+    }
+
+    /// @dev The negative control: an ordinary rotation to a non-timelock owner still records
+    ///      `address(0)`, because the fund genuinely has no timelock from this kit. Without this, the
+    ///      test above passes just as well if the branch returned `liveOwner` unconditionally — which
+    ///      would report an EOA as a fund's timelock.
+    function test_deployShares_recordsNoTimelockAfterAnOrdinaryRotation() public {
+        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(oivConfig);
+        KpkOivFactory.StackInstance memory st = factory.deployStack(stackCfg);
+
+        address plainOwner = makeAddr("plainNewGovernance");
+        vm.prank(oivConfig.admin);
+        IRoles(st.execRolesModifier).transferOwnership(plainOwner);
+
+        KpkOivFactory.OivInstance memory inst = factory.deployShares(oivConfig);
+        assertEq(inst.execTimelock, address(0), "a non-timelock owner means the fund has no kit timelock");
+    }
+
     // ── Manager owner canonicalisation ─────────────────────────────────────────
 
     /// @notice `managerSafe.owners` is address-bearing: `createProxyWithNonce` salts on
@@ -1239,21 +1284,58 @@ contract KpkOivFactoryTest is OivTestConstants {
         );
     }
 
-    /// @notice `config.admin` stays out of the commitment so that rotating exec-modifier ownership
-    ///         after deployment does not strand the fund: `_recordedExecTimelock` checks CURRENT
-    ///         governance, so the rotated owner must be passable as `admin` and still reach the
-    ///         canonical proxy. Binding `admin` would have made a rotation permanently unpromotable.
-    function test_deriveSharesSalt_adminIsExcludedSoRotationStillReachesTheCanonicalProxy() public {
+    /// @notice `config.admin` IS part of the commitment, and this test replaced one asserting the exact
+    ///         opposite. The exclusion was justified as preserving a rotation convenience; what it
+    ///         actually preserved was the ability to substitute the most powerful field in the struct.
+    function test_deriveSharesSalt_adminMovesTheProxy() public {
         address canonical = factory.predictOivAddresses(oivConfig, address(this)).kpkSharesProxy;
 
-        KpkOivFactory.OivConfig memory rotated = oivConfig;
-        rotated.admin = makeAddr("rotatedAdmin");
+        KpkOivFactory.OivConfig memory other = oivConfig;
+        other.admin = makeAddr("differentAdmin");
 
-        assertEq(
-            factory.predictOivAddresses(rotated, address(this)).kpkSharesProxy,
-            canonical,
-            "admin must stay out of the commitment"
+        assertTrue(
+            factory.predictOivAddresses(other, address(this)).kpkSharesProxy != canonical,
+            "admin must be bound - it decides who holds DEFAULT_ADMIN_ROLE on the shares token"
         );
+    }
+
+    /// @notice The regression test for a capture two independent review gates found and a PoC proved.
+    ///         `_deriveSharesSalt` bound the shares params but not `config.admin`, and
+    ///         `_recordedExecTimelock`'s zero-delay branch refuses only an owner that is a timelock
+    ///         CLONE — so the stack deployer could hand exec ownership to the honest admin, then call
+    ///         `deployShares` naming ITSELF as admin, and land at exactly the address
+    ///         `predictOivAddresses` publishes for the honest config, holding `DEFAULT_ADMIN_ROLE` —
+    ///         `upgradeToAndCall` plus every fee setter — while the honest admin held nothing and its
+    ///         own `deployShares` reverted for ever on the CREATE2 collision.
+    ///
+    ///         A strict superset of the drain the shares-half commitment was written to close, reached
+    ///         by changing one field instead of four.
+    function test_deployShares_aSubstitutedAdminCannotReachThePublishedProxy() public {
+        address honestAdmin = makeAddr("honestFundAdmin");
+
+        KpkOivFactory.OivConfig memory honest = oivConfig;
+        honest.admin = honestAdmin;
+        address published = factory.predictOivAddresses(honest, address(this)).kpkSharesProxy;
+
+        // The stack is deployed honestly and exec ownership goes to the honest admin.
+        factory.deployStack(factory.oivToStackConfig(honest));
+        KpkOivFactory.StackInstance memory st =
+            factory.predictStackAddresses(factory.oivToStackConfig(honest), address(this));
+        assertEq(IRoles(st.execRolesModifier).owner(), honestAdmin, "precondition: the honest admin governs");
+
+        // Same caller, same salt, same manager Safe — only `admin` substituted.
+        KpkOivFactory.OivConfig memory hostile = oivConfig;
+        hostile.admin = address(this);
+        address landed = factory.deployShares(hostile).kpkSharesProxy;
+
+        assertTrue(landed != published, "a substituted admin must NOT reach the fund's published proxy");
+
+        // The positive control: the honest config still reaches its published address, and the honest
+        // admin really does hold the role there. Without this, the assertion above passes just as well
+        // if `deployShares` stopped reaching any prediction.
+        KpkOivFactory.OivInstance memory ok = factory.deployShares(honest);
+        assertEq(ok.kpkSharesProxy, published, "the honest admin still lands at its published address");
+        assertTrue(KpkShares(ok.kpkSharesProxy).hasRole(bytes32(0), honestAdmin), "and holds DEFAULT_ADMIN_ROLE there");
     }
 
     function _assertMovesProxy(KpkOivFactory.OivConfig memory c, address canonical, string memory field) internal view {
@@ -2209,22 +2291,27 @@ contract KpkOivFactoryTest is OivTestConstants {
     ///         from `admin` — so anything else owning it means the stack is timelocked, and writing
     ///         `address(0)` would put "this fund has no delay" into the append-only deploy log that
     ///         `registerFund`'s NatSpec tells on-chain consumers to trust over the registry.
-    function test_deployShares_refusesToRecordNoTimelockForATimelockedStack() public {
+    /// @notice Renamed from `test_deployShares_refusesToRecordNoTimelockForATimelockedStack`. The
+    ///         INVARIANT is unchanged and is what this asserts: a fund a timelock governs must never be
+    ///         recorded as having no delay. What changed is the remedy. Reverting was a dead end — it
+    ///         permanently bricked `promoteShares` for a fund that hand-deployed a timelock exactly as
+    ///         `KpkTimelockDeployer.deployExecTimelock` documents as supported, with no escape on the
+    ///         orchestrator path because `admin` is salt-bound there. Recording the real timelock is
+    ///         better evidenced than either alternative: it was read off `owner()`, and
+    ///         `_isTimelockClone` has confirmed it is a clone of this chain's mastercopy.
+    function test_deployShares_recordsTheRealTimelockForAStackClaimingNone() public {
         KpkOivFactory.StackConfig memory stackConfig = factory.oivToStackConfig(oivConfig);
         stackConfig.execTimelock = _timelockParams(2 days);
         KpkOivFactory.StackInstance memory st = factory.deployStack(stackConfig);
         assertTrue(st.execTimelock != address(0), "the stack really is timelocked");
 
-        // Same fund, same salt — but claiming there is no timelock.
+        // Same fund, same salt — but the config claims there is no timelock.
         KpkOivFactory.OivConfig memory cfg = oivConfig; // execTimelock.minDelay == 0
 
-        // The error now NAMES the timelock it found rather than reporting `address(0)`, because the
-        // guard no longer infers "timelocked" from `owner() != admin` — it asks whether the owner is
-        // an EIP-1167 clone of this chain's timelock mastercopy. A legitimate ownership rotation
-        // therefore stops being fatal, while this case — a stack that genuinely IS timelocked being
-        // recorded as having no delay — still reverts.
-        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.TimelockMismatch.selector, st.execTimelock));
-        factory.deployShares(cfg);
+        KpkOivFactory.OivInstance memory inst = factory.deployShares(cfg);
+
+        assertEq(inst.execTimelock, st.execTimelock, "the stack's real timelock is recorded");
+        assertTrue(inst.execTimelock != address(0), "and NOT address(0), which would read as 'no delay'");
     }
 
     /// @notice The other side of that guard, and the capability it used to destroy. `config.admin` is

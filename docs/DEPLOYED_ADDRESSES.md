@@ -51,10 +51,10 @@ clean-clone warning further down).
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0xE9f251605746084443D4A3daaED7Df2AEF2E37e5` |
+| `KpkOivFactory` | `0x5f078cE56EC147cbAeb093F3d8E1cc1f465fFA26` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
-| `CcipOivDeployer` (orchestrator) | `0x9dd5192Cb9b08b7482eF5e8d9B4Fd8288A6fE557` |
+| `CcipOivDeployer` (orchestrator) | `0xe1e066C2e64a568CD8C4E76409BBC02670F6f10e` |
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 

@@ -267,6 +267,11 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         shares token at the fund's canonical address.
     /// @param  caller The rejected caller.
     error NotFundAdmin(address caller);
+    /// @dev Thrown when exec governance has moved away from `config.admin` and the fund carries no
+    ///      shares timelock, so promoting would grant the promoted token's `DEFAULT_ADMIN_ROLE` to the
+    ///      superseded admin — irreversibly, since it would then be the only holder. See
+    ///      `promoteShares`.
+    error PromotionWouldRearmTheBirthAdmin(address birthAdmin, address liveOwner);
 
     /// @notice Thrown by `ccipReceive` when an inbound stack targets a chain this fund's topology
     ///         reserves for shares — the receiver-side half of the same guard.
@@ -1247,14 +1252,49 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         // the honest answer rather than a gap — authority over this chain is what promoting on this
         // chain requires.
         //
-        // `eff.admin` is deliberately NOT rewritten to the live owner. It reaches
+        // `eff.admin` is deliberately NOT rewritten to the live owner, for two reasons. It reaches
         // `_recordedExecTimelock` as the expected owner, and making the two equal would disarm that
         // check: a fund whose modifier is owned by a hand-deployed timelock clone while
-        // `execTimelock.minDelay` is 0 would then record `address(0)` and read as "no delay". The
-        // promoted shares token's `DEFAULT_ADMIN_ROLE` therefore still follows the fund's config, the
-        // same as on the origin chain, and is rotated by the same separate governance action.
+        // `execTimelock.minDelay` is 0 would then record `address(0)` and read as "no delay". And it is
+        // salt-bound, so restating it moves every address the fund has.
+        //
+        // An earlier version of this paragraph added that the promoted token's `DEFAULT_ADMIN_ROLE` is
+        // "rotated by the same separate governance action". That was false, and it is the reason for the
+        // refusal below: the new governance cannot rotate a role it was never granted, and the birth
+        // admin is the sole holder on the promoted chain.
         address liveOwner = IRoles(predicted.execRolesModifier).owner();
         if (msg.sender != liveOwner) revert NotFundAdmin(msg.sender);
+
+        // AND refuse the one promotion that would hand authority BACK to the governance that was
+        // replaced. `KpkOivFactory._deploySharesProxy` grants the promoted token's
+        // `DEFAULT_ADMIN_ROLE` — `upgradeToAndCall` plus every fee setter — to `eff.admin` whenever no
+        // shares timelock is configured. `eff.admin` is the BIRTH admin and cannot be restated, because
+        // it is bound into both this salt and the factory's shares commitment.
+        //
+        // So without this, the sequence that matters is: exec ownership is rotated away from `admin`
+        // BECAUSE that key was compromised, the role is rotated on the chains that already exist, and
+        // then the new governance — the only account the gate above admits — promotes to a new chain
+        // and hands the compromised key full upgrade authority over that chain's token. It cannot take
+        // it back afterwards: `grantRole` requires `DEFAULT_ADMIN_ROLE`, which only the compromised
+        // account now holds there.
+        //
+        // Refused rather than redirected, deliberately. Granting the role to `liveOwner` instead would
+        // leave the origin chain's token administered by the birth admin and the promoted chain's by
+        // someone else — two chains of one fund with different shares governance, which is the
+        // cross-chain consistency that makes promotion meaningful in the first place. With `admin`
+        // salt-bound, the shares admin IS part of the fund's identity, so a fund whose birth admin must
+        // not be trusted cannot honestly extend itself; it has to rotate exec ownership back for the
+        // promotion, or carry a `sharesTimelock`, which takes the role instead and makes the birth
+        // admin irrelevant here.
+        //
+        // `execTimelock.minDelay == 0` is part of the condition, and leaving it out was a bug in the
+        // first draft of this guard — caught by `test_promoteShares_acceptsTheTimelockThatSupersededTheAdmin`.
+        // A fund BORN with an exec timelock has `liveOwner == that timelock != admin` by design, not by
+        // rotation, and its birth admin holding the shares role is the configuration the fund chose. Only
+        // a fund born WITHOUT an exec timelock whose owner is no longer `admin` has actually been rotated.
+        if (eff.execTimelock.minDelay == 0 && liveOwner != eff.admin && eff.sharesTimelock.minDelay == 0) {
+            revert PromotionWouldRearmTheBirthAdmin(eff.admin, liveOwner);
+        }
         // MAXIMUM, not merely non-zero: `_grantApprovals` sets `type(uint256).max` on a normal
         // deployment and asserts it, so anything less here would let a promoted fund settle a few
         // redemptions and then start reverting — a slower version of the failure this prevents.

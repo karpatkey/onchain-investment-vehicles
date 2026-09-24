@@ -1175,8 +1175,19 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             // an owner that is an EIP-1167 clone of this chain's timelock mastercopy is a timelock and
             // is refused; anything else — an EOA, a Safe, new governance — is a rotation, and the fund
             // genuinely has no timelock from this kit.
+            //
+            // RECORDED, not refused. An earlier version reverted `TimelockMismatch` here, which
+            // permanently bricked `promoteShares` for a fund that did exactly what
+            // `KpkTimelockDeployer.deployExecTimelock`'s NatSpec advertises as supported: deploy a
+            // timelock by hand and transfer the exec modifier to it. `expectedOwner` is the salt-bound
+            // `admin` and cannot be restated, so there was no escape on that path. Returning the owner
+            // is both more useful and strictly better evidenced than either alternative: `liveOwner`
+            // was read straight off `IRoles(execRolesModifier).owner()`, so it provably owns the
+            // modifier, and `_isTimelockClone` has already established it is a clone of THIS chain's
+            // timelock mastercopy. So record the fund's real exec timelock rather than `address(0)`,
+            // which is the mis-reporting this branch exists to prevent in the first place.
             address liveOwner = IRoles(execRolesModifier).owner();
-            if (liveOwner != expectedOwner && _isTimelockClone(liveOwner)) revert TimelockMismatch(liveOwner);
+            if (liveOwner != expectedOwner && _isTimelockClone(liveOwner)) return liveOwner;
             return address(0);
         }
 
@@ -1447,9 +1458,25 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///        - `sharesParams.admin` / `.safe` — overwritten by `_deploySharesProxy` with `config.admin`
     ///          and the deployed Safes, so whatever a caller passes is discarded and carries no
     ///          meaning. Binding them would split a fund across chains over ignored bytes.
-    ///        - `config.admin`, `managerSafe` — `admin` deliberately stays out so that rotating exec
-    ///          ownership does not strand `promoteShares`; `managerSafe` is already bound through the
-    ///          stack addresses this proxy is checked against.
+    ///        - `managerSafe` — already bound through the stack addresses this proxy is checked against.
+    ///
+    ///      `config.admin` IS bound, and an earlier version of this list excluded it "so that rotating
+    ///      exec ownership does not strand `promoteShares`". That was wrong on both halves. It left the
+    ///      most powerful field in the struct substitutable — a PoC landed a hostile
+    ///      `DEFAULT_ADMIN_ROLE` holder at a fund's published proxy address: deploy the stack handing
+    ///      exec ownership to Bob, then call `deployShares` naming yourself as `admin`. Nothing
+    ///      objected. `_recordedExecTimelock`'s zero-delay branch refuses only an owner that is a
+    ///      timelock clone, so Bob-the-multisig passed; the address did not move because `admin` was
+    ///      excluded here; and `_deploySharesProxy` granted `DEFAULT_ADMIN_ROLE` — upgrade authority
+    ///      and every fee setter — to the caller's choice. Bob's own `deployShares` then reverted on
+    ///      the CREATE2 collision. Same class as the drain this commitment was written to close, one
+    ///      field over.
+    ///      And it did not buy what it claimed: promotion after a rotation works by passing the
+    ///      ORIGINAL `admin`, which is what `CcipOivDeployer.promoteShares` already does, and
+    ///      `_recordedExecTimelock` tolerates the rotated owner. What the exclusion actually bought was
+    ///      the ability to pass the NEW owner as `admin` and still reach the canonical address — a
+    ///      convenience, traded here for the capture above.
+    ///      pinned: test_deployShares_aSubstitutedAdminCannotReachThePublishedProxy
     ///      `additionalAssets` is included and is safe to include: the orchestrator refuses a
     ///      non-empty `additionalAssets` with more than one shares chain
     ///      (`AdditionalAssetsNeedASingleSharesChain`), so it cannot legitimately differ per chain.
@@ -1469,6 +1496,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
                 uint8(6),
                 keccak256(
                     abi.encode(
+                        config.admin,
                         p.name,
                         p.symbol,
                         p.subscriptionRequestTtl,

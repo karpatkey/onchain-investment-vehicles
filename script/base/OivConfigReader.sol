@@ -62,7 +62,7 @@ abstract contract OivConfigReader is Script {
             console.log("    direct factory path:      KpkOivFactory.deployShares(config)");
             console.log("    orchestrator, chain IN .sharesChains:  deployLocal(config, sharesChains)");
             console.log("    orchestrator, chain NOT in it:         promoteShares(config, sharesChains)");
-            console.log("    (promoteShares is additionally gated - admin or exec timelock)");
+            console.log("    (promoteShares is gated on the exec modifier's LIVE owner)");
         }
     }
 
@@ -172,9 +172,11 @@ abstract contract OivConfigReader is Script {
             vm.keyExists(json, string.concat(key, ".cancellers")),
             string.concat("config: ", key, " exists but has no cancellers - state [] explicitly to accept no veto")
         );
-        params.cancellers = vm.keyExists(json, string.concat(key, ".cancellers"))
-            ? json.readAddressArray(string.concat(key, ".cancellers"))
-            : new address[](0);
+        // Plain read, not a `keyExists` ternary: the require above already guarantees the key. Keeping
+        // the fallback read as though a missing `cancellers` were tolerated and silently defaulted to
+        // `[]` — which is exactly the misreading that require exists to prevent. `proposers` was
+        // collapsed in the same edit; this one was missed.
+        params.cancellers = json.readAddressArray(string.concat(key, ".cancellers"));
     }
 
     /// @dev The base asset for the chain this script is running on. Funds use a different stablecoin

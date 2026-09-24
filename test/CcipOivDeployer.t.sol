@@ -613,7 +613,18 @@ contract CcipOivDeployerTest is OivTestConstants {
     ///         modifier, and restating `config.admin` moves every address the fund has, because it is
     ///         salt-bound on this path. The new owner is now authorized, and the fund's identity is
     ///         untouched: the proxy still lands on the address predicted BEFORE the rotation.
+    ///         Carries a `sharesTimelock` deliberately. Without one, the promotion is now REFUSED —
+    ///         `PromotionWouldRearmTheBirthAdmin` — because the promoted token's `DEFAULT_ADMIN_ROLE`
+    ///         would go to the very admin the rotation replaced. An earlier version of this test had no
+    ///         shares timelock and asserted only the ADDRESS, never the role holder, so it passed while
+    ///         handing authority to the superseded account. Two independent review gates caught that;
+    ///         the missing assertion is why the suite did not.
     function test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything() public {
+        address[] memory sharesProposers = new address[](1);
+        sharesProposers[0] = address(0x3333);
+        oivConfig.sharesTimelock =
+            TimelockParams({minDelay: 2 days, proposers: sharesProposers, cancellers: new address[](0)});
+
         CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
         KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
         orchestrator.deployLocal(oivConfig, topology);
@@ -633,6 +644,42 @@ contract CcipOivDeployerTest is OivTestConstants {
             "rotation must not move the fund - the address was predicted before it"
         );
         assertGt(promoted.kpkSharesProxy.code.length, 0, "and the shares token really exists");
+
+        // The half the earlier version omitted: WHO holds the role. The shares timelock does, and the
+        // superseded birth admin holds nothing.
+        assertTrue(promoted.sharesTimelock != address(0), "the shares timelock was deployed");
+        assertTrue(
+            KpkShares(promoted.kpkSharesProxy).hasRole(bytes32(0), promoted.sharesTimelock),
+            "the shares timelock holds DEFAULT_ADMIN_ROLE"
+        );
+        assertFalse(
+            KpkShares(promoted.kpkSharesProxy).hasRole(bytes32(0), oivConfig.admin),
+            "and the superseded birth admin holds nothing"
+        );
+    }
+
+    /// @notice The refusal that replaces the silent hand-back. Rotate exec governance away from
+    ///         `config.admin` with no shares timelock, and promotion would grant the promoted token's
+    ///         `DEFAULT_ADMIN_ROLE` solely to the admin that was replaced — irreversibly, because
+    ///         `grantRole` then requires the role only that account holds. Refused instead.
+    /// @dev    The severity comes from WHY governance rotates: if `admin` was compromised, the new
+    ///         governance is the only account allowed to promote, and every promotion it performed
+    ///         re-armed the compromised key on a fresh chain.
+    function test_promoteShares_refusesAPromotionThatWouldRearmTheBirthAdmin() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address rotated = makeAddr("rotatedGovernanceNoTimelock");
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(rotated);
+
+        vm.prank(rotated);
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.PromotionWouldRearmTheBirthAdmin.selector, oivConfig.admin, rotated)
+        );
+        orchestrator.promoteShares(oivConfig, topology);
     }
 
     /// @dev And the superseded admin is refused on that same rotated fund. Without this, the test above

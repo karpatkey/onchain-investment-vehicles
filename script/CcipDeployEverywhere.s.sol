@@ -169,9 +169,21 @@ contract CcipDeployEverywhere is OivConfigReader {
     /// @notice Owner helper: seed the orchestrator's chainId → CCIP-selector mapping from the canonical
     ///         `script/ccip-networks.json` registry, for every wired DESTINATION chain (verdict READY /
     ///         READY-AFTER-EMPTY). Broadcasts `setChainSelectors` from PRIVATE_KEY, which must be the
-    ///         orchestrator owner. Run only on the SOURCE orchestrator (typically mainnet) — the chain
-    ///         you will call `deployEverywhere` on; sidechains resolve nothing locally (they receive a
-    ///         `StackConfig` over CCIP), so they never need this mapping.
+    ///         orchestrator owner.
+    ///
+    /// @dev    LEGACY, and REDUNDANT on any current orchestrator: the constructor bakes all 19 chains
+    ///         in, so a freshly deployed instance already knows every wired chain and needs no seeding.
+    ///         Its previous NatSpec said "run only on the SOURCE orchestrator … sidechains resolve
+    ///         nothing locally", and the mesh change made both halves false — EVERY orchestrator now
+    ///         resolves selectors locally, and must contain its OWN chain id or `onlyWiredChain` rejects
+    ///         it.
+    ///
+    ///         That is the trap if this helper is ever used against a registry that is not already
+    ///         complete: `_seedable` still requires `role == "destination"`, so it emits 18 entries and
+    ///         never chain 1. An operator would get a success log and then `UnknownChain(1)` from
+    ///         `deployEverywhere` on mainnet. Today the constructor masks it. Prefer `setChainSelector`
+    ///         for a one-off addition, and treat this as a rebuild-from-registry of the destination set
+    ///         only.
     function setChainSelectors(address orchestrator, string calldata registryPath) external {
         string memory json = vm.readFile(registryPath);
 
@@ -216,9 +228,12 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
     }
 
-    /// @dev A registry entry is seedable into the chain mapping when it is wired AND a CCIP
-    ///      destination (the source chain is deployed to locally, never via CCIP).
     /// @dev A chain is seedable only if it is wired, is a destination, AND is not marked `excluded`.
+    ///      The `destination` requirement is a LEGACY artifact of the retired source/destination split —
+    ///      a stale duplicate of this comment still described "the source chain is deployed to locally,
+    ///      never via CCIP", which the mesh change falsified. It is kept only so the seeded set matches
+    ///      what the salt-v3 rollout actually seeded (pinned by `test/SelectorSeedScope.t.sol`); see the
+    ///      warning on `setChainSelectors` for why that makes this helper unsafe to rely on now.
     ///      The exclusion check is load-bearing: `verdict` describes whether a chain COULD host the
     ///      infra, not whether it DOES. `bob` and `katana` are both `READY-AFTER-EMPTY` but have no
     ///      infra deployed (the deployer was unfunded there), so without this they get selectors and
