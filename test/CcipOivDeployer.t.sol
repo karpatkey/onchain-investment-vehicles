@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
 import {
     TimelockControllerUpgradeable
 } from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
-import {KpkShares} from "src/kpkShares.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
+import {IRoles} from "src/interfaces/IRoles.sol";
+import {TimelockParams} from "src/interfaces/IKpkTimelockDeployer.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 import {Client} from "chainlink-brownie-contracts/contracts/src/v0.8/ccip/libraries/Client.sol";
 import {MockCcipRouter} from "test/mocks/MockCcipRouter.sol";
@@ -35,6 +37,21 @@ contract CcipOivDeployerTest is OivTestConstants {
 
     // CCIP chain selectors (mainnet source, three example destinations).
     uint64 constant MAINNET_SELECTOR = 5009297550715157269;
+
+    uint256 constant GNOSIS_CHAIN_ID = 100;
+
+    /// @dev A stand-in for "the base asset on another chain" — only its address matters here.
+    address constant GNOSIS_ASSET = 0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0;
+
+    /// @dev Every wired chain is now seeded into the registry by the orchestrator's CONSTRUCTOR, so a
+    ///      fresh instance already knows all of them. Tests that used to seed 3 chains and assert
+    ///      absolute set sizes assert against this instead. `CcipNetworksSync` pins the number to the
+    ///      wired subset of `script/ccip-networks.json`, so this cannot drift silently.
+    uint256 constant BAKED_CHAINS = 19;
+
+    /// @dev Destinations reached by the no-array `deployEverywhere` — every baked chain except the
+    ///      local one, which is always skipped rather than self-sent.
+    uint256 constant BAKED_DESTINATIONS = BAKED_CHAINS - 1;
     uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
     uint64 constant BASE_SELECTOR = 15971525489660198786;
     uint64 constant OPTIMISM_SELECTOR = 3734403246176062136;
@@ -89,12 +106,14 @@ contract CcipOivDeployerTest is OivTestConstants {
 
         // owner = address(this) so the happy path needs no prank.
         orchestrator = new CcipOivDeployer(address(this), address(factory));
-        orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(link));
 
-        // Seed the chainId -> CCIP selector mapping for the destinations used in tests.
-        orchestrator.setChainSelector(ARBITRUM_CHAIN_ID, ARBITRUM_SELECTOR);
-        orchestrator.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
-        orchestrator.setChainSelector(OPTIMISM_CHAIN_ID, OPTIMISM_SELECTOR);
+        // No seeding needed: Arbitrum, Base and Optimism — and every other wired chain — are already
+        // in the registry from the constructor. Left as an assertion rather than a comment.
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "constructor must seed every wired chain");
+        assertEq(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), ARBITRUM_SELECTOR, "arbitrum seeded");
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "base seeded");
+        assertEq(orchestrator.chainSelectorOf(OPTIMISM_CHAIN_ID), OPTIMISM_SELECTOR, "optimism seeded");
 
         // LINK is still configured (retained for the withdrawLink sweep), but CCIP fees are now paid
         // in NATIVE gas from the caller's msg.value — so the caller, not the orchestrator, is funded.
@@ -106,6 +125,762 @@ contract CcipOivDeployerTest is OivTestConstants {
     }
 
     /// @dev Total native fee for `n` destinations at the mock's flat per-message fee.
+    /// @dev The default topology for these tests: the local chain carries the shares, every other
+    ///      wired chain receives a stack. Same shape as the 2-arg `deployEverywhere` sugar.
+    function _topology() internal view returns (CcipOivDeployer.SharesChain[] memory t) {
+        t = new CcipOivDeployer.SharesChain[](1);
+        t[0] = CcipOivDeployer.SharesChain({chainId: block.chainid, asset: oivConfig.sharesParams.asset});
+    }
+
+    // ── Shares topology: the three defects it exists to close ──────────────────
+
+    /// @notice L-1. The base asset is the one field that legitimately differs per chain, and hashing
+    ///         it verbatim made the SAME config file describe a different fund on every chain — while
+    ///         the NatSpec claimed the opposite. This is the test that would have caught it.
+    function test_topology_saltIsIdenticalAcrossChainsDespitePerChainAssets() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](2);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        topology[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        vm.chainId(1);
+        oivConfig.sharesParams.asset = USDC;
+        uint256 saltOnMainnet = orchestrator.effectiveSalt(oivConfig, topology);
+        KpkOivFactory.OivInstance memory onMainnet = orchestrator.predictOiv(oivConfig, topology);
+
+        vm.chainId(GNOSIS_CHAIN_ID);
+        oivConfig.sharesParams.asset = GNOSIS_ASSET;
+        uint256 saltOnGnosis = orchestrator.effectiveSalt(oivConfig, topology);
+        KpkOivFactory.OivInstance memory onGnosis = orchestrator.predictOiv(oivConfig, topology);
+
+        assertEq(saltOnGnosis, saltOnMainnet, "a per-chain asset must not move the salt");
+        assertEq(onGnosis.avatarSafe, onMainnet.avatarSafe, "avatar Safe must match across chains");
+        assertEq(onGnosis.kpkSharesProxy, onMainnet.kpkSharesProxy, "shares proxy must match across chains");
+    }
+
+    /// @notice Pins the headline claim of the mesh change, which was asserted in NatSpec but by no
+    ///         test: the ORIGIN chain never enters the address derivation, so a fan-out started from a
+    ///         sidechain describes the same fund at the same addresses as one started from Ethereum.
+    ///         `worksFromASidechain` only proved it does not revert.
+    function test_topology_originChainDoesNotEnterTheDerivation() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](1);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: oivConfig.sharesParams.asset});
+
+        vm.chainId(1);
+        uint256 saltFromMainnet = orchestrator.effectiveSalt(oivConfig, topology);
+        KpkOivFactory.OivInstance memory fromMainnet = orchestrator.predictOiv(oivConfig, topology);
+
+        vm.chainId(8453); // Base initiates the same fund
+        assertEq(orchestrator.effectiveSalt(oivConfig, topology), saltFromMainnet, "origin must not move the salt");
+
+        KpkOivFactory.OivInstance memory fromBase = orchestrator.predictOiv(oivConfig, topology);
+        assertEq(fromBase.avatarSafe, fromMainnet.avatarSafe, "avatar Safe must not depend on the origin");
+        assertEq(fromBase.managerSafe, fromMainnet.managerSafe, "manager Safe must not depend on the origin");
+        assertEq(fromBase.execRolesModifier, fromMainnet.execRolesModifier, "exec modifier must not depend on it");
+        assertEq(fromBase.kpkSharesProxy, fromMainnet.kpkSharesProxy, "shares proxy must not depend on it");
+    }
+
+    /// @dev The flip side: the topology IS bound, so changing it is a different fund. Without this,
+    ///      zeroing the asset for the hash could have been mistaken for dropping it entirely.
+    function test_topology_mutatingItMovesEveryAddress() public view {
+        CcipOivDeployer.SharesChain[] memory a = new CcipOivDeployer.SharesChain[](1);
+        a[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+
+        CcipOivDeployer.SharesChain[] memory b = new CcipOivDeployer.SharesChain[](2);
+        b[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        b[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        assertTrue(
+            orchestrator.effectiveSalt(oivConfig, a) != orchestrator.effectiveSalt(oivConfig, b),
+            "adding a shares chain must be a different fund"
+        );
+        // And so is changing one chain's asset.
+        b[1].asset = USDC;
+        CcipOivDeployer.SharesChain[] memory c = new CcipOivDeployer.SharesChain[](2);
+        c[0] = b[0];
+        c[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+        assertTrue(
+            orchestrator.effectiveSalt(oivConfig, b) != orchestrator.effectiveSalt(oivConfig, c),
+            "a topology asset must be bound, not merely declared"
+        );
+    }
+
+    /// @notice M-1, source side. A shares chain named in an explicit destination list is a caller
+    ///         error, not something to skip: a stack landing there would take the addresses that
+    ///         chain's own `deployOiv` needs, permanently.
+    function test_topology_explicitListRejectsARemoteSharesChain() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](2);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        topology[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = GNOSIS_CHAIN_ID;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.SharesChainNotAStackDestination.selector, GNOSIS_CHAIN_ID)
+        );
+        orchestrator.dispatchTo{value: _fee(1)}(oivConfig, topology, dests, GAS_LIMIT);
+    }
+
+    /// @notice M-1, receiver side — the half that actually closes it. The source-side exclusion runs
+    ///         on whichever chain initiated, and ANY wired chain may now initiate. Without this,
+    ///         anyone knowing a fund's config could dispatch a stack at the chain meant to run
+    ///         `deployOiv` and deny that fund forever.
+    function test_ccipReceive_refusesAStackAimedAtASharesChain() public {
+        // Topology names THIS chain, and the message is delivered here. The message is built on its
+        // own line: as an argument it would evaluate first and consume the `expectRevert`.
+        Client.Any2EVMMessage memory message = _messageFor(_topology());
+        vm.expectRevert(CcipOivDeployer.SharesChainRefusesStack.selector);
+        _deliver(message);
+    }
+
+    /// @notice L-4. The fan-out skips shares chains, so a second shares chain is filled by its own
+    ///         local call — at the identical addresses, with its own asset.
+    function test_deployLocal_secondSharesChainLandsAtTheSameAddresses() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](2);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        topology[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        // Chain 1 carries shares: deployLocal deploys the fund, not a stack.
+        KpkOivFactory.OivInstance memory deployed = orchestrator.deployLocal(oivConfig, topology);
+        assertEq(deployed.avatarSafe, predicted.avatarSafe, "avatar Safe must match the prediction");
+        assertEq(deployed.kpkSharesProxy, predicted.kpkSharesProxy, "shares proxy must match the prediction");
+        assertTrue(deployed.kpkSharesProxy.code.length > 0, "shares proxy must exist");
+    }
+
+    /// @dev The topology commits to each chain's asset; this is what makes that binding real rather
+    ///      than decorative.
+    function test_deployLocal_revertsWhenTheAssetContradictsTheTopology() public {
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](1);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: GNOSIS_ASSET});
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.AssetMismatch.selector, GNOSIS_ASSET, USDC));
+        orchestrator.deployLocal(oivConfig, topology);
+    }
+
+    /// @notice An empty topology passed every validation site, because `_validateSharesChains` is a
+    ///         loop and a zero-length array simply skips it. Three public `deployEverywhere`
+    ///         overloads take the array from the caller, so this was reachable by any contract — and
+    ///         the Foundry config parser had refused the same input all along. The guard belongs on
+    ///         the contract, which is the entry point a third party actually reaches; the script is
+    ///         only the path kpk itself uses.
+    function test_topology_mustNotBeEmpty() public {
+        CcipOivDeployer.SharesChain[] memory none = new CcipOivDeployer.SharesChain[](0);
+
+        vm.expectRevert(CcipOivDeployer.EmptySharesChains.selector);
+        orchestrator.predictOiv(oivConfig, none);
+    }
+
+    function test_topology_mustBeAscending() public {
+        CcipOivDeployer.SharesChain[] memory bad = new CcipOivDeployer.SharesChain[](2);
+        bad[0] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+        bad[1] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.SharesChainsNotAscending.selector, uint256(1)));
+        orchestrator.predictOiv(oivConfig, bad);
+    }
+
+    /// @notice The 2-arg sugar built its topology without validating it, and `_assetFor` returns
+    ///         `address(0)` both for "carries no shares" and for "the declared asset is zero". A
+    ///         config with a zero base asset therefore took the STACK branch: 18 non-refundable CCIP
+    ///         messages went out, no fund was created, and the salt came from a topology that
+    ///         validation rejects — so neither `deployLocal` nor `promoteShares` could ever re-derive
+    ///         it. The fund was unrecoverable.
+    function test_deployEverywhere_sugarRejectsAZeroBaseAsset() public {
+        oivConfig.sharesParams.asset = address(0);
+        vm.expectRevert(CcipOivDeployer.InvalidSharesChain.selector);
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+    }
+
+    /// @notice `_validateOivConfig` mirrors `KpkShares._validateInitializationParams` so a prediction
+    ///         never succeeds where deployment would refuse — but it did NOT mirror `_updateAsset`,
+    ///         which additionally rejects a new asset that is neither depositable nor redeemable.
+    ///
+    ///         The gap was only reachable expensively. A fan-out from a STACK-ONLY origin never
+    ///         touches `additionalAssets` locally: `predictOivAddresses` passed, every lane was
+    ///         priced and paid, every remote stack landed, and the fund's own shares chain then
+    ///         reverted `InvalidArguments` inside `deployOiv`. `additionalAssets` is salt-bound, so
+    ///         correcting the flags moves every address and orphans every stack already paid for.
+    function test_deployEverywhere_refusesAnAssetThatIsNeitherDepositableNorRedeemable() public {
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        // DAI: neither the fixture's base asset (which would trip `DuplicateAsset` first) nor the
+        // topology's asset (which would trip the topology cross-check first).
+        extras[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: false
+        });
+        oivConfig.additionalAssets = extras;
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for a config deployOiv refuses");
+
+        // `dispatchTo` has the same exposure and runs no local deploy at all.
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @notice `_validateManagerOwners` claims to mirror Safe v1.4.1 `setup()`, which rejects the
+    ///         owner-list SENTINEL (`address(1)`, GS203) as well as zero and duplicates. The omission
+    ///         was invisible through `deployEverywhere`, whose local branch deploys before it sends;
+    ///         `dispatchTo` runs no local deploy, so a sentinel owner paid every lane and then
+    ///         reverted inside `SafeProxyFactory.deployProxy` on arrival as a bare `revert(0,0)`.
+    function test_dispatchTo_refusesTheSafeOwnerSentinelBeforeSpendingFees() public {
+        address[] memory owners = new address[](1);
+        owners[0] = address(0x1);
+        oivConfig.managerSafe.owners = owners;
+        oivConfig.managerSafe.threshold = 1;
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.ZeroAddress.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "a sentinel owner must cost nothing");
+    }
+
+    /// @notice `additionalAssets` addresses are salt-bound, so they are fixed at the fund's birth and
+    ///         cannot be restated per chain the way the base asset can. Promoting to a chain where
+    ///         one of them has no code used to fail as a bare revert on undecodable empty
+    ///         returndata — from the allowance loop for a `canRedeem` entry, or from
+    ///         `KpkShares._updateAsset`'s `symbol()` call for a deposit-only one. Named error now.
+    ///
+    ///         Deliberately not a blanket refusal: a token living at the SAME address on both chains
+    ///         is legitimate and promotion must still work for it, which is why this checks code
+    ///         rather than `additionalAssets.length`. An earlier attempt at this fix banned the case
+    ///         outright and made `test_promoteShares_requiresApprovalForEveryRedeemableAsset`
+    ///         unreachable, which is how the over-reach showed up.
+    function test_promoteShares_refusesAnAdditionalAssetWithNoCodeOnThisChain() public {
+        address ghost = address(0xA55E7);
+        assertEq(ghost.code.length, 0, "precondition: the additional asset has no code here");
+
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        extras[0] = KpkOivFactory.AssetConfig({asset: ghost, canDeposit: true, canRedeem: false});
+        oivConfig.additionalAssets = extras;
+
+        // A topology that does NOT name this chain, so promotion is the applicable path.
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.AdditionalAssetHasNoCodeHere.selector, ghost));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @notice The stack-only branches validated the stack half of a salt that commits to the WHOLE
+    ///         config. A zero `feeReceiver` is the cheapest demonstration: `deployStack` does not
+    ///         care about it, the effective salt does, so the stack landed at addresses derived from
+    ///         a shares configuration that can never deploy. Every later shares-chain call reverts,
+    ///         and correcting the field moves the salt and abandons the stack.
+    ///
+    ///         Existing coverage pinned only stack-half fields (a duplicate owner, a bad timelock),
+    ///         which the narrower `predictStackAddresses` already caught — so widening the check was
+    ///         invisible to the suite until these two.
+    function test_deployLocal_stackOnlyBranchRejectsAnInvalidSharesConfig() public {
+        // Gnosis-only topology while standing on this chain: the stack-only branch.
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        oivConfig.sharesParams.feeReceiver = address(0);
+
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.deployLocal(oivConfig, topology);
+    }
+
+    function test_dispatchTo_rejectsAnInvalidSharesFieldBeforeSpendingFees() public {
+        oivConfig.sharesParams.feeReceiver = address(0);
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.InvalidSharesParams.selector);
+        orchestrator.dispatchTo{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for an undeployable fund");
+    }
+
+    /// @notice The owner bound must be pinned at a SEND and a QUOTE, not only by the gas measurement
+    ///         that justifies it. The gas test reads the constant and would pass unchanged if the
+    ///         `_price` check were deleted — so on its own it proves the number is right while
+    ///         letting the enforcement disappear, which is the exact failure it exists to prevent:
+    ///         a fan-out whose destinations run out of gas with every non-refundable fee spent.
+    function test_deployEverywhere_refusesMoreManagerOwnersThanCcipCanAfford() public {
+        uint256 max = orchestrator.MAX_CCIP_MANAGER_OWNERS();
+        oivConfig.managerSafe.owners = _ascendingOwners(max + 1);
+        oivConfig.managerSafe.threshold = 1;
+
+        // The quote refuses too, which is the point of enforcing in `_price`: an undeliverable
+        // config fails while you are sizing the fee, not after you have paid it.
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ManagerOwnersExceedCcipBudget.selector, max + 1, max));
+        orchestrator.quoteDeployEverywhere(oivConfig, _topology(), _dests(), GAS_LIMIT);
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ManagerOwnersExceedCcipBudget.selector, max + 1, max));
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "no message may be dispatched for a rejected config");
+    }
+
+    /// @notice `_validateOivConfig`'s duplicate-asset check compares `additionalAssets` against
+    ///         `config.sharesParams.asset` — the ONE field deliberately excluded from the salt
+    ///         because it differs per chain. On a stack-only origin that field holds whatever this
+    ///         chain resolves to, NOT what the topology commits the fund's shares chain to, so the
+    ///         guard ran against an asset the fund would never use.
+    ///
+    ///         The consequence was unrecoverable rather than merely wrong: the topology names
+    ///         GNOSIS_ASSET, `additionalAssets` contains GNOSIS_ASSET, and on this stack-only origin
+    ///         the base asset is something else — so the check passed, every lane's non-refundable
+    ///         fee was spent, every stack landed, and only the shares chain then failed
+    ///         `DuplicateAsset` forever. `additionalAssets` is salt-bound, so correcting it moves
+    ///         every address and orphans every stack already paid for.
+    ///
+    ///         Cross-checked in `_effectiveConfig` because that is the choke point every entry point
+    ///         passes through, so it now fails before the first fee instead of after the last.
+    function test_deployEverywhere_refusesAnAdditionalAssetThatCollidesWithTheTopology() public {
+        KpkOivFactory.AssetConfig[] memory extras = new KpkOivFactory.AssetConfig[](1);
+        extras[0] = KpkOivFactory.AssetConfig({asset: GNOSIS_ASSET, canDeposit: true, canRedeem: false});
+        oivConfig.additionalAssets = extras;
+        assertTrue(oivConfig.sharesParams.asset != GNOSIS_ASSET, "precondition: origin's asset differs");
+
+        uint256 sentBefore = router.sentCount();
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.deployEverywhere{value: 2 * FEE}(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+        assertEq(router.sentCount(), sentBefore, "not one lane may be paid for a fund that cannot complete");
+
+        // And the quote refuses too, so sizing the fee surfaces it before any transaction is signed.
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.quoteDeployEverywhere(oivConfig, _gnosisOnlyTopology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @notice The topology is the one payload array that had no length bound, while the manager
+    ///         owners and the timelock role sets both do — and all three are decoded and looped on
+    ///         the destination inside the same 3,000,000-gas budget.
+    function test_topology_refusesMoreSharesChainsThanTheBound() public {
+        uint256 max = orchestrator.MAX_SHARES_CHAINS();
+        CcipOivDeployer.SharesChain[] memory tooMany = new CcipOivDeployer.SharesChain[](max + 1);
+        for (uint256 i = 0; i < tooMany.length; i++) {
+            tooMany[i] = CcipOivDeployer.SharesChain({chainId: i + 1, asset: address(uint160(0x900 + i))});
+        }
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.TooManySharesChains.selector, max + 1, max));
+        orchestrator.predictOiv(oivConfig, tooMany);
+    }
+
+    /// @notice And exactly `MAX_CCIP_MANAGER_OWNERS` must still be accepted — a bound that is off by
+    ///         one in the safe direction is still wrong, and would silently shrink what a fund can be.
+    function test_deployEverywhere_acceptsExactlyTheMaximumOwners() public view {
+        uint256 max = orchestrator.MAX_CCIP_MANAGER_OWNERS();
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe.owners = _ascendingOwners(max);
+        cfg.managerSafe.threshold = 1;
+
+        orchestrator.quoteDeployEverywhere(cfg, _topology(), _dests(), GAS_LIMIT);
+    }
+
+    /// @dev Distinct, ascending, non-zero owner addresses.
+    function _ascendingOwners(uint256 n) internal pure returns (address[] memory out) {
+        out = new address[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = address(uint160(0x70000 + i));
+        }
+    }
+
+    function test_quoteDeployEverywhere_sugarRejectsAZeroBaseAsset() public {
+        oivConfig.sharesParams.asset = address(0);
+        vm.expectRevert(CcipOivDeployer.InvalidSharesChain.selector);
+        orchestrator.quoteDeployEverywhere(oivConfig, GAS_LIMIT);
+    }
+
+    /// @dev `deployLocal` and `promoteShares` make no CCIP call, so gating them on the registry would
+    ///      block them on exactly the chains they exist to serve — the registry is baked at
+    ///      construction, so an orchestrator on a chain onboarded later lacks its own id.
+    function test_localOperationsWorkOnAChainAbsentFromTheRegistry() public {
+        vm.chainId(31337); // not a wired chain
+        CcipOivDeployer.SharesChain[] memory topology = new CcipOivDeployer.SharesChain[](1);
+        topology[0] = CcipOivDeployer.SharesChain({chainId: 31337, asset: oivConfig.sharesParams.asset});
+
+        // Reaches the factory rather than reverting UnknownChain at the door.
+        KpkOivFactory.OivInstance memory inst = orchestrator.deployLocal(oivConfig, topology);
+        assertGt(inst.avatarSafe.code.length, 0, "a local deploy must not need the chain to be wired");
+    }
+
+    /// @dev A successful stack-only local deploy used to return nine zero addresses, so the operator
+    ///      script printed nothing useful after a deploy that worked.
+    function test_deployLocal_stackBranchReturnsTheStackAddresses() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory inst = orchestrator.deployLocal(oivConfig, topology);
+
+        assertGt(inst.avatarSafe.code.length, 0, "avatar Safe must be reported");
+        assertTrue(inst.managerSafe != address(0), "manager Safe must be reported");
+        assertTrue(inst.execRolesModifier != address(0), "exec modifier must be reported");
+        assertEq(inst.kpkSharesProxy, address(0), "and the zero shares fields are the branch signal");
+    }
+
+    /// @dev Two chain ids sharing one selector is now UNCONSTRUCTIBLE, so the desync this test was
+    ///      written for cannot arise. It used to be merely tolerated: `_forgetSelectorIfUnused` kept
+    ///      the flag correct when one of the pair was removed. Tolerating it left a worse bug
+    ///      untouched — `_stackSelectors` emits one destination per CHAIN ID, so a shared selector
+    ///      made a fan-out pay for two deliveries to the same chain, the second reverting
+    ///      `StackAlreadyDeployedHere` with its fee already spent.
+    ///
+    ///      `_forgetSelectorIfUnused` is deliberately kept as defence in depth rather than deleted
+    ///      as now-unreachable.
+    function test_setChainSelector_refusesASelectorAnotherChainHolds() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.SelectorAlreadyMapped.selector, BASE_SELECTOR, BASE_CHAIN_ID)
+        );
+        orchestrator.setChainSelector(4242, BASE_SELECTOR);
+    }
+
+    /// @dev The operational consequence, and the reason uniqueness is workable: moving a selector to
+    ///      a different chain id is still possible, it just has to be done in the order that never
+    ///      leaves two ids holding it. Re-registering the same id with its OWN selector stays a no-op
+    ///      rather than a revert, which matters because the constructor re-seeds on every deploy.
+    function test_setChainSelector_allowsAMoveAfterTheOldHolderIsRemoved() public {
+        orchestrator.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR); // idempotent re-seed of itself
+        assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), BASE_SELECTOR, "re-seeding itself is a no-op");
+
+        orchestrator.removeChainSelector(BASE_CHAIN_ID);
+        orchestrator.setChainSelector(4242, BASE_SELECTOR);
+        assertEq(orchestrator.chainSelectorOf(4242), BASE_SELECTOR, "the selector moves once its holder is gone");
+
+        // And the moved selector is trusted as a source at its new home.
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+        Client.Any2EVMMessage memory message = _messageFor(remote);
+        message.sourceChainSelector = BASE_SELECTOR;
+        _deliver(message);
+    }
+
+    // ── Promotion: adding a shares chain after birth ───────────────────────────
+
+    /// @dev A topology that declares ONLY Gnosis, so the local chain (mainnet on this fork) is a
+    ///      stack-only chain and therefore promotable.
+    function _gnosisOnlyTopology() internal view returns (CcipOivDeployer.SharesChain[] memory t) {
+        t = new CcipOivDeployer.SharesChain[](1);
+        t[0] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+    }
+
+    /// @dev The Avatar Safe approves the (predictable) shares proxy, which `promoteShares` now
+    ///      requires up front — a promoted fund is immediately subscribable, so the approval cannot
+    ///      be a follow-up someone might not make.
+    function _approveFromAvatar(CcipOivDeployer.SharesChain[] memory topology) internal {
+        KpkOivFactory.OivInstance memory p = orchestrator.predictOiv(oivConfig, topology);
+        vm.prank(p.avatarSafe);
+        IERC20(oivConfig.sharesParams.asset).approve(p.kpkSharesProxy, type(uint256).max);
+    }
+
+    // ── promoteShares authorization: live governance, not birth governance ─────
+
+    /// @notice `promoteShares` used to accept `config.admin` unconditionally. Configure a timelock and
+    ///         `deployStack` hands the exec modifier to that timelock on every chain, leaving
+    ///         `config.admin` with no authority over the fund — yet it could still promote shares onto
+    ///         a fresh chain and pick that chain's base asset, which is deliberately not salt-bound.
+    ///         The allowance precondition does not constrain the choice, because a hostile token's
+    ///         `allowance` can just return `type(uint256).max`. So the one account the gate trusted
+    ///         unconditionally could perform exactly the economic capture the gate exists to prevent.
+    function test_promoteShares_refusesTheBirthAdminOnceATimelockGovernsTheFund() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address liveOwner = IRoles(predicted.execRolesModifier).owner();
+        assertTrue(liveOwner != oivConfig.admin, "precondition: the timelock, not the admin, owns the modifier");
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, oivConfig.admin));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @dev The positive control, and the reason the old "exec timelock as an alternate caller" branch
+    ///      could be deleted rather than kept: on a timelocked fund the live owner IS the timelock, so
+    ///      it is authorized by the same single check.
+    function test_promoteShares_acceptsTheTimelockThatSupersededTheAdmin() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address liveOwner = IRoles(predicted.execRolesModifier).owner();
+        vm.prank(liveOwner);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "and it lands at the canonical address");
+    }
+
+    /// @notice The mirror failure: after a legitimate rotation to new governance, promotion used to
+    ///         revert `NotFundAdmin` with no way out — neither `config.admin` nor a timelock owned the
+    ///         modifier, and restating `config.admin` moves every address the fund has, because it is
+    ///         salt-bound on this path. The new owner is now authorized, and the fund's identity is
+    ///         untouched: the proxy still lands on the address predicted BEFORE the rotation.
+    ///         Carries a `sharesTimelock` deliberately. Without one, the promotion is now REFUSED —
+    ///         `PromotionWouldRearmTheBirthAdmin` — because the promoted token's `DEFAULT_ADMIN_ROLE`
+    ///         would go to the very admin the rotation replaced. An earlier version of this test had no
+    ///         shares timelock and asserted only the ADDRESS, never the role holder, so it passed while
+    ///         handing authority to the superseded account. Two independent review gates caught that;
+    ///         the missing assertion is why the suite did not.
+    function test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything() public {
+        address[] memory sharesProposers = new address[](1);
+        sharesProposers[0] = address(0x3333);
+        oivConfig.sharesTimelock =
+            TimelockParams({minDelay: 2 days, proposers: sharesProposers, cancellers: new address[](0)});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address rotated = makeAddr("rotatedGovernance");
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(rotated);
+        assertEq(IRoles(predicted.execRolesModifier).owner(), rotated, "precondition: governance rotated");
+
+        vm.prank(rotated);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(
+            promoted.kpkSharesProxy,
+            predicted.kpkSharesProxy,
+            "rotation must not move the fund - the address was predicted before it"
+        );
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "and the shares token really exists");
+
+        // The half the earlier version omitted: WHO holds the role. The shares timelock does, and the
+        // superseded birth admin holds nothing.
+        assertTrue(promoted.sharesTimelock != address(0), "the shares timelock was deployed");
+        assertTrue(
+            KpkShares(promoted.kpkSharesProxy).hasRole(bytes32(0), promoted.sharesTimelock),
+            "the shares timelock holds DEFAULT_ADMIN_ROLE"
+        );
+        assertFalse(
+            KpkShares(promoted.kpkSharesProxy).hasRole(bytes32(0), oivConfig.admin),
+            "and the superseded birth admin holds nothing"
+        );
+    }
+
+    /// @notice The refusal that replaces the silent hand-back. Rotate exec governance away from
+    ///         `config.admin` with no shares timelock, and promotion would grant the promoted token's
+    ///         `DEFAULT_ADMIN_ROLE` solely to the admin that was replaced — irreversibly, because
+    ///         `grantRole` then requires the role only that account holds. Refused instead.
+    /// @dev    The severity comes from WHY governance rotates: if `admin` was compromised, the new
+    ///         governance is the only account allowed to promote, and every promotion it performed
+    ///         re-armed the compromised key on a fresh chain.
+    function test_promoteShares_refusesAPromotionThatWouldRearmTheBirthAdmin() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        address rotated = makeAddr("rotatedGovernanceNoTimelock");
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(rotated);
+
+        vm.prank(rotated);
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.PromotionWouldRearmTheBirthAdmin.selector, oivConfig.admin, rotated)
+        );
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @dev And the superseded admin is refused on that same rotated fund. Without this, the test above
+    ///      would pass just as well against a gate that accepted everyone.
+    function test_promoteShares_refusesTheStaleAdminAfterRotation() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        vm.prank(oivConfig.admin);
+        IRoles(predicted.execRolesModifier).transferOwnership(makeAddr("rotatedGovernance2"));
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, oivConfig.admin));
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @dev The compatibility case that must keep working, and the reason this is not a breaking
+    ///      change for any existing fund: while nothing has been rotated and no timelock is
+    ///      configured, the live owner IS `config.admin`, so the admin remains authorized.
+    function test_promoteShares_theAdminStillWorksWhenNothingHasBeenRotated() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        assertEq(IRoles(predicted.execRolesModifier).owner(), oivConfig.admin, "precondition: admin still owns it");
+
+        vm.prank(oivConfig.admin);
+        orchestrator.promoteShares(oivConfig, topology);
+        assertGt(predicted.kpkSharesProxy.code.length, 0, "the ordinary path is unchanged");
+    }
+
+    /// @notice The whole point: a chain the topology never declared gains the shares token, at the
+    ///         SAME address every declared shares chain would use. Nothing moves.
+    function test_promoteShares_landsAtTheCanonicalAddressWithoutMovingAnything() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        // This chain is undeclared, so deployLocal gives it the stack only.
+        orchestrator.deployLocal(oivConfig, topology);
+        assertEq(predicted.kpkSharesProxy.code.length, 0, "no shares token before promotion");
+        assertGt(predicted.avatarSafe.code.length, 0, "but the stack is live");
+
+        _approveFromAvatar(topology);
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promoted proxy must be the canonical one");
+        assertEq(promoted.avatarSafe, predicted.avatarSafe, "and reuse the existing Avatar Safe");
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "shares token now exists");
+    }
+
+    /// @notice `_deriveSalts`'s caller-mixing protects only the shares impl and proxy. The Avatar
+    ///         Safe, Manager Safe and three Roles Modifiers come from the PERMISSIONLESS
+    ///         `safeProxyFactory` / `moduleProxyFactory`, whose salts are public functions of the
+    ///         config — so anyone can land those addresses. An earlier version of the guard tested
+    ///         code at the Avatar Safe, which is exactly the address an attacker can create, and
+    ///         promotion then succeeded against a stack that was four-fifths absent: a shares token at
+    ///         the fund's canonical address whose portfolio Safe has no execution path.
+    ///
+    ///         This etches ONLY the Avatar Safe, so it stops at the `managerSafe.code.length`
+    ///         clause and does not reach the `execRolesModifier.avatar()` check — deleting that check
+    ///         leaves this test green. The avatar clause is pinned instead by
+    ///         `KpkOivFactoryTest.test_deployShares_refusesAPristineSquattedStack`, which squats all
+    ///         five components through the real third-party factories so the avatar is what rejects.
+    function test_deployShares_revertsOnASquattedButUnwiredStack() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        // Stand in for a third-party squat: code at the Avatar Safe, nothing wired.
+        vm.etch(predicted.avatarSafe, hex"60006000fd");
+        assertGt(predicted.avatarSafe.code.length, 0, "Avatar Safe address is occupied");
+
+        _approveFromAvatar(topology);
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(KpkOivFactory.StackNotDeployed.selector);
+        orchestrator.promoteShares(oivConfig, topology);
+    }
+
+    /// @notice The gate. The base asset is the one field the salt does not bind, so an open promotion
+    ///         would let anyone holding the true config land a hostile-denominated shares token at the
+    ///         fund's canonical address.
+    function test_promoteShares_rejectsANonAdminCallerWithAGarbageAsset() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+
+        // A REAL mainnet ERC-20, deliberately: with a codeless address the deploy would revert inside
+        // `initialize` for an unrelated reason, and the test would pass without the gate doing
+        // anything. Using DAI means the ONLY thing standing between an attacker and a
+        // hostile-denominated shares token at the fund's canonical address is the gate.
+        KpkOivFactory.OivConfig memory hostile = oivConfig;
+        hostile.sharesParams.asset = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+
+        address attacker = makeAddr("promotionAttacker");
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotFundAdmin.selector, attacker));
+        orchestrator.promoteShares(hostile, topology);
+    }
+
+    /// @notice The pre-occupation attack, re-run against promotion. It used to deny a fund a chain
+    ///         forever; now the attacker has merely paid for the fund's stack, and the admin promotes
+    ///         on top of it.
+    function test_promoteShares_survivesAnAttackerPreLandingTheStack() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, topology);
+
+        address attacker = makeAddr("preOccupier");
+        vm.prank(attacker);
+        orchestrator.deployLocal(oivConfig, topology); // permissionless, lands the stack
+        assertGt(predicted.avatarSafe.code.length, 0, "attacker paid for the fund's stack");
+
+        _approveFromAvatar(topology);
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+        assertEq(promoted.kpkSharesProxy, predicted.kpkSharesProxy, "promotion still lands canonically");
+    }
+
+    /// @dev A declared chain must go through `deployLocal`, which honours the asset the topology
+    ///      committed to. Promotion there would bypass that commitment.
+    function test_promoteShares_revertsOnAnAlreadyDeclaredChain() public {
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(CcipOivDeployer.SharesChainAlreadyDeclared.selector);
+        orchestrator.promoteShares(oivConfig, _topology()); // _topology() declares the local chain
+    }
+
+    /// @dev The stack is a prerequisite, and that is what makes a pre-landed stack harmless rather
+    ///      than a denial. Shares with no Avatar Safe would be a broken fund.
+    function test_promoteShares_revertsWhenTheStackIsNotThereYet() public {
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(KpkOivFactory.StackNotDeployed.selector);
+        orchestrator.promoteShares(oivConfig, _gnosisOnlyTopology());
+    }
+
+    /// @notice Was `test_promoteShares_leavesTheAvatarAllowanceAtZero`, which PINNED the gap rather
+    ///         than closing it. A promoted fund is immediately subscribable — `requestSubscription`
+    ///         has no admin, operator or pause gate — while redemption settlement pulls from the
+    ///         Avatar Safe, so an investor could be settled in and then be unable to redeem until an
+    ///         off-chain admin transaction landed. The approval is now a precondition, and since the
+    ///         proxy address is predictable beforehand there is no window at all.
+    function test_promoteShares_requiresTheApprovalBeforeItWillPromote() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, oivConfig.sharesParams.asset)
+        );
+        orchestrator.promoteShares(oivConfig, topology);
+
+        _approveFromAvatar(topology);
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "promotion succeeds once the approval exists");
+    }
+
+    /// @notice The approval precondition must cover every asset redemption can pull, not just the
+    ///         base one. `KpkOivFactory.deployShares` registers `additionalAssets` but grants no
+    ///         allowances — only `deployOiv` calls `_grantApprovals` — and settlement transfers
+    ///         `request.asset` out of the Avatar Safe. Checking the base asset alone therefore left
+    ///         the exact "subscribed but cannot redeem" state the precondition exists to prevent,
+    ///         one asset over.
+    function test_promoteShares_requiresApprovalForEveryRedeemableAsset() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+
+        // A real mainnet ERC-20, so the only thing that can reject promotion is the missing
+        // allowance rather than an incidental failure inside `initialize`.
+        address redeemable = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({asset: redeemable, canDeposit: false, canRedeem: true});
+
+        orchestrator.deployLocal(cfg, topology);
+
+        KpkOivFactory.OivInstance memory p = orchestrator.predictOiv(cfg, topology);
+        vm.prank(p.avatarSafe);
+        IERC20(cfg.sharesParams.asset).approve(p.kpkSharesProxy, type(uint256).max);
+
+        // Base asset approved, the redeemable one not.
+        vm.prank(cfg.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, redeemable));
+        orchestrator.promoteShares(cfg, topology);
+
+        // A PARTIAL allowance must not satisfy it either: `_grantApprovals` sets and asserts
+        // `type(uint256).max` on a normal deployment, so anything less would let a promoted fund
+        // settle a few redemptions and then begin reverting.
+        vm.prank(p.avatarSafe);
+        IERC20(redeemable).approve(p.kpkSharesProxy, 1);
+        vm.prank(cfg.admin);
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, redeemable));
+        orchestrator.promoteShares(cfg, topology);
+
+        vm.prank(p.avatarSafe);
+        IERC20(redeemable).approve(p.kpkSharesProxy, type(uint256).max);
+
+        vm.prank(cfg.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(cfg, topology);
+        assertGt(promoted.kpkSharesProxy.code.length, 0, "promotes once every redeemable asset is approved");
+    }
+
     function _fee(uint256 n) internal pure returns (uint256) {
         return n * FEE;
     }
@@ -114,8 +889,14 @@ contract CcipOivDeployerTest is OivTestConstants {
     receive() external payable {}
 
     /// @dev Mirrors CcipOivDeployer._effectiveConfig — the config-bound salt the deploy path uses.
+    /// @dev Mirrors `CcipOivDeployer._effectiveConfig`: the base asset is zeroed before hashing
+    ///      (it is the one field that legitimately differs per chain) and committed to through the
+    ///      topology instead. Deliberately a reimplementation rather than a call into the
+    ///      orchestrator, so it can disagree with production and fail.
     function _effSalt() internal view returns (uint256) {
-        return uint256(keccak256(abi.encode(oivConfig)));
+        KpkOivFactory.OivConfig memory bare = oivConfig;
+        bare.sharesParams.asset = address(0);
+        return uint256(keccak256(abi.encode(bare, _topology())));
     }
 
     function _effConfig() internal view returns (KpkOivFactory.OivConfig memory eff) {
@@ -123,14 +904,23 @@ contract CcipOivDeployerTest is OivTestConstants {
         eff.salt = _effSalt();
     }
 
+    /// @dev The topology projected to chain ids, as the CCIP payload carries it.
+    function _sharesChainIds() internal view returns (uint256[] memory ids) {
+        CcipOivDeployer.SharesChain[] memory t = _topology();
+        ids = new uint256[](t.length);
+        for (uint256 i = 0; i < t.length; i++) {
+            ids[i] = t[i].chainId;
+        }
+    }
+
     // ── Source path: deployEverywhere ────────────────────────────────────────────
 
     function test_deployEverywhere_deploysLocalOivMatchingPrediction() public {
-        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig);
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, _topology());
 
         uint256[] memory dests = _dests();
         (KpkOivFactory.OivInstance memory inst,) =
-            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
 
         assertEq(inst.avatarSafe, predicted.avatarSafe, "avatarSafe mismatch");
         assertEq(inst.managerSafe, predicted.managerSafe, "managerSafe mismatch");
@@ -144,7 +934,8 @@ contract CcipOivDeployerTest is OivTestConstants {
         uint256[] memory dests = _dests();
         uint256 routerBalBefore = address(router).balance;
 
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        (, bytes32[] memory ids) =
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
 
         assertEq(ids.length, 2, "two message ids");
         assertEq(router.sentCount(), 2, "two ccipSend calls");
@@ -157,7 +948,7 @@ contract CcipOivDeployerTest is OivTestConstants {
         uint256 overpay = 5 ether;
         uint256 balBefore = address(this).balance;
 
-        orchestrator.deployEverywhere{value: _fee(dests.length) + overpay}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(dests.length) + overpay}(oivConfig, _topology(), dests, GAS_LIMIT);
 
         // Only the exact fee should be consumed; the surplus is refunded to the caller.
         assertEq(balBefore - address(this).balance, _fee(dests.length), "surplus not refunded");
@@ -168,16 +959,17 @@ contract CcipOivDeployerTest is OivTestConstants {
     function test_deployEverywhere_isPermissionless() public {
         uint256[] memory dests = _dests();
         vm.prank(stranger);
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        (, bytes32[] memory ids) =
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(ids.length, 2, "stranger can deploy + dispatch");
         assertEq(router.sentCount(), 2, "messages dispatched for non-owner caller");
     }
 
     function test_deployEverywhere_payloadEncodesDerivedStackConfig() public {
         uint256[] memory dests = _dests();
-        orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
 
-        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        (KpkOivFactory.StackConfig memory sent,) = abi.decode(router.lastData(), (KpkOivFactory.StackConfig, uint256[]));
         assertEq(sent.salt, _effSalt(), "salt mismatch");
         assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner must equal admin");
         assertEq(sent.subRolesMod.finalOwner, address(0), "subMod finalOwner must be zero");
@@ -193,27 +985,37 @@ contract CcipOivDeployerTest is OivTestConstants {
         fresh.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
         uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
-        fresh.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        fresh.deployEverywhere(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
-    function test_deployEverywhere_revertsOffSourceChain() public {
-        vm.chainId(10); // pretend we're on Optimism, not the source
+    /// @notice The headline of the mesh change: a fan-out no longer has to start on Ethereum. These
+    ///         three cases previously reverted `NotSourceChain`; the restriction was never load-bearing
+    ///         for the address invariant, since the orchestrator is the uniform `msg.sender` into the
+    ///         factory on every chain and the salt is composed from the config alone.
+    function test_deployEverywhere_worksFromASidechain() public {
+        vm.chainId(8453); // Base
         uint256[] memory dests = _dests();
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(10)));
-        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
-    function test_deployEverywhere_allConfigured_revertsOffSourceChain() public {
-        vm.chainId(8453);
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(8453)));
-        orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
+    function test_deployEverywhere_allConfigured_worksFromASidechain() public {
+        vm.chainId(42161); // Arbitrum
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
     }
 
-    function test_dispatchTo_revertsOffSourceChain() public {
-        vm.chainId(42161);
+    function test_dispatchTo_worksFromASidechain() public {
+        vm.chainId(10); // Optimism
         uint256[] memory dests = _dests();
-        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.NotSourceChain.selector, uint256(42161)));
-        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _topology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev The one restriction that remains: a chain absent from the registry cannot initiate, since
+    ///      every sibling would reject its messages after the fees had already been paid.
+    function test_deployEverywhere_revertsFromAnUnwiredChain() public {
+        vm.chainId(1337);
+        uint256[] memory dests = _dests();
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, uint256(1337)));
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
     /// @dev Explicit-list path skips the local chain, same as the all-configured path — never self-sends.
@@ -221,7 +1023,8 @@ contract CcipOivDeployerTest is OivTestConstants {
         uint256[] memory dests = new uint256[](2);
         dests[0] = ARBITRUM_CHAIN_ID;
         dests[1] = block.chainid; // local (mainnet); must be dropped, not resolved/self-sent
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+        (, bytes32[] memory ids) =
+            orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(ids.length, 1, "local chain dropped from explicit list");
         assertEq(router.sentCount(), 1, "only the remote chain dispatched");
     }
@@ -229,14 +1032,14 @@ contract CcipOivDeployerTest is OivTestConstants {
     function test_deployEverywhere_revertsOnNoDestinations() public {
         uint256[] memory dests = new uint256[](0);
         vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
-        orchestrator.deployEverywhere(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
     function test_deployEverywhere_revertsOnInsufficientFee() public {
         uint256[] memory dests = _dests();
         // Aggregate fee across both destinations is checked up front against msg.value.
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.InsufficientFee.selector, 2 * FEE, FEE));
-        orchestrator.deployEverywhere{value: FEE}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: FEE}(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
     // ── Destination path: ccipReceive ─────────────────────────────────────────────
@@ -245,9 +1048,14 @@ contract CcipOivDeployerTest is OivTestConstants {
     ///      path) lands at the SAME operational addresses as the mainnet OIV prediction, because the
     ///      orchestrator is the uniform factory caller on every chain.
     function test_ccipReceive_deploysStackMatchingMainnetOivPrediction() public {
-        KpkOivFactory.OivInstance memory oivPred = orchestrator.predictOiv(oivConfig);
+        // A fund whose shares live on Optimism, so this chain is a legitimate stack destination.
+        // With the local chain in the topology the receiver would (correctly) refuse — see
+        // `test_ccipReceive_refusesAStackAimedAtAServiceChain`.
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
 
-        _deliver(_validMessage());
+        KpkOivFactory.OivInstance memory oivPred = orchestrator.predictOiv(oivConfig, remote);
+        _deliver(_messageFor(remote));
 
         // The stack now exists at the predicted operational addresses.
         assertGt(oivPred.avatarSafe.code.length, 0, "avatarSafe should have code");
@@ -257,6 +1065,522 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertGt(oivPred.managerRolesModifier.code.length, 0, "managerMod should have code");
         // Shares proxy is NOT deployed on the sidechain (deployStack only).
         assertEq(oivPred.kpkSharesProxy.code.length, 0, "shares proxy must not exist on sidechain");
+    }
+
+    /// @notice The behaviour this branch exists for: a destination accepts a message from ANY wired
+    ///         chain, not only mainnet. Every other delivery test builds its message with
+    ///         `MAINNET_SELECTOR`, so the suite would have stayed green even if the receiver still
+    ///         accepted mainnet alone — the check would have been exercised only in its passing
+    ///         direction.
+    function test_ccipReceive_acceptsAMessageFromASidechainSource() public {
+        uint64 sidechain = orchestrator.chainSelectorOf(BASE_CHAIN_ID);
+        assertTrue(sidechain != 0, "Base must be baked into the registry");
+        assertTrue(sidechain != MAINNET_SELECTOR, "and must not be the mainnet selector");
+
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        m.sourceChainSelector = sidechain;
+        _deliver(m);
+
+        assertGt(pred.avatarSafe.code.length, 0, "a Base-originated message deployed the stack");
+        assertEq(IRoles(pred.execRolesModifier).avatar(), pred.avatarSafe, "and wired it, exactly as mainnet would");
+    }
+
+    /// @notice `effectiveSalt` is the helper off-chain code uses to re-derive a fund's addresses.
+    ///         Returning a salt for a topology no deployment could ever accept is worse than
+    ///         refusing: the caller gets an address set that will never exist.
+    function test_effectiveSalt_rejectsAnInvalidTopology() public {
+        CcipOivDeployer.SharesChain[] memory unordered = new CcipOivDeployer.SharesChain[](2);
+        unordered[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: USDC});
+        unordered[1] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+
+        vm.expectRevert();
+        orchestrator.effectiveSalt(oivConfig, unordered);
+    }
+
+    /// @notice A timelocked fund must arrive timelocked. `oivToStackConfig` forwards `execTimelock`
+    ///         to every destination, and the timelock's address derives from the exec modifier's, so
+    ///         the sidechain's modifier must end up owned by a timelock at the SAME address as
+    ///         everywhere else. A fund timelocked on one chain and not another is mixed governance
+    ///         with nothing on-chain to flag it.
+    ///
+    ///         Every other delivery test used a zero-delay config, so the destination side of the
+    ///         timelock work — the whole point of carrying it through CCIP — had no coverage at all.
+    function test_ccipReceive_deliversATimelockedStack() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        address[] memory cancellers = new address[](1);
+        cancellers[0] = address(0x2222);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: cancellers});
+
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+        assertTrue(pred.execTimelock != address(0), "a timelocked config must predict a timelock");
+
+        _deliver(_messageFor(remote));
+
+        assertGt(pred.execTimelock.code.length, 0, "the timelock was deployed on the destination");
+        assertEq(
+            IRoles(pred.execRolesModifier).owner(),
+            pred.execTimelock,
+            "the sidechain exec modifier must be owned by the timelock, not by finalOwner"
+        );
+    }
+
+    /// @notice A legal fund was REFUSED depending on which chain you fanned out from. On a stack-only
+    ///         origin, `sharesParams.asset` holds whatever `OivConfigReader._assetForThisChain`
+    ///         resolved locally — by the documented convention the mainnet token, since this chain has
+    ///         no override — and `predictOivAddresses` runs `_validateOivConfig`, whose `DuplicateAsset`
+    ///         check compares `additionalAssets` against it. So a fund with shares on Gnosis in DAI and
+    ///         `additionalAssets = [USDC]` reverted from mainnet and worked from anywhere else: exactly
+    ///         the origin dependence this contract exists to remove.
+    /// @dev    Fails safe and spends no fee, which is why it was recorded rather than rushed. Fixed by
+    ///         restoring a DECLARED chain's asset on a stack-only origin instead of the local fallback.
+    function test_dispatchTo_doesNotRefuseAnAdditionalAssetMatchingTheLocalFallback() public {
+        // The additional asset IS this chain's local base asset, and is NOT the declared Gnosis asset.
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: oivConfig.sharesParams.asset, canDeposit: true, canRedeem: false});
+
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        assertTrue(topology[0].asset != oivConfig.sharesParams.asset, "precondition: the declared asset differs");
+        assertTrue(_assetForTest(topology, block.chainid) == address(0), "precondition: this origin is stack-only");
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        // Previously reverted DuplicateAsset here, before any lane fee was priced.
+        orchestrator.quoteDeployEverywhere(oivConfig, topology, dests, GAS_LIMIT);
+        orchestrator.dispatchTo{value: FEE}(oivConfig, topology, dests, GAS_LIMIT);
+        assertEq(router.sentCount(), 1, "the fan-out proceeds from a stack-only origin");
+    }
+
+    /// @dev The negative control, and the reason the substitution is safe rather than merely convenient:
+    ///      an additional asset that collides with a DECLARED chain's asset is still refused. That check
+    ///      lives in `_effectiveConfig` and runs before the substitution, so a real collision can never
+    ///      be masked by it.
+    function test_dispatchTo_stillRefusesAnAdditionalAssetMatchingADeclaredChainsAsset() public {
+        oivConfig.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        oivConfig.additionalAssets[0] =
+            KpkOivFactory.AssetConfig({asset: GNOSIS_ASSET, canDeposit: true, canRedeem: false});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(KpkOivFactory.DuplicateAsset.selector);
+        orchestrator.dispatchTo{value: FEE}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev And promotion is unaffected: on the promoted chain the supplied base asset is REAL, not a
+    ///      fallback, so `promoteShares` overrides the substitution. Without that override the promoted
+    ///      fund would be created against another chain's token.
+    function test_promoteShares_usesTheSuppliedAssetNotTheSubstitutedOne() public {
+        CcipOivDeployer.SharesChain[] memory topology = _gnosisOnlyTopology();
+        orchestrator.deployLocal(oivConfig, topology);
+        _approveFromAvatar(topology);
+
+        vm.prank(oivConfig.admin);
+        KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);
+
+        assertTrue(
+            KpkShares(promoted.kpkSharesProxy).isApprovedAsset(oivConfig.sharesParams.asset),
+            "the promoted fund holds THIS chain's asset"
+        );
+        assertFalse(
+            KpkShares(promoted.kpkSharesProxy).isApprovedAsset(GNOSIS_ASSET),
+            "not the declared chain's asset that _effectiveConfig substitutes for predictions"
+        );
+    }
+
+    function _assetForTest(CcipOivDeployer.SharesChain[] memory t, uint256 cid) internal pure returns (address) {
+        for (uint256 i = 0; i < t.length; i++) {
+            if (t[i].chainId == cid) return t[i].asset;
+        }
+        return address(0);
+    }
+
+    // ── Directional CCIP lanes (per-origin reachability) ───────────────────────
+
+    /// @notice The registry bakes all 19 selectors into every orchestrator, but it was built from
+    ///         `script/ccip-networks.json`, which qualifies each chain by a live lane FROM ETHEREUM and
+    ///         carries no pairwise data at all. CCIP lanes are DIRECTIONAL, so "Ethereum reaches Sonic"
+    ///         does not imply "Base reaches Sonic" — and the any-origin fan-out this branch allows was
+    ///         resting on exactly that inference. `supportedChainIds` asks the local router instead.
+    function test_supportedChainIds_excludesALaneTheLocalRouterDoesNotServe() public {
+        uint256[] memory all = orchestrator.getChainIds();
+        uint256[] memory before = orchestrator.supportedChainIds();
+        assertEq(before.length, all.length - 1, "baseline: everything except the local chain");
+
+        router.setLaneUnsupported(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), true);
+
+        uint256[] memory after_ = orchestrator.supportedChainIds();
+        assertEq(after_.length, before.length - 1, "the unreachable chain drops out");
+        for (uint256 i = 0; i < after_.length; i++) {
+            assertTrue(after_[i] != ARBITRUM_CHAIN_ID, "and it is specifically Arbitrum that is gone");
+            assertTrue(after_[i] != block.chainid, "the local chain is never a destination");
+        }
+    }
+
+    /// @notice The no-array fan-out must do what its name says from ANY origin. Before the lane filter
+    ///         it reverted inside `router.getFee` on the first pair the local router does not serve, so
+    ///         a single missing lane made the whole convenience overload unusable.
+    function test_deployEverywhere_noArray_skipsAnUnservedLaneAndStillFansOut() public {
+        router.setLaneUnsupported(orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID), true);
+
+        // Counted INDEPENDENTLY of `supportedChainIds`, which is the other half of this change. Deriving
+        // the expectation from it made this test vacuous: with the filter removed, both sides moved
+        // together and it still passed. The registry minus the local chain minus the one unserved lane
+        // is an arithmetic fact about the fixture, not a restatement of the code under test.
+        uint256 expected = orchestrator.getChainIds().length - 2;
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: expected * FEE}(oivConfig, GAS_LIMIT);
+
+        assertEq(ids.length, expected, "one message per REACHABLE destination");
+        assertEq(router.sentCount(), expected, "and the router saw exactly those");
+    }
+
+    /// @notice An EXPLICITLY named unreachable destination is a caller error, so it reverts with its own
+    ///         error rather than being skipped. `UnknownChain` would be wrong — the orchestrator knows
+    ///         this chain perfectly well; there is simply no lane to it from here.
+    function test_dispatchTo_revertsLaneNotSupportedForAnExplicitUnreachableChain() public {
+        uint64 sel = orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID);
+        router.setLaneUnsupported(sel, true);
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.LaneNotSupported.selector, ARBITRUM_CHAIN_ID, sel));
+        orchestrator.dispatchTo{value: FEE}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev And the QUOTE reverts the same way, which is the half that protects money: an operator who
+    ///      cannot get a quote never sends. Previously both the quote and the dispatch failed with the
+    ///      same opaque revert from inside `getFee`, so the two were indistinguishable.
+    function test_quoteDeployEverywhere_revertsLaneNotSupportedBeforeAnyFeeIsSpent() public {
+        uint64 sel = orchestrator.chainSelectorOf(ARBITRUM_CHAIN_ID);
+        router.setLaneUnsupported(sel, true);
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = ARBITRUM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.LaneNotSupported.selector, ARBITRUM_CHAIN_ID, sel));
+        orchestrator.quoteDeployEverywhere(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @dev The negative control that keeps the filter honest: with every lane served, the supported set
+    ///      is the full registry minus the local chain and nothing about the fan-out changes. Without
+    ///      this, a filter that dropped everything would pass the tests above.
+    function test_supportedChainIds_isTheWholeRegistryWhenEveryLaneIsServed() public view {
+        uint256[] memory all = orchestrator.getChainIds();
+        uint256[] memory supported = orchestrator.supportedChainIds();
+        assertEq(supported.length, all.length - 1, "only the local chain is excluded");
+    }
+
+    /// @dev And if NOTHING is reachable, the all-chains path reports `NoDestinations` rather than
+    ///      sending zero messages and claiming success.
+    function test_deployEverywhere_noArray_revertsNoDestinationsWhenNoLaneIsServed() public {
+        uint256[] memory all = orchestrator.getChainIds();
+        for (uint256 i = 0; i < all.length; i++) {
+            router.setLaneUnsupported(orchestrator.chainSelectorOf(all[i]), true);
+        }
+        vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
+        orchestrator.deployEverywhere{value: FEE}(oivConfig, GAS_LIMIT);
+    }
+
+    // ── Inert-but-hashed fields ────────────────────────────────────────────────
+
+    /// @notice Two configs that deploy a BYTE-IDENTICAL fund must land at the same addresses.
+    ///         `sharesParams.admin` and `.safe` are overwritten by `KpkOivFactory._deploySharesProxy`
+    ///         with `config.admin` and the deployed Safes, so whatever a caller puts there is
+    ///         discarded — but they were hashed into the fund's salt, which split one fund into two
+    ///         over bytes that never reach the chain and that nobody can read back afterwards.
+    function test_effectiveSalt_ignoresTheSharesParamsFieldsTheFactoryOverwrites() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+        uint256 canonical = orchestrator.effectiveSalt(oivConfig, topology);
+
+        KpkOivFactory.OivConfig memory noisy = oivConfig;
+        noisy.sharesParams.admin = address(0xDEAD);
+        noisy.sharesParams.safe = address(0xBEEF);
+
+        assertEq(
+            orchestrator.effectiveSalt(noisy, topology),
+            canonical,
+            "fields the factory overwrites must not move the fund"
+        );
+    }
+
+    /// @notice And the same for timelock role arrays under a ZEROED delay: no timelock is deployed at
+    ///         all, so proposers and cancellers are never read. A config file edited to disable the
+    ///         timelock by setting `minDelay` to 0 while leaving its arrays in place is the ordinary
+    ///         shape of that edit, and it used to produce a completely different fund.
+    function test_effectiveSalt_ignoresTimelockRoleArraysWhenTheDelayIsZero() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+        uint256 canonical = orchestrator.effectiveSalt(oivConfig, topology);
+
+        address[] memory leftovers = new address[](1);
+        leftovers[0] = address(0x1111);
+
+        KpkOivFactory.OivConfig memory execLeftovers = oivConfig;
+        execLeftovers.execTimelock = TimelockParams({minDelay: 0, proposers: leftovers, cancellers: leftovers});
+        assertEq(
+            orchestrator.effectiveSalt(execLeftovers, topology),
+            canonical,
+            "unread exec timelock arrays must not move the fund"
+        );
+
+        KpkOivFactory.OivConfig memory sharesLeftovers = oivConfig;
+        sharesLeftovers.sharesTimelock = TimelockParams({minDelay: 0, proposers: leftovers, cancellers: leftovers});
+        assertEq(
+            orchestrator.effectiveSalt(sharesLeftovers, topology),
+            canonical,
+            "unread shares timelock arrays must not move the fund"
+        );
+    }
+
+    /// @notice The negative control, and the one that keeps the zeroing honest: the moment the delay
+    ///         is non-zero the arrays ARE read — they decide who can propose and cancel — so they must
+    ///         move the fund again. Without this, zeroing the arrays unconditionally would pass every
+    ///         test above while letting two funds with different timelock governance collide.
+    function test_effectiveSalt_timelockRoleArraysStillMoveTheFundWhenTheDelayIsLive() public view {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+
+        address[] memory a = new address[](1);
+        a[0] = address(0x1111);
+        address[] memory b = new address[](1);
+        b[0] = address(0x2222);
+
+        KpkOivFactory.OivConfig memory withA = oivConfig;
+        withA.execTimelock = TimelockParams({minDelay: 2 days, proposers: a, cancellers: new address[](0)});
+        KpkOivFactory.OivConfig memory withB = oivConfig;
+        withB.execTimelock = TimelockParams({minDelay: 2 days, proposers: b, cancellers: new address[](0)});
+
+        assertTrue(
+            orchestrator.effectiveSalt(withA, topology) != orchestrator.effectiveSalt(withB, topology),
+            "a LIVE timelock's proposers must still bind the fund"
+        );
+    }
+
+    /// @dev And `config.admin` — the field the whole salt binding exists to pin — must still move it.
+    ///      A test that only asserts things are ignored cannot fail when everything is ignored.
+    function test_effectiveSalt_adminStillMovesTheFund() public {
+        CcipOivDeployer.SharesChain[] memory topology = _topology();
+
+        KpkOivFactory.OivConfig memory other = oivConfig;
+        other.admin = makeAddr("otherAdmin");
+
+        assertTrue(
+            orchestrator.effectiveSalt(other, topology) != orchestrator.effectiveSalt(oivConfig, topology),
+            "admin must remain salt-bound"
+        );
+    }
+
+    /// @notice The five stack addresses derive from `(salt, manager owners, threshold)` — and
+    ///         `execRolesMod.finalOwner` is NOT among them. So a stack can already sit at exactly the
+    ///         addresses a payload describes while being owned by someone else entirely, and the
+    ///         `StackAlreadyDeployedHere` absorption then reported that as a successful delivery,
+    ///         emitting `StackReceived` with the MESSAGE's governance rather than the owner actually in
+    ///         place. That silence is what made a capture covert: the fund extends here later, sees a
+    ///         green lane, and nobody reads `owner()`.
+    /// @dev    Precondition, stated so the severity is not overread: forging this payload needs the
+    ///         orchestrator owner or a compromised router. `deployLocal`/`dispatchTo` cannot produce
+    ///         it, because they derive the salt through `_effectiveConfig`, which binds `admin`.
+    function test_ccipReceive_refusesToReportSuccessForAStackUnderForeignExecGovernance() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        Client.Any2EVMMessage memory honest = _messageFor(remote);
+        // Decoded TWICE on purpose. A memory-to-memory struct assignment in Solidity copies the
+        // pointer, not the struct, so `hostile = cfg` would mutate the honest config too and the test
+        // would compare a forgery against itself.
+        (KpkOivFactory.StackConfig memory cfg,) = abi.decode(honest.data, (KpkOivFactory.StackConfig, uint256[]));
+        (KpkOivFactory.StackConfig memory hostile, uint256[] memory ids) =
+            abi.decode(honest.data, (KpkOivFactory.StackConfig, uint256[]));
+
+        address captor = makeAddr("stackCaptor");
+        hostile.execRolesMod.finalOwner = captor;
+
+        // Built field by field rather than as `forged = honest; forged.data = ...`, for the same
+        // reason `cfg` and `hostile` are decoded twice: that assignment aliases, so it turned the
+        // honest message INTO the forgery and the test compared a payload against itself — it failed
+        // with "next call did not revert", which reads like the fix not working.
+        Client.Any2EVMMessage memory forged = Client.Any2EVMMessage({
+            messageId: keccak256("forged"),
+            sourceChainSelector: honest.sourceChainSelector,
+            sender: honest.sender,
+            data: abi.encode(hostile, ids),
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+        _deliver(forged);
+
+        KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(cfg, address(orchestrator));
+        assertEq(
+            IRoles(present.execRolesModifier).owner(),
+            captor,
+            "precondition: only finalOwner differed, so the capture landed at the canonical addresses"
+        );
+
+        // The honest delivery must now FAIL the lane instead of absorbing and reporting success.
+        vm.prank(address(router));
+        vm.expectRevert(KpkOivFactory.StackAlreadyDeployedHere.selector);
+        orchestrator.ccipReceive(honest);
+
+        assertEq(
+            IRoles(present.execRolesModifier).owner(),
+            captor,
+            "and the capture is NOT undone - this removes the silence, not the capture"
+        );
+    }
+
+    /// @notice The positive control for the assert above, and the reason it is a fresh `owner()` read
+    ///         rather than a caller gate: honest idempotency must survive. A duplicate delivery of the
+    ///         SAME payload still succeeds, because the owner in place is the one the message
+    ///         describes. Without this test, the §2 assert could be tightened into something that
+    ///         fails every re-delivery and the suite would not notice.
+    function test_ccipReceive_stillAbsorbsAnHonestDuplicateDelivery() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        _deliver(m);
+
+        // Deliberately the SAME payload with a fresh message id, which is what CCIP manual
+        // re-execution and an honest duplicate both look like.
+        m.messageId = keccak256("redelivery");
+        _deliver(m); // must not revert
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(oivConfig, remote);
+        assertGt(pred.avatarSafe.code.length, 0, "the stack is there exactly once and the lane succeeded");
+    }
+
+    /// @notice Same, for a TIMELOCKED stack: the modifier is owned by the timelock rather than by
+    ///         `finalOwner`, so the assert has to compare against the predicted timelock or every
+    ///         timelocked re-delivery would fail the lane. This is the branch that would break if the
+    ///         expected-owner derivation dropped its `execTimelock` case.
+    function test_ccipReceive_stillAbsorbsAnHonestDuplicateOfATimelockedStack() public {
+        CcipOivDeployer.SharesChain[] memory remote = new CcipOivDeployer.SharesChain[](1);
+        remote[0] = CcipOivDeployer.SharesChain({chainId: OPTIMISM_CHAIN_ID, asset: oivConfig.sharesParams.asset});
+
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(0x1111);
+        // `_messageFor` builds from the `oivConfig` storage variable, so the mutation goes there.
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        Client.Any2EVMMessage memory m = _messageFor(remote);
+        _deliver(m);
+
+        (KpkOivFactory.StackConfig memory cfg,) = abi.decode(m.data, (KpkOivFactory.StackConfig, uint256[]));
+        KpkOivFactory.StackInstance memory present = factory.predictStackAddresses(cfg, address(orchestrator));
+        assertTrue(present.execTimelock != address(0), "precondition: this stack really is timelocked");
+        assertEq(IRoles(present.execRolesModifier).owner(), present.execTimelock, "and the timelock owns the modifier");
+
+        m.messageId = keccak256("timelocked redelivery");
+        _deliver(m); // must not revert
+    }
+
+    /// @notice A timelock config that every destination will reject must be rejected HERE, before a
+    ///         single non-refundable fee is spent. `dispatchTo` runs no local `deployOiv`, so
+    ///         nothing else on the source chain ever looks at `execTimelock`: a proposer array that
+    ///         is not strictly ascending — which a reformatted or regenerated config produces very
+    ///         easily — used to dispatch to every lane, pay every fee, and revert on arrival inside
+    ///         `KpkTimelockDeployer._validate`.
+    function test_dispatchTo_rejectsAnInvalidTimelockBeforeSpendingFees() public {
+        address[] memory proposers = new address[](2);
+        proposers[0] = address(0x2222); // descending: the deployer requires strictly ascending
+        proposers[1] = address(0x1111);
+        oivConfig.execTimelock = TimelockParams({minDelay: 2 days, proposers: proposers, cancellers: new address[](0)});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert();
+        orchestrator.dispatchTo{value: _fee(1)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @notice A fund with additional assets cannot span two shares chains, and must be refused
+    ///         BEFORE the fan-out spends anything. `_effectiveConfig` zeroes the base asset before
+    ///         hashing because the topology commits to it per chain — but `additionalAssets[i].asset`
+    ///         is equally chain-specific and `SharesChain` has nowhere to put it, so it stays in the
+    ///         salt. On the second shares chain you would then have to pass either that chain's token
+    ///         (a different salt, so `deployLocal` silently builds a separate fund at non-canonical
+    ///         addresses) or the first chain's token (codeless there, so registration and approval
+    ///         both revert). Neither is a deployment, so the configuration is refused up front.
+    function test_effectiveConfig_refusesAdditionalAssetsAcrossTwoSharesChains() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: true
+        });
+
+        CcipOivDeployer.SharesChain[] memory two = new CcipOivDeployer.SharesChain[](2);
+        two[0] = CcipOivDeployer.SharesChain({chainId: 1, asset: USDC});
+        two[1] = CcipOivDeployer.SharesChain({chainId: GNOSIS_CHAIN_ID, asset: GNOSIS_ASSET});
+
+        vm.expectRevert(CcipOivDeployer.AdditionalAssetsNeedASingleSharesChain.selector);
+        orchestrator.predictOiv(cfg, two);
+    }
+
+    /// @dev The control: the same additional asset on a SINGLE shares chain is fine, so the refusal
+    ///      is about the combination rather than about additional assets at all.
+    function test_effectiveConfig_allowsAdditionalAssetsOnOneSharesChain() public view {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.additionalAssets = new KpkOivFactory.AssetConfig[](1);
+        cfg.additionalAssets[0] = KpkOivFactory.AssetConfig({
+            asset: 0x6B175474E89094C44Da98b954EedeAC495271d0F, canDeposit: false, canRedeem: true
+        });
+
+        KpkOivFactory.OivInstance memory pred = orchestrator.predictOiv(cfg, _topology());
+        assertTrue(pred.kpkSharesProxy != address(0), "one shares chain with additional assets is fine");
+    }
+
+    /// @notice A fan-out originating from a STACK-ONLY chain must still validate the shares half of
+    ///         the config before spending anything. That branch runs `deployStack` locally, which
+    ///         validates only the stack half — but the shares half is salt-bound, so discovering a
+    ///         zero `feeReceiver` after the fan-out means every remote stack has landed, every
+    ///         non-refundable fee is spent, and correcting the field moves every address and orphans
+    ///         them.
+    function test_deployEverywhere_fromAStackOnlyChainStillValidatesTheSharesHalf() public {
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.sharesParams.feeReceiver = address(0);
+
+        // Gnosis-only topology: this chain carries no shares, so the local branch is deployStack.
+        vm.expectRevert();
+        orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(cfg, _gnosisOnlyTopology(), GAS_LIMIT);
+    }
+
+    /// @notice A destination named twice is a mistake in the list, and one that costs a second
+    ///         non-refundable fee for a message that reverts on arrival.
+    function test_dispatchTo_rejectsADuplicateDestination() public {
+        uint256[] memory dests = new uint256[](2);
+        dests[0] = OPTIMISM_CHAIN_ID;
+        dests[1] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.DuplicateDestination.selector, OPTIMISM_CHAIN_ID));
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _gnosisOnlyTopology(), dests, GAS_LIMIT);
+    }
+
+    /// @notice The source-chain pre-check must cover the STACK half too, not just the timelock.
+    ///         `dispatchTo` runs no local deploy, so duplicate manager owners — or a threshold above
+    ///         the owner count — used to dispatch to every lane, spend every non-refundable fee, and
+    ///         revert `DuplicateOwner` on arrival: the exact failure the pre-check exists to prevent,
+    ///         one validator over.
+    function test_dispatchTo_rejectsADuplicateManagerOwnerBeforeSpendingFees() public {
+        address[] memory dupes = new address[](2);
+        dupes[0] = managerSigner;
+        dupes[1] = managerSigner;
+
+        KpkOivFactory.OivConfig memory cfg = oivConfig;
+        cfg.managerSafe = KpkOivFactory.SafeConfig({owners: dupes, threshold: 1});
+
+        uint256[] memory dests = new uint256[](1);
+        dests[0] = OPTIMISM_CHAIN_ID;
+
+        vm.expectRevert(KpkOivFactory.DuplicateOwner.selector);
+        orchestrator.dispatchTo{value: _fee(1)}(cfg, _gnosisOnlyTopology(), dests, GAS_LIMIT);
     }
 
     function test_ccipReceive_revertsForWrongRouter() public {
@@ -289,27 +1613,23 @@ contract CcipOivDeployerTest is OivTestConstants {
     function test_configure_onlyOwner() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        orchestrator.configure(address(router), address(link), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(link));
     }
 
     function test_configure_revertsOnZeroRouter() public {
         vm.expectRevert(CcipOivDeployer.ZeroAddress.selector);
-        orchestrator.configure(address(0), address(link), MAINNET_SELECTOR);
-    }
-
-    function test_configure_revertsOnZeroSelector() public {
-        vm.expectRevert(CcipOivDeployer.ZeroChainSelector.selector);
-        orchestrator.configure(address(router), address(link), 0);
+        orchestrator.configure(address(0), address(link));
     }
 
     /// @dev Native fees mean LINK is optional: configuring with a zero linkToken must succeed (it just
     ///      disables the withdrawLink sweep). Lets the orchestrator work on lanes without a LINK token.
     function test_configure_allowsZeroLinkToken() public {
-        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR);
+        orchestrator.configure(address(router), address(0));
         assertEq(orchestrator.linkToken(), address(0), "zero linkToken accepted");
         // Deploy still works (fees are native, not LINK).
         uint256[] memory dests = _dests();
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, dests, GAS_LIMIT);
+        (, bytes32[] memory ids) =
+            orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(ids.length, 2, "deploy works without a LINK token");
     }
 
@@ -320,7 +1640,8 @@ contract CcipOivDeployerTest is OivTestConstants {
 
     function test_quoteDeployEverywhere_sumsFees() public view {
         uint256[] memory dests = _dests();
-        (uint256 total, uint256[] memory per) = orchestrator.quoteDeployEverywhere(oivConfig, dests, GAS_LIMIT);
+        (uint256 total, uint256[] memory per) =
+            orchestrator.quoteDeployEverywhere(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(total, 2 * FEE, "total fee");
         assertEq(per[0], FEE, "per[0]");
         assertEq(per[1], FEE, "per[1]");
@@ -333,7 +1654,8 @@ contract CcipOivDeployerTest is OivTestConstants {
         uint256[] memory dests = _dests();
 
         uint256 routerBalBefore = address(router).balance;
-        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        bytes32[] memory ids =
+            orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
 
         // No local OIV was deployed — only CCIP messages went out.
         assertEq(factory.instanceCount(), instancesBefore, "dispatchTo must not deploy a local OIV");
@@ -341,7 +1663,7 @@ contract CcipOivDeployerTest is OivTestConstants {
         assertEq(router.sentCount(), 2, "two ccipSend calls");
         assertEq(address(router).balance, routerBalBefore + 2 * FEE, "router did not receive native fees");
         // Payload is the same factory-derived StackConfig as the deploy path.
-        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        (KpkOivFactory.StackConfig memory sent,) = abi.decode(router.lastData(), (KpkOivFactory.StackConfig, uint256[]));
         assertEq(sent.salt, _effSalt(), "salt mismatch");
         assertEq(sent.execRolesMod.finalOwner, oivConfig.admin, "execMod finalOwner mismatch");
     }
@@ -349,7 +1671,8 @@ contract CcipOivDeployerTest is OivTestConstants {
     function test_dispatchTo_isPermissionless() public {
         uint256[] memory dests = _dests();
         vm.prank(stranger);
-        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+        bytes32[] memory ids =
+            orchestrator.dispatchTo{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(ids.length, 2, "non-owner can dispatch");
     }
 
@@ -359,7 +1682,7 @@ contract CcipOivDeployerTest is OivTestConstants {
         fresh.setChainSelector(BASE_CHAIN_ID, BASE_SELECTOR);
         uint256[] memory dests = _dests();
         vm.expectRevert(CcipOivDeployer.NotConfigured.selector);
-        fresh.dispatchTo(oivConfig, dests, GAS_LIMIT);
+        fresh.dispatchTo(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
     /// @dev The recovery / add-a-chain path: after deployEverywhere has run, dispatchTo can fan the
@@ -367,24 +1690,25 @@ contract CcipOivDeployerTest is OivTestConstants {
     ///      would revert on the mainnet CREATE2 collision). (Actual delivery → matching addresses is
     ///      covered by test_ccipReceive_deploysStackMatchingMainnetOivPrediction.)
     function test_dispatchTo_addsNewChainAfterDeployEverywhere() public {
-        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT); // Arbitrum + Base
+        orchestrator.deployEverywhere{value: _fee(2)}(oivConfig, _topology(), _dests(), GAS_LIMIT); // Arbitrum + Base
         uint256 sentAfterDeploy = router.sentCount();
 
         uint256[] memory more = new uint256[](1);
         more[0] = OPTIMISM_CHAIN_ID;
-        bytes32[] memory ids = orchestrator.dispatchTo{value: _fee(more.length)}(oivConfig, more, GAS_LIMIT);
+        bytes32[] memory ids =
+            orchestrator.dispatchTo{value: _fee(more.length)}(oivConfig, _topology(), more, GAS_LIMIT);
 
         assertEq(ids.length, 1, "one new message");
         assertEq(router.sentCount(), sentAfterDeploy + 1, "dispatchTo adds exactly one more message");
-        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        (KpkOivFactory.StackConfig memory sent,) = abi.decode(router.lastData(), (KpkOivFactory.StackConfig, uint256[]));
         assertEq(sent.salt, _effSalt(), "same fund salt");
     }
 
     /// @dev The orchestrator's dispatched StackConfig must equal the factory's own deployOiv mapping,
     ///      enforced by both calling factory.oivToStackConfig (single source of truth, finding #3).
     function test_oivToStackConfig_matchesDispatchedPayload() public {
-        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _dests(), GAS_LIMIT);
-        KpkOivFactory.StackConfig memory sent = abi.decode(router.lastData(), (KpkOivFactory.StackConfig));
+        orchestrator.dispatchTo{value: _fee(2)}(oivConfig, _topology(), _dests(), GAS_LIMIT);
+        (KpkOivFactory.StackConfig memory sent,) = abi.decode(router.lastData(), (KpkOivFactory.StackConfig, uint256[]));
         KpkOivFactory.StackConfig memory expected = factory.oivToStackConfig(_effConfig());
         assertEq(abi.encode(sent), abi.encode(expected), "dispatched payload must equal factory mapping");
     }
@@ -396,7 +1720,7 @@ contract CcipOivDeployerTest is OivTestConstants {
     }
 
     function test_withdrawLink_revertsWithNoLinkTokenWhenUnset() public {
-        orchestrator.configure(address(router), address(0), MAINNET_SELECTOR); // native fees, no LINK
+        orchestrator.configure(address(router), address(0)); // native fees, no LINK
         vm.expectRevert(CcipOivDeployer.NoLinkToken.selector);
         orchestrator.withdrawLink(address(this), 1);
     }
@@ -467,7 +1791,7 @@ contract CcipOivDeployerTest is OivTestConstants {
         uint256[] memory dests = new uint256[](1);
         dests[0] = 999999; // never mapped
         vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, uint256(999999)));
-        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, _topology(), dests, GAS_LIMIT);
     }
 
     function test_deployEverywhere_worksAfterRemappingSelector() public {
@@ -477,7 +1801,7 @@ contract CcipOivDeployerTest is OivTestConstants {
 
         uint256[] memory dests = new uint256[](1);
         dests[0] = BASE_CHAIN_ID;
-        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, dests, GAS_LIMIT);
+        orchestrator.deployEverywhere{value: _fee(1)}(oivConfig, _topology(), dests, GAS_LIMIT);
 
         // MockCcipRouter.Sent = (destChainSelector, receiver, data, feeToken, fee).
         (uint64 destSel,,,,) = router.sent(router.sentCount() - 1);
@@ -487,21 +1811,20 @@ contract CcipOivDeployerTest is OivTestConstants {
     // ── Enumerable registry + all-configured fan-out ──────────────────────────────
 
     function test_getChainIds_returnsConfiguredSet() public view {
-        // setUp configured Arbitrum, Base, Optimism.
         uint256[] memory ids = orchestrator.getChainIds();
-        assertEq(ids.length, 3, "three configured");
-        assertEq(orchestrator.getChainIdCount(), 3, "count getter");
+        assertEq(ids.length, BAKED_CHAINS, "every wired chain is in the set");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "count getter agrees");
     }
 
     function test_setChainSelector_updateDoesNotDuplicate() public {
         orchestrator.setChainSelector(BASE_CHAIN_ID, 12345); // already configured in setUp
-        assertEq(orchestrator.getChainIdCount(), 3, "update must not grow the set");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "update must not grow the set");
         assertEq(orchestrator.chainSelectorOf(BASE_CHAIN_ID), 12345, "selector updated");
     }
 
     function test_removeChainSelector_shrinksEnumerableSet() public {
         orchestrator.removeChainSelector(BASE_CHAIN_ID);
-        assertEq(orchestrator.getChainIdCount(), 2, "set shrank");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS - 1, "set shrank");
         uint256[] memory ids = orchestrator.getChainIds();
         for (uint256 i = 0; i < ids.length; i++) {
             assertTrue(ids[i] != BASE_CHAIN_ID, "removed id still present");
@@ -512,32 +1835,41 @@ contract CcipOivDeployerTest is OivTestConstants {
     }
 
     function test_deployEverywhere_allConfigured_fansOutToEveryChain() public {
-        // No array: fans out to all configured chains (3 in setUp).
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
-        assertEq(ids.length, 3, "one message per configured chain");
-        assertEq(router.sentCount(), 3, "dispatched to all configured");
+        // No array: fans out to every wired chain except the local one.
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, BAKED_DESTINATIONS, "one message per configured chain");
+        assertEq(router.sentCount(), BAKED_DESTINATIONS, "dispatched to all configured");
     }
 
     function test_quoteDeployEverywhere_allConfigured_sumsAllChains() public view {
         (uint256 total, uint256[] memory per) = orchestrator.quoteDeployEverywhere(oivConfig, GAS_LIMIT);
-        assertEq(per.length, 3, "per-destination length");
-        assertEq(total, 3 * FEE, "total fee across all configured chains");
+        assertEq(per.length, BAKED_DESTINATIONS, "per-destination length");
+        assertEq(total, BAKED_DESTINATIONS * FEE, "total fee across all configured chains");
     }
 
     function test_deployEverywhere_allConfigured_skipsLocalChain() public {
-        // Configuring the local chain (fork is mainnet, id 1) must not cause a self-send.
-        orchestrator.setChainSelector(block.chainid, MAINNET_SELECTOR);
-        assertEq(orchestrator.getChainIdCount(), 4, "local chain added to set");
+        // The local chain (fork is mainnet, id 1) is itself baked into the registry, so this is no
+        // longer a configuration the test has to create — it is the default, and must not self-send.
+        assertEq(orchestrator.chainSelectorOf(block.chainid), MAINNET_SELECTOR, "local chain is baked in");
+        assertEq(orchestrator.getChainIdCount(), BAKED_CHAINS, "local chain counted in the set");
 
-        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(3)}(oivConfig, GAS_LIMIT);
-        assertEq(ids.length, 3, "local chain skipped - still only 3 remote dispatches");
-        assertEq(router.sentCount(), 3, "no self-send");
+        (, bytes32[] memory ids) = orchestrator.deployEverywhere{value: _fee(BAKED_DESTINATIONS)}(oivConfig, GAS_LIMIT);
+        assertEq(ids.length, BAKED_DESTINATIONS, "local chain skipped");
+        assertEq(router.sentCount(), BAKED_DESTINATIONS, "no self-send");
     }
 
     function test_deployEverywhere_allConfigured_revertsWhenNoneConfigured() public {
+        // "None configured" is no longer a fresh instance's state — it has to be emptied on purpose.
         CcipOivDeployer fresh = new CcipOivDeployer(address(this), address(factory));
-        fresh.configure(address(router), address(link), MAINNET_SELECTOR); // router set, but no chains
-        vm.expectRevert(CcipOivDeployer.NoDestinations.selector);
+        fresh.configure(address(router), address(link));
+
+        uint256[] memory all = fresh.getChainIds();
+        for (uint256 i = 0; i < all.length; i++) {
+            fresh.removeChainSelector(all[i]);
+        }
+        assertEq(fresh.getChainIdCount(), 0, "registry emptied");
+
+        vm.expectRevert(abi.encodeWithSelector(CcipOivDeployer.UnknownChain.selector, block.chainid));
         fresh.deployEverywhere{value: 0}(oivConfig, GAS_LIMIT);
     }
 
@@ -548,11 +1880,11 @@ contract CcipOivDeployerTest is OivTestConstants {
     ///      caller cannot front-run a victim's salt and land a fund (with their own admin) at the
     ///      victim's intended addresses.
     function test_predictOiv_differentAdminYieldsDifferentAddresses() public {
-        KpkOivFactory.OivInstance memory legit = orchestrator.predictOiv(oivConfig);
+        KpkOivFactory.OivInstance memory legit = orchestrator.predictOiv(oivConfig, _topology());
 
         KpkOivFactory.OivConfig memory attacker = oivConfig; // same salt, different admin
         attacker.admin = makeAddr("attacker");
-        KpkOivFactory.OivInstance memory squat = orchestrator.predictOiv(attacker);
+        KpkOivFactory.OivInstance memory squat = orchestrator.predictOiv(attacker, _topology());
 
         assertTrue(legit.avatarSafe != squat.avatarSafe, "avatar safe must differ when admin differs");
         assertTrue(legit.execRolesModifier != squat.execRolesModifier, "exec modifier must differ");
@@ -561,18 +1893,18 @@ contract CcipOivDeployerTest is OivTestConstants {
 
     /// @dev Determinism: the same config predicts the same addresses (so cross-chain stacks align).
     function test_predictOiv_sameConfigIsStable() public view {
-        KpkOivFactory.OivInstance memory a = orchestrator.predictOiv(oivConfig);
-        KpkOivFactory.OivInstance memory b = orchestrator.predictOiv(oivConfig);
+        KpkOivFactory.OivInstance memory a = orchestrator.predictOiv(oivConfig, _topology());
+        KpkOivFactory.OivInstance memory b = orchestrator.predictOiv(oivConfig, _topology());
         assertEq(a.avatarSafe, b.avatarSafe);
         assertEq(a.kpkSharesProxy, b.kpkSharesProxy);
     }
 
     /// @dev Deployed fund must match predictOiv (the config-bound-salt prediction).
     function test_deployEverywhere_matchesPredictOiv() public {
-        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig);
+        KpkOivFactory.OivInstance memory predicted = orchestrator.predictOiv(oivConfig, _topology());
         uint256[] memory dests = _dests();
         (KpkOivFactory.OivInstance memory inst,) =
-            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, dests, GAS_LIMIT);
+            orchestrator.deployEverywhere{value: _fee(dests.length)}(oivConfig, _topology(), dests, GAS_LIMIT);
         assertEq(inst.avatarSafe, predicted.avatarSafe);
         assertEq(inst.kpkSharesProxy, predicted.kpkSharesProxy);
     }
@@ -599,15 +1931,32 @@ contract CcipOivDeployerTest is OivTestConstants {
         dests[1] = BASE_CHAIN_ID;
     }
 
+    /// @dev A payload for a fund whose topology names ONLY mainnet, so a sidechain receiving it is
+    ///      not a shares chain and accepts the stack.
     function _validMessage() internal view returns (Client.Any2EVMMessage memory) {
-        // Source the StackConfig from the factory's own mapping — the same single source of truth
-        // the orchestrator uses on the send side.
-        KpkOivFactory.StackConfig memory stackCfg = factory.oivToStackConfig(_effConfig());
+        return _messageFor(_topology());
+    }
+
+    /// @dev A delivered message for an explicit topology.
+    function _messageFor(CcipOivDeployer.SharesChain[] memory topology)
+        internal
+        view
+        returns (Client.Any2EVMMessage memory)
+    {
+        KpkOivFactory.OivConfig memory eff = oivConfig;
+        eff.sharesParams.asset = address(0);
+        eff.salt = uint256(keccak256(abi.encode(eff, topology)));
+        eff.sharesParams.asset = oivConfig.sharesParams.asset;
+
+        uint256[] memory ids = new uint256[](topology.length);
+        for (uint256 i = 0; i < topology.length; i++) {
+            ids[i] = topology[i].chainId;
+        }
         return Client.Any2EVMMessage({
             messageId: keccak256("msg"),
             sourceChainSelector: MAINNET_SELECTOR,
             sender: abi.encode(address(orchestrator)),
-            data: abi.encode(stackCfg),
+            data: abi.encode(factory.oivToStackConfig(eff), ids),
             destTokenAmounts: new Client.EVMTokenAmount[](0)
         });
     }

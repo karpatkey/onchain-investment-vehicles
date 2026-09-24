@@ -27,14 +27,16 @@ contract MultiSendCodehashSyncTest is Test, OivChainDeploy {
     function setUp() public {
         harness = new KpkOivFactoryHarness(
             address(this),
-            address(1),
-            address(2),
-            address(3),
-            address(4),
-            address(5),
-            address(6),
-            address(7),
-            address(8)
+            // Coded: the constructor now rejects codeless infra for all eight args.
+            address(this),
+            address(this),
+            address(this),
+            address(this),
+            address(this),
+            address(this),
+            // Coded: the constructor now rejects a codeless write-once value.
+            address(this),
+            address(this)
         );
     }
 

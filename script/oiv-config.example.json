@@ -1,13 +1,18 @@
 {
-  "_comment": "Example OIV fund config. Timelock blocks, assetOverrides and sharesChains are all OPTIONAL: omit them and the fund deploys exactly as it did before those features existed. Parsed by script/base/OivConfigReader.sol and pinned by test/OivConfigReader.t.sol, so this file cannot drift from the parser.",
+  "_comment": "Example OIV fund config. NOT all optional: .sharesChains is REQUIRED by DeployOiv.deploy and by _buildSharesChains, which additionally requires an .oiv.assetOverrides entry for EVERY declared shares chain. A timelock block, if present, must carry ALL THREE of minDelay, proposers and cancellers: minDelay must be non-zero and within 12h-30d (zero is the no-timelock sentinel and is refused), while proposers and cancellers each require the KEY though an explicit [] is accepted for either. To deploy without a timelock, omit the whole block. Two earlier versions of this comment were wrong - the first claimed all of this was optional, the second said proposers was required \"even at minDelay 0\" and never mentioned cancellers. Parsed by script/base/OivConfigReader.sol on every CI run by test/OivConfigReader.t.sol - which pins the timelock blocks, the shares-chain topology and the asset overrides, but NOT the fee rates, TTLs, feeReceiver, symbol, manager owners or additionalAssets. Parsing proves the structure still matches the parser; it does not prove any of those values is right.",
   "fundName": "EXAMPLE FUND",
   "managerSafe": {
-    "owners": ["0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"],
+    "owners": [
+      "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+    ],
     "threshold": 1
   },
   "salt": "7",
   "execRolesModFinalOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
-  "sharesChains": [1, 100],
+  "sharesChains": [
+    1,
+    100
+  ],
   "oiv": {
     "admin": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
     "sharesParams": {
@@ -23,6 +28,7 @@
       "performanceFeeRate": 0
     },
     "assetOverrides": {
+      "1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       "100": "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0"
     },
     "execTimelock": {
@@ -31,7 +37,9 @@
         "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
         "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
       ],
-      "cancellers": ["0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"]
+      "cancellers": [
+        "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"
+      ]
     },
     "sharesTimelock": {
       "minDelay": 604800,
@@ -39,7 +47,9 @@
         "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
         "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
       ],
-      "cancellers": ["0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"]
+      "cancellers": [
+        "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b"
+      ]
     },
     "additionalAssets": []
   }

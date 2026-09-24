@@ -108,9 +108,6 @@ abstract contract OivChainDeploy is Script {
     bytes internal constant MULTISEND_UNWRAPPER_INIT_CODE =
         hex"608060405234801561000f575f80fd5b506108308061001d5f395ff3fe608060405234801561000f575f80fd5b5060043610610029575f3560e01c8063c7a7b6351461002d575b5f80fd5b61004061003b36600461052c565b610056565b60405161004d91906105e3565b60405180910390f35b606084156100775760405163ad6e405560e01b815260040160405180910390fd5b600182600181111561008b5761008b6105cf565b146100a95760405163ad6e405560e01b815260040160405180910390fd5b6100b384846100d6565b5f6100be85856101a1565b90506100cb8585836102b8565b979650505050505050565b6346c07f8560e11b6100e88284610677565b6001600160e01b0319161461011057604051631a751fb760e11b815260040160405180910390fd5b602061011f82600481866106a5565b610128916106cc565b1461014657604051631a751fb760e11b815260040160405180910390fd5b5f61015482602481866106a5565b61015d916106cc565b90508161017361016e8360406106fd565b6104e5565b61017e9060046106fd565b1461019c57604051631a751fb760e11b815260040160405180910390fd5b505050565b5f6044816101b284602481886106a5565b6101bb916106cc565b6101c69060446106fd565b90505b80821015610291575f6101de858481896106a5565b6101e791610710565b60f81c9050600181111561020d57604051629ec3f960e31b815260040160405180910390fd5b5f868661021b8660356106fd565b6102269282906106a5565b61022f916106cc565b9050828161023e8660556106fd565b61024891906106fd565b111561026657604051629ec3f960e31b815260040160405180910390fd5b6102718160556106fd565b61027b90856106fd565b9350846102878161073e565b95505050506101c9565b825f036102b057604051629ec3f960e31b815260040160405180910390fd5b505092915050565b60608167ffffffffffffffff8111156102d3576102d3610756565b60405190808252806020026020018201604052801561033b57816020015b6103286040805160a08101909152805f81526020015f6001600160a01b031681526020015f81526020015f81526020015f81525090565b8152602001906001900390816102f15790505b50905060445f5b838110156104dc57610356858381896106a5565b61035f91610710565b60f81c6001811115610373576103736105cf565b8382815181106103855761038561076a565b60200260200101515f019060018111156103a1576103a16105cf565b908160018111156103b4576103b46105cf565b9052506103c26001836106fd565b91506103d0858381896106a5565b6103d99161077e565b60601c8382815181106103ee576103ee61076a565b6020908102919091018101516001600160a01b039092169101526104136014836106fd565b9150610421858381896106a5565b61042a916106cc565b5f1c83828151811061043e5761043e61076a565b6020026020010151604001818152505060208261045b91906106fd565b91505f61046a8684818a6106a5565b610473916106cc565b90506104806020846106fd565b9250828483815181106104955761049561076a565b60200260200101516060018181525050808483815181106104b8576104b861076a565b6020908102919091010151608001526104d181846106fd565b925050600101610342565b50509392505050565b5f602060016104f484836106fd565b6104fe91906107b1565b61050891906107c4565b6105139060206107e3565b92915050565b803560028110610527575f80fd5b919050565b5f805f805f60808688031215610540575f80fd5b85356001600160a01b0381168114610556575f80fd5b945060208601359350604086013567ffffffffffffffff80821115610579575f80fd5b818801915088601f83011261058c575f80fd5b81358181111561059a575f80fd5b8960208285010111156105ab575f80fd5b6020830195508094505050506105c360608701610519565b90509295509295909350565b634e487b7160e01b5f52602160045260245ffd5b602080825282518282018190525f91906040908185019086840185805b8381101561066957825180516002811061062857634e487b7160e01b84526021600452602484fd5b8652808801516001600160a01b0316888701528681015187870152606080820151908701526080908101519086015260a09094019391860191600101610600565b509298975050505050505050565b6001600160e01b031981358181169160048510156102b05760049490940360031b84901b1690921692915050565b5f80858511156106b3575f80fd5b838611156106bf575f80fd5b5050820193919092039150565b80356020831015610513575f19602084900360031b1b1692915050565b634e487b7160e01b5f52601160045260245ffd5b80820180821115610513576105136106e9565b6001600160f81b031981358181169160018510156102b05760019490940360031b84901b1690921692915050565b5f6001820161074f5761074f6106e9565b5060010190565b634e487b7160e01b5f52604160045260245ffd5b634e487b7160e01b5f52603260045260245ffd5b6bffffffffffffffffffffffff1981358181169160148510156102b05760149490940360031b84901b1690921692915050565b81810381811115610513576105136106e9565b5f826107de57634e487b7160e01b5f52601260045260245ffd5b500490565b8082028115828204841417610513576105136106e956fea264697066735822122039836a916c6e77cf306bccef03cf05dd5cb638d5ac3fd8bde58b82582f3be8bb64736f6c63430008150033";
 
-    /// @notice CCIP selector of Ethereum mainnet — the trusted source on every chain.
-    uint64 internal constant MAINNET_SELECTOR = 5009297550715157269;
-
     // ── Init-code builders (the address-critical code; reused everywhere) ─────────
 
     function _factoryInitCode(address eoaOwner) internal pure returns (bytes memory) {
@@ -124,8 +121,14 @@ abstract contract OivChainDeploy is Script {
                 SAFE_FALLBACK_HANDLER,
                 MODULE_PROXY_FACTORY,
                 ROLES_MODIFIER_MASTERCOPY,
-                address(0), // placeholder — wired post-deploy via setKpkSharesMastercopy
-                address(0) // placeholder — wired post-deploy via setTimelockDeployer
+                // No longer placeholders: both are constructor-MANDATORY, so they are part of the
+                // factory's CREATE2 init code and therefore of its address. A chain that wired them
+                // differently now yields a different factory address, which the address-sync guards
+                // fail on — instead of a fund whose shares proxy or timelock silently sits elsewhere
+                // on that one chain. Both are pure functions of the salt generation, so this stays
+                // chain-independent.
+                _create2Address(SALT_SHARES_MASTERCOPY, _sharesMastercopyInitCode()),
+                _predictTimelockDeployer()
             )
         );
     }
@@ -139,8 +142,10 @@ abstract contract OivChainDeploy is Script {
         );
     }
 
-    /// @dev Both mastercopies take no constructor arguments, so each lands at one address on every
-    ///      chain and the contracts that reference them stay chain-independent.
+    /// @dev The two MASTERCOPIES take no constructor arguments, so each lands at one address on
+    ///      every chain. `KpkTimelockDeployer` does take one — the timelock mastercopy — so its
+    ///      address depends on that mastercopy's, and therefore on the salt generation; it is still
+    ///      chain-independent, because every input is.
     function _sharesMastercopyInitCode() internal pure returns (bytes memory) {
         return type(KpkShares).creationCode;
     }
@@ -286,14 +291,13 @@ abstract contract OivChainDeploy is Script {
         _ensureEmpty();
         _ensureMultiSendUnwrapper();
 
-        // ── 2. Factory + deployer ──
-        if (factory.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
-            require(ok, "factory CREATE2 deploy failed");
-            console.log("[OK]   KpkOivFactory deployed at:    ", factory);
-        } else {
-            console.log("[SKIP] KpkOivFactory already at:     ", factory);
-        }
+        // ── 2. Mastercopies and the timelock deployer FIRST, then the factory ──
+        //
+        // Order is load-bearing now. The factory's constructor requires both `kpkSharesMastercopy`
+        // and `timelockDeployer` to be non-zero AND to have code, so neither can be a placeholder
+        // wired afterwards — which is the point: they are in its init code, so a mis-wire moves the
+        // factory's own address rather than silently moving one chain's proxies. Deploying the
+        // factory before them would simply revert `InvalidMastercopy`.
         if (sharesMastercopy.code.length == 0) {
             (bool ok,) =
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_SHARES_MASTERCOPY, sharesMastercopyInitCode));
@@ -308,8 +312,52 @@ abstract contract OivChainDeploy is Script {
                 CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK_MASTERCOPY, timelockMastercopyInitCode));
             require(ok, "timelock mastercopy CREATE2 deploy failed");
             console.log("[OK]   Timelock mastercopy deployed at:", timelockMastercopy);
+
+            // `TimelockControllerUpgradeable` has no constructor, so nothing calls
+            // `_disableInitializers()` and its `initialize` stays open at this published, canonical
+            // address. Clones are unaffected — they get their own storage — so an outsider claiming
+            // it is not a fund compromise, but it would leave a fully functional
+            // `TimelockController` under a stranger's `DEFAULT_ADMIN_ROLE` at an address this repo
+            // publishes as kpk infrastructure.
+            //
+            // Claim it here — BEST EFFORT, not a guarantee, and the difference matters. The CREATE2
+            // and this `initialize` are separate broadcast transactions, so a searcher watching the
+            // mempool can claim the published address in between; this call then reverts, and a
+            // re-run takes the `[SKIP]` path because code already exists. The post-flight below is
+            // what catches that, and only partially: it detects a claimer who gave themselves a delay
+            // or open execution, not one who claimed it inert while holding PROPOSER_ROLE. Closing it
+            // properly needs a thin wrapper whose CONSTRUCTOR calls `_disableInitializers()`, which
+            // moves the mastercopy address and every timelock address with it.
+            //
+            // Note WHY the result is inert, because the obvious reason is wrong: OZ does not leave it
+            // role-free. `__TimelockController_init_unchained` grants `DEFAULT_ADMIN_ROLE` to the
+            // contract ITSELF unconditionally; the `admin == address(0)` branch only skips granting
+            // the extra admin. Inertness comes from the empty arrays alone — no proposer can
+            // schedule, and `EXECUTOR_ROLE` is not open.
+            //
+            // Inside this branch only, which is what keeps a re-run idempotent: a freshly CREATE2'd
+            // contract is definitively uninitialized, so requiring success here is safe, and the
+            // `[SKIP]` path below records no transaction at all.
+            address[] memory noMembers = new address[](0);
+            (bool claimed,) = timelockMastercopy.call(
+                abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembers, noMembers, address(0)))
+            );
+            require(claimed, "timelock mastercopy initializer could not be claimed");
+            console.log("[OK]   Timelock mastercopy initializer claimed (no roles granted)");
         } else {
             console.log("[SKIP] Timelock mastercopy already at: ", timelockMastercopy);
+            // NO retry here, deliberately. An earlier version attempted the claim on this path too,
+            // to cover a run whose CREATE2 landed while its `initialize` did not. It was inside
+            // `vm.startBroadcast()`, and forge records a broadcastable transaction at call-entry
+            // whether or not it reverts — so on an ALREADY-claimed mastercopy the recorded
+            // transaction failed simulation and aborted the whole run. That destroyed the idempotence
+            // every per-chain script depends on (each step is a `[SKIP]` branch precisely so a
+            // partial rollout can be resumed), on all 20 lanes, and made the `[ACTION REQUIRED]`
+            // orchestrator-recovery path below unreachable, since it is only ever reached on a
+            // re-run. It repaired a rare partial-broadcast by breaking the common case.
+            //
+            // The post-flight assertion is the right place for this: it runs OUTSIDE the broadcast,
+            // so it observes without recording, and it fails loudly if the mastercopy is unclaimed.
         }
         if (timelockDeployer.code.length == 0) {
             (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_TIMELOCK, _timelockDeployerInitCode()));
@@ -319,19 +367,25 @@ abstract contract OivChainDeploy is Script {
             console.log("[SKIP] KpkTimelockDeployer already at:", timelockDeployer);
         }
 
+        // The factory LAST of the four, because its init code embeds the shares mastercopy and the
+        // timelock deployer. Deploying it earlier reverts `InvalidMastercopy` rather than producing a
+        // factory that needs wiring — which is the property this ordering exists to give.
+        if (factory.code.length == 0) {
+            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
+            require(ok, "factory CREATE2 deploy failed");
+            console.log("[OK]   KpkOivFactory deployed at:    ", factory);
+        } else {
+            console.log("[SKIP] KpkOivFactory already at:     ", factory);
+        }
+
         KpkOivFactory f = KpkOivFactory(factory);
-        if (f.kpkSharesMastercopy() == address(0)) {
-            f.setKpkSharesMastercopy(sharesMastercopy);
-            console.log("[OK]   factory.kpkSharesMastercopy set");
-        } else {
-            require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
-        }
-        if (f.timelockDeployer() == address(0)) {
-            f.setTimelockDeployer(timelockDeployer);
-            console.log("[OK]   factory.timelockDeployer set");
-        } else {
-            require(f.timelockDeployer() == timelockDeployer, "factory timelock deployer mismatch");
-        }
+        // Nothing to wire any more — both values were fixed at construction. There is no
+        // ownership-dependent step here, so the "handed over with wiring incomplete" state this
+        // block used to detect and refuse can no longer exist. What remains is confirmation that the
+        // factory at this address really is the one this salt generation describes; a mismatch means
+        // the wrong generation is deployed here, not that something needs finishing.
+        require(f.kpkSharesMastercopy() == sharesMastercopy, "factory shares mastercopy mismatch");
+        require(f.timelockDeployer() == timelockDeployer, "factory timelock deployer mismatch");
         if (f.owner() == eoaOwner && eoaOwner != finalOwner) {
             f.transferOwnership(finalOwner);
         }
@@ -346,11 +400,8 @@ abstract contract OivChainDeploy is Script {
         }
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         if (orch.owner() == eoaOwner) {
-            if (
-                orch.router() != ccipRouter || orch.linkToken() != linkToken
-                    || orch.mainnetChainSelector() != MAINNET_SELECTOR
-            ) {
-                orch.configure(ccipRouter, linkToken, MAINNET_SELECTOR);
+            if (orch.router() != ccipRouter || orch.linkToken() != linkToken) {
+                orch.configure(ccipRouter, linkToken);
                 console.log("[OK]   orchestrator configured");
             }
             if (eoaOwner != finalOwner) orch.transferOwnership(finalOwner);
@@ -365,8 +416,7 @@ abstract contract OivChainDeploy is Script {
         require(address(orch.factory()) == factory, "post: orch factory mismatch");
         require(orch.owner() == finalOwner, "post: orchestrator owner != finalOwner");
 
-        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken
-            && orch.mainnetChainSelector() == MAINNET_SELECTOR;
+        bool configured = orch.router() == ccipRouter && orch.linkToken() == linkToken;
         if (!configured) {
             // The orchestrator is owned by finalOwner but not (correctly) configured — only reachable
             // on a re-run of a chain whose first deploy handed off ownership before `configure()` landed
@@ -374,12 +424,48 @@ abstract contract OivChainDeploy is Script {
             // Surface the exact remaining action instead of a bare revert, and do NOT print "Chain
             // ready" — so this is an [ACTION REQUIRED], not a false-positive success.
             console.log("[ACTION REQUIRED] orchestrator deployed but NOT configured; finalOwner must call");
-            console.log("  configure(router, link, mainnetSelector):");
+            console.log("  configure(router, link):");
             console.log("  router:  ", ccipRouter);
             console.log("  link:    ", linkToken);
-            console.log("  selector:", MAINNET_SELECTOR);
             return;
         }
+        // The timelock mastercopy must be claimed AND inert before this chain is called ready. Both
+        // halves are needed, and an earlier version had only the first.
+        //
+        // Re-calling `initialize` shows the initializer is spoken for, but cannot say BY WHOM — a
+        // stranger's claim reverts exactly as ours does. So the shape is checked too: a stranger who
+        // claimed it in order to USE it must have given themselves a delay or open execution, while
+        // one who claimed it exactly as we would has left an inert contract, which is harmless.
+        //
+        // All three reads run outside `vm.startBroadcast`, so they observe without recording a
+        // transaction — which matters here, because recording one against an already-claimed
+        // mastercopy is precisely what broke idempotent re-runs in an earlier version of this file.
+        address[] memory noMembersCheck = new address[](0);
+        (bool stillOpen,) = timelockMastercopy.call(
+            abi.encodeCall(TimelockControllerUpgradeable.initialize, (0, noMembersCheck, noMembersCheck, address(0)))
+        );
+        require(!stillOpen, "post-flight: timelock mastercopy initializer is still open");
+
+        TimelockControllerUpgradeable mc = TimelockControllerUpgradeable(payable(timelockMastercopy));
+        require(mc.getMinDelay() == 0, "post-flight: timelock mastercopy has a delay - claimed by someone else");
+        require(
+            !mc.hasRole(mc.EXECUTOR_ROLE(), address(0)),
+            "post-flight: timelock mastercopy has open execution - claimed by someone else"
+        );
+
         console.log("[OK] Chain ready. Factory + orchestrator deployed, configured & owned by finalOwner.");
+        // Scope of the three mastercopy assertions above, stated because they look stronger than
+        // they are. They catch a claimer who gave themselves a DELAY or OPEN execution. They do not
+        // catch the dangerous case: a searcher who claimed the initializer between our CREATE2 and
+        // our `initialize` — separate broadcast transactions — taking PROPOSER_ROLE plus a PRIVATE
+        // executor with `minDelay == 0`. That passes all three and leaves them able to schedule and
+        // immediately execute arbitrary calls from this published address.
+        //
+        // `AccessControlUpgradeable` is non-enumerable, so no on-chain check can rule it out; the
+        // role set has to be inspected off-chain, or the race removed by giving the mastercopy a
+        // wrapper whose CONSTRUCTOR calls `_disableInitializers()` (which moves the mastercopy
+        // address and every timelock address with it). Until then this line means "wired as
+        // expected", not "provably uncontrolled".
+        console.log("     NOTE: timelock mastercopy control is NOT proven here - see the comment above.");
     }
 }
