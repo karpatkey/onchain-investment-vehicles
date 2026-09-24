@@ -60,7 +60,9 @@ CHAIN_IDS=$(jq -r '[.networks[] | select(.role=="destination" and (.verdict=="RE
 
 # Self-check rather than trust: if the filter above is ever dropped, this fails loudly instead of
 # printing a command that reverts on arrival with the lane fee already spent. An excluded chain has no
-# entry in the orchestrator's baked registry, so `dispatchTo` rejects its id outright.
+# entry in the orchestrator's baked registry, so `dispatchTo` reverts `UnknownChain(chainId)` at
+# `src/CcipOivDeployer.sol:1433` before any fee is paid.
+# pinned: test/CcipOivDeployer.t.sol test_dispatchTo (UnknownChain expectations at :970, :1580)
 for _id in ${CHAIN_IDS//,/ }; do
   if [ "$(jq -r --argjson id "$_id" '[.networks[] | select(.chainId==$id and .excluded==true)] | length' "$REG")" != "0" ]; then
     echo "BUG: chain $_id is marked excluded but reached the fan-out list" >&2; exit 1

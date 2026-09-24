@@ -1233,10 +1233,14 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
         //     with no way out: `config.admin` is salt-bound here, so restating it moves every address
         //     the fund has.
         //
-        // The live owner answers both. It is the fund's authoritative gatekeeper by construction, it
-        // equals `config.admin` exactly while nothing has been rotated, and it equals the timelock on a
-        // timelocked fund — so the separate "exec timelock as an alternate caller" branch this
-        // replaces is subsumed rather than dropped.
+        // The live owner answers both. It is the exec modifier that gates Avatar Safe execution, so its
+        // owner is the fund's authority on this chain; it equals `config.admin` while nothing has been
+        // rotated, and equals the timelock on a timelocked fund — so the separate "exec timelock as an
+        // alternate caller" branch this replaces is subsumed rather than dropped. All three are pinned,
+        // because "by construction" is not a substitute for a test:
+        //   pinned: test_promoteShares_theAdminStillWorksWhenNothingHasBeenRotated
+        //   pinned: test_promoteShares_acceptsTheTimelockThatSupersededTheAdmin
+        //   pinned: test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything
         //
         // Note this is necessarily PER CHAIN: each chain's exec modifier has its own owner, so a fund
         // that rotated on mainnet and not here is still governed here by whoever owns it here. That is
