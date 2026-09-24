@@ -158,9 +158,14 @@ correct, and is not what "deploy everywhere from any chain" sounds like.
   `_price` does not enforce a minimum `gasLimit` — it bounds the owner count only — so this is on the
   caller. Quote first, and prefer over-sizing: the surplus is refunded, an under-size is not.
 
-  CCIP caps destination execution at 3M, and that cap is **exact** on 10 of the 20 lanes (gnosis,
-  polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain, katana), verified against the
-  live router: `getFee` reverts above it. Unspent gas is **not**
+  CCIP caps destination execution at 3M, and that cap was **exact** on 10 of the 20 lanes measured
+  (gnosis, polygon, celo, sonic, unichain, worldchain, plasma, bob, berachain, katana), verified against
+  the live router: `getFee` reverts above it.
+  **Read that list with two caveats, both of which this branch introduced.** It was measured
+  **Ethereum-origin only**, and CCIP lanes are DIRECTIONAL — so it does not establish the cap for a
+  fan-out from any of the other origins this branch now allows. And it predates excluding `bob` and
+  `katana`, which are in the list but not in the baked 19-chain set. Re-measure per origin/destination
+  pair before relying on "pass 3,000,000" from a non-Ethereum origin. Unspent gas is **not**
   refunded. The timelock is an EIP-1167 clone rather than a full `TimelockController` deployment
   precisely so a timelocked stack stays inside that ceiling; deployed outright it cost ~1.45M more
   and put the call over the cap on those 10 chains.

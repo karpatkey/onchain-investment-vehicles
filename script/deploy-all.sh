@@ -56,7 +56,11 @@ echo "Fleet summary: ${#OK_CHAINS[@]} ok, ${#FAILED_CHAINS[@]} failed (of ${#CHA
 
 # Build the destination chain-ID list (all destinations, i.e. exclude the source role). Callers target
 # chains by id; the orchestrator resolves each to its CCIP selector via its owner-managed mapping.
-CHAIN_IDS=$(jq -r '[.networks[] | select(.role=="destination" and (.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") and (.excluded != true)) | .chainId] | join(",")' "$REG")
+# NOT filtered on `role=="destination"`, and that omission is the point. `role` is a leftover of the
+# retired designated-source model: it excludes chain 1, so a Base-origin fan-out never targeted
+# Ethereum. Every wired non-excluded chain belongs in the list regardless of origin, because
+# `deployEverywhere` skips whichever chain is local (see its `messageIds` NatSpec, "local skipped").
+CHAIN_IDS=$(jq -r '[.networks[] | select((.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") and (.excluded != true)) | .chainId] | join(",")' "$REG")
 
 # Self-check rather than trust: if the filter above is ever dropped, this fails loudly instead of
 # printing a command that reverts on arrival with the lane fee already spent. An excluded chain has no
@@ -105,7 +109,7 @@ native fees). Substitute your origin for 'ethereum' below; there is no designate
      chain you must remove that chain's own id as well. Verified against the example config: the
      command below yields 17 ids, without 100, 60808 or 747474.
        jq -r --argjson drop "\$(jq -c '.sharesChains' script/<fund>-config.json)" \
-         '[.networks[] | select(.role=="destination" and (.verdict|startswith("READY")) and (.excluded != true))
+         '[.networks[] | select((.verdict|startswith("READY")) and (.excluded != true))
            | .chainId] - \$drop | join(",")' script/ccip-networks.json
 
   GAS LIMIT: 3000000, not the 2000000 this helper used to print. A timelocked fund at the maximum

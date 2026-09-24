@@ -132,7 +132,11 @@ is for — the escape hatch for the one thing the salt-bound topology costs, sin
 could not gain a shares chain after birth. Call it **on the chain being promoted**, passing the
 fund's **original** topology so the salt still resolves to its existing addresses. Preconditions:
 
-- The caller is `config.admin` or the fund's exec timelock. This is the one gated entry point here,
+- The caller is the exec Roles Modifier's **live owner** on this chain — `config.admin` while nothing
+  has been rotated, the exec timelock on a timelocked fund, and whatever governance now owns the
+  modifier after a rotation. It is NOT the two birth-time accounts this line used to name; documenting
+  it that way told rotated governance it could not promote, which is false. This is the one gated entry
+  point here,
   because a promoted chain's asset is *not* committed to by the topology — an open promotion would
   let anyone holding the config deploy a shares token denominated in a worthless asset at the fund's
   canonical address.
