@@ -831,6 +831,18 @@ contract CcipOivDeployerTest is OivTestConstants {
         );
         orchestrator.promoteShares(oivConfig, topology);
 
+        // A PARTIAL base-asset allowance must not satisfy it. The additional-asset test below pins
+        // this for `additionalAssets`; a mutation sweep found the base-asset comparison could be
+        // weakened to "any non-zero allowance" without any test noticing.
+        KpkOivFactory.OivInstance memory p = orchestrator.predictOiv(oivConfig, topology);
+        vm.prank(p.avatarSafe);
+        IERC20(oivConfig.sharesParams.asset).approve(p.kpkSharesProxy, 1);
+        vm.prank(oivConfig.admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(CcipOivDeployer.ApprovalNotGranted.selector, oivConfig.sharesParams.asset)
+        );
+        orchestrator.promoteShares(oivConfig, topology);
+
         _approveFromAvatar(topology);
         vm.prank(oivConfig.admin);
         KpkOivFactory.OivInstance memory promoted = orchestrator.promoteShares(oivConfig, topology);

@@ -23,7 +23,7 @@ The factory address is mixed into the salt derivation alongside the caller, so c
 Two read-only helpers return the addresses a deployment would produce, without sending a transaction:
 
 - **`predictStackAddresses(StackConfig, address caller)`** → predicted `StackInstance` (5 addresses).
-- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` is simply `kpkSharesMastercopy` — the chain's single shared `KpkShares` implementation, wired into the factory by the deploy script — and `kpkSharesProxy` is predicted from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`). Salt index 5 belonged to the retired per-fund implementation and is deliberately left unused. Reverts `KpkSharesMastercopyNotSet` if no mastercopy is wired, so prediction never answers where deployment would refuse.
+- **`predictOivAddresses(OivConfig, address caller)`** → predicted `OivInstance` (all 7 addresses). The five operational-stack addresses match `predictStackAddresses` for the same `(caller, salt)`. `kpkSharesImpl` is simply `kpkSharesMastercopy` — the chain's single shared `KpkShares` implementation, wired into the factory by the deploy script — and `kpkSharesProxy` is predicted from the factory's own CREATE2 deployment (salt derived from `(caller, salt, 6)`). Salt index 5 belonged to the retired per-fund implementation and is deliberately left unused. The mastercopy is a mandatory constructor argument, so there is no unwired state for prediction to answer about.
 
   The proxy's address is a function of `(factory, proxySalt, implementation)` **only**. It is deployed with empty constructor data and initialized in the next statement of the same call, so the initializer calldata — which necessarily carries the chain's base asset — never enters the CREATE2 init code. Combined with an implementation that is itself chain-independent (`KpkShares` has no constructor arguments, so the mastercopy CREATE2s to one address on every chain), this is what lets one fund present a single shares address across chains that hold different assets. Note where that now rests: on `kpkSharesMastercopy` being wired to the same address on every chain, which the deploy script's post-flight `require` enforces — there is no on-chain binding. `additionalAssets` are applied after initialization via `updateAsset` and have never affected the address.
 
@@ -232,7 +232,7 @@ Fixed at factory deployment and apply to every stack deployed through it.
 
 | Parameter                  | Description                                              |
 |----------------------------|----------------------------------------------------------|
-| `owner`                    | Address that controls infrastructure setter functions (does not gate deployment entry points) |
+| `owner`                    | Controls only the curated fund registry (`registerFund` / `unregisterFund`). There are no infrastructure setters, and it does not gate deployment entry points |
 | `safeProxyFactory`         | Gnosis `SafeProxyFactory` — deploys Safe proxies         |
 | `safeSingleton`            | Gnosis Safe singleton (implementation)                   |
 | `safeModuleSetup`          | Gnosis `SafeModuleSetup` — delegatecalled during `setup()` to pre-enable modules |
