@@ -1,6 +1,6 @@
 # KpkOivFactory — Production Deployment Addresses
 
-Production deployments of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer`, the shared `KpkShares` mastercopy and the timelock kit) via the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Each contract lands at the same address on every EVM chain by construction (same canonical deployer, same salt, same constructor args).
+Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer`, the shared `KpkShares` mastercopy and the timelock kit), deployed through the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Each contract lands at the same address on every EVM chain by construction (same canonical deployer, same salt, same constructor args). Whether a given address is deployed yet is stated per section and per row below; do not read this line as a deployment claim.
 
 > **This file records only the CURRENT infra, plus the older stack a live fund still runs on.**
 > Deploy new funds exclusively through the **salt v3** addresses in the next section. The

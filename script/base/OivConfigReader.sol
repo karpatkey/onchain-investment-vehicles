@@ -323,10 +323,11 @@ abstract contract OivConfigReader is Script {
         // malformed entry used to truncate the list there — dropping that entry AND every one after
         // it — and deploy a fund silently missing them. `additionalAssets` is hashed into the shares
         // salt, so the fund would also land at addresses a corrected config can never reach. If an
-        // element still exists at `count`, it is malformed: refuse it by index.
+        // element still exists at `count`, it is malformed: refuse it by index. This runs at the cap
+        // too: the check above looks only for `[cap].asset`, so a malformed entry sitting exactly at
+        // index MAX_ADDITIONAL_ASSETS would otherwise be dropped.
         require(
-            count == MAX_ADDITIONAL_ASSETS
-                || !vm.keyExists(json, string.concat(".oiv.additionalAssets[", vm.toString(count), "]")),
+            !vm.keyExists(json, string.concat(".oiv.additionalAssets[", vm.toString(count), "]")),
             string.concat("config: .oiv.additionalAssets[", vm.toString(count), "] has no .asset key")
         );
 

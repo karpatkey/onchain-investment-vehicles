@@ -165,6 +165,15 @@ if [ "${DRY_RUN:-0}" != "1" ]; then
   expect "orchestrator.factory()"                   "$(call "$ORCH" 'factory()(address)')" "$FACTORY"
   expect "timelockDeployer.timelockMastercopy()"    "$(call "$TL_DEP" 'timelockMastercopy()(address)')" "$TL_MC"
   expect "timelock mastercopy getMinDelay() is 0"   "$(call "$TL_MC" 'getMinDelay()(uint256)')" "0"
+  # The orchestrator must be CONFIGURED for this chain, not just owned. If it was handed to finalOwner
+  # before `configure` landed, the Solidity script prints [ACTION REQUIRED] and still exits 0, and
+  # every check above passes, while fan-out from or to this chain cannot work.
+  expect "orchestrator.router() is this chain's router"   "$(call "$ORCH" 'router()(address)')"    "$(echo "$entry" | jq -r .ccipRouter)"
+  expect "orchestrator.linkToken() is this chain's LINK"  "$(call "$ORCH" 'linkToken()(address)')" "$(echo "$entry" | jq -r .linkToken)"
+  if grep -q "\[ACTION REQUIRED\]" "$LOG"; then
+    echo "  [FAIL] the deploy script reported [ACTION REQUIRED] — see its output above"
+    fail=1
+  fi
   # The mastercopy's initializer must be CLAIMED (a separate tx from its CREATE2, so it can be dropped
   # or front-run). Read OZ v5's Initializable slot rather than probing `initialize` with an eth_call:
   # a probe cannot tell "reverted because claimed" from an RPC failure, so it would pass on an outage.
