@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Verify the salt-v3 canonical contracts on OKLink, and report what is already verified.
+"""Verify the current (salt-v4) canonical contracts on OKLink, and report what is already verified.
 
 Usage (from the repo root, with foundry on PATH):
 
     python3 script/verify/oklink_verify.py --prepare   # regenerate the standard-JSON inputs
-    python3 script/verify/oklink_verify.py             # sweep all 30 targets
+    python3 script/verify/oklink_verify.py             # sweep every active target (10 chains x 5)
 
 Safe and idempotent: a target that is already verified is reported as such and left
 alone, and anything genuinely unverified is submitted and polled to a final result.
@@ -117,6 +117,54 @@ CONTRACTS = {
         ),
     },
 }
+
+# ── Salt v4: the current generation. Addresses are the CREATE2 predictions from `OivChainDeploy`;
+# the constructor args were checked by rebuilding each init code from them and reproducing the
+# predicted address. `--prepare` regenerates their standard-JSON from this tree, so run it from the
+# same frozen clone the rollout deployed from. The two timelock-kit entries are the contracts that
+# are already live on mainnet (built from this source; see test/DeployedKitSync.t.sol).
+CONTRACTS.update({
+    "kpkOivFactoryV4": {
+        "address": "0x73Bb12a05669748f3c9cbE8764271c69182f49E5",
+        "identifier": "src/KpkOivFactory.sol:KpkOivFactory",
+        # owner (deployer EOA), six Safe/Zodiac addresses, kpkSharesMastercopy, timelockDeployer
+        "ctor": (
+            "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
+            "000000000000000000000000a6b71e26c5e0845f74c812102ca7114b6a896ab2"
+            "00000000000000000000000041675c099f32341bf84bfc5382af534df5c7461a"
+            "0000000000000000000000002dd68b007b46fbe91b9a7c3eda5a7a1063cb5b47"
+            "000000000000000000000000fd0732dc9e303f09fcef3a7388ad10a83459ec99"
+            "000000000000000000000000000000000000addb49795b0f9ba5bc298cdda236"
+            "000000000000000000000000f2964ce6161ce0e75964fe7927ce114cb0b283d5"
+            "000000000000000000000000729fb58a61a6f8349657fbc9f17ba4d36c9e72fc"
+            "000000000000000000000000dd23ba8b2c4d3d916605361e29600121defc2d9f"
+        ),
+    },
+    "ccipOivDeployerV4": {
+        "address": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+        "identifier": "src/CcipOivDeployer.sol:CcipOivDeployer",
+        "ctor": (
+            "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
+            "00000000000000000000000073bb12a05669748f3c9cbe8764271c69182f49e5"
+        ),
+    },
+    "kpkSharesMastercopy": {
+        "address": "0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC",
+        "identifier": "src/kpkShares.sol:KpkShares",
+        "ctor": "",
+    },
+    "timelockMastercopy": {
+        "address": "0x9760280fED9e760668186334f88b6d763A7d976E",
+        "identifier": "lib/openzeppelin-contracts-upgradeable/contracts/governance/TimelockControllerUpgradeable.sol:TimelockControllerUpgradeable",
+        "ctor": "",
+    },
+    "kpkTimelockDeployer": {
+        "address": "0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f",
+        "identifier": "src/KpkTimelockDeployer.sol:KpkTimelockDeployer",
+        "ctor": "0000000000000000000000009760280fed9e760668186334f88b6d763a7d976e",
+    },
+})
+
 
 # The 10 of our 19 deployed chains that OKLink serves, in `chainShortName` form.
 # `Empty` is deliberately absent from CONTRACTS: it is a no-logic contract and fails

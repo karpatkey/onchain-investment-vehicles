@@ -1,6 +1,6 @@
 # KpkOivFactory — Production Deployment Addresses
 
-Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Both contracts deploy at identical addresses on every EVM chain by construction (same canonical deployer, same salt, same constructor args).
+Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer`, the shared `KpkShares` mastercopy and the timelock kit), deployed through the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Each contract lands at the same address on every EVM chain by construction (same canonical deployer, same salt, same constructor args). Whether a given address is deployed yet is stated per section and per row below; do not read this line as a deployment claim.
 
 > **This file records only the CURRENT infra, plus the older stack a live fund still runs on.**
 > Deploy new funds exclusively through the **salt v3** addresses in the next section. The
@@ -51,10 +51,10 @@ clean-clone warning further down).
 
 | Contract | Predicted salt-v4 address |
 |---|---|
-| `KpkOivFactory` | `0x5f078cE56EC147cbAeb093F3d8E1cc1f465fFA26` |
+| `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` |
 | `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
 | `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
-| `CcipOivDeployer` (orchestrator) | `0x24c376D57FB861D42e0225592884d81AF867597e` |
+| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` |
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
 

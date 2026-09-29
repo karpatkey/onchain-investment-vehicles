@@ -134,7 +134,11 @@ fund's **original** topology so the salt still resolves to its existing addresse
 
 - The caller is the exec Roles Modifier's **live owner** on this chain — `config.admin` while nothing
   has been rotated, the exec timelock on a timelocked fund, and whatever governance now owns the
-  modifier after a rotation. It is NOT the two birth-time accounts this line used to name; documenting
+  modifier after a rotation — with two exceptions. A fund born WITH an exec timelock stays promotable
+  only while that birth timelock still owns the modifier (`TimelockMismatch` otherwise; `execTimelock`
+  is salt-bound and cannot be restated). And any rotation on a fund with no `sharesTimelock` is refused
+  `PromotionWouldRearmTheBirthAdmin`, including a hand-retrofitted exec timelock. Give a fund its
+  timelocks at birth rather than retrofitting them. It is NOT the two birth-time accounts this line used to name; documenting
   it that way told rotated governance it could not promote, which is false. This is the one gated entry
   point here,
   because a promoted chain's asset is *not* committed to by the topology — an open promotion would

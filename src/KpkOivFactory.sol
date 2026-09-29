@@ -51,7 +51,8 @@ import {OivInfraConstants} from "./OivInfraConstants.sol";
 ///         same Avatar Safe address everywhere.
 ///
 ///         Both deployment entry points are permissionless — any caller may invoke them.
-///         Only the infrastructure setter functions are restricted to the factory owner.
+///         Only `registerFund` / `unregisterFund` (the curated external-fund registry) are
+///         restricted to the factory owner. There are no infrastructure setters.
 ///
 ///         A single `salt` in `StackConfig` drives all five CREATE2 deployments. The caller's
 ///         address is mixed into the salt derivation, so identical contract addresses across
@@ -65,10 +66,12 @@ import {OivInfraConstants} from "./OivInfraConstants.sol";
 ///         operational-stack addresses for the same `(caller, salt)`.
 ///
 ///         Trust assumptions:
-///         - The factory `owner` controls all infrastructure setters with immediate effect (no
-///           timelock). The owner SHOULD be a TimelockController or governance multisig — never
-///           an EOA — because a compromised owner can swap `kpkSharesMastercopy`,
-///           `rolesModifierMastercopy`, or `safeSingleton` to backdoor every future deployment.
+///         - The factory `owner` controls only the curated fund registry (`registerFund` /
+///           `unregisterFund`), which records and removes entries and affects no deployment.
+///           Every infrastructure address — the six Safe/Zodiac contracts, `kpkSharesMastercopy`
+///           and `timelockDeployer` — is fixed in the constructor and has no setter, so no owner,
+///           compromised or not, can redirect a future deployment. A bad value needs a new factory
+///           generation, not a transaction.
 ///         - For `deployOiv`, the caller controls `config.managerSafe.owners`. The deployed
 ///           Manager Safe receives ownership of both the sub and manager Roles Modifiers, so
 ///           `managerSafe.owners` MUST be trusted at the same operational level as
@@ -371,8 +374,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         address subRolesModifier;
         /// @notice Manager Roles Modifier — guards Manager Safe's own actions.
         address managerRolesModifier;
-        /// @notice KpkShares implementation deployed exclusively for this fund.
-        ///         Each fund receives its own implementation so upgrades are isolated.
+        /// @notice KpkShares implementation behind this fund's proxy: the chain's single shared
+        ///         `kpkSharesMastercopy`. Upgrades stay isolated because `upgradeToAndCall` writes
+        ///         the calling proxy's own ERC-1967 slot.
         address kpkSharesImpl;
         /// @notice KpkShares ERC-1967 UUPS proxy — the fund's shares token.
         address kpkSharesProxy;
@@ -520,8 +524,9 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @dev    `owner()` is the signal because `transferOwnership` is the last act of
     ///         `_wireExecModifier`, in the same transaction as every other wiring call: it reads as
     ///         this factory if and only if no wiring has ever completed. Moving it back requires
-    ///         being the owner, where repointing `avatar()` does not — which is why ownership is
-    ///         the signal and the avatar is not.
+    ///         the fund's own governance, since `transferOwnership` is `onlyOwner`. So is repointing
+    ///         `avatar()` (Zodiac's `setAvatar` is `onlyOwner` too), so ownership is chosen for being
+    ///         the LAST wiring write, not for being harder to reverse.
     ///         pinned: test_adopt_refusesToTouchACompletedFund
     error StackAlreadyDeployedHere();
 
@@ -583,9 +588,6 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///         passed here to the ones it used — so without this the recorded and emitted
     ///         `execTimelock` could be an address that was never deployed.
     error TimelockMismatch(address predicted);
-
-    /// @notice Thrown when a deployment configures a timelock (non-zero `minDelay`) but
-    ///         `timelockDeployer` has not been wired yet.
 
     /// @notice Thrown when `registerFund` is given a fund whose KpkShares proxy is already in the
     ///         curated registry.
@@ -884,7 +886,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
         //
         // The exec Roles Modifier's avatar is the coherence check that cannot be forged: a squatted
         // modifier is initialized with avatar = target = owner = this factory, and only
-        // `OivStackWiring.wireExec` — reachable solely from a completed `deployStack`/`deployOiv` —
+        // `_wireExecModifier` — reachable solely from a completed `deployStack`/`deployOiv` —
         // repoints it at the Avatar Safe. So this holds if and only if a genuine stack deployment
         // finished here. Pinned by `test_deployShares_revertsOnASquattedButUnwiredStack`.
         if (stack.avatarSafe.code.length == 0 || stack.managerSafe.code.length == 0) revert StackNotDeployed();
@@ -1173,7 +1175,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
             // What actually must not happen is recording `address(0)` for a fund a TIMELOCK governs,
             // which would read as "no delay" about a fund that has one. So ask that question directly:
             // an owner that is an EIP-1167 clone of this chain's timelock mastercopy is a timelock and
-            // is refused; anything else — an EOA, a Safe, new governance — is a rotation, and the fund
+            // is recorded as the fund's exec timelock (below); anything else — an EOA, a Safe, new governance — is a rotation, and the fund
             // genuinely has no timelock from this kit.
             //
             // RECORDED, not refused. An earlier version reverted `TimelockMismatch` here, which
@@ -1459,6 +1461,10 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///          and the deployed Safes, so whatever a caller passes is discarded and carries no
     ///          meaning. Binding them would split a fund across chains over ignored bytes.
     ///        - `managerSafe` — already bound through the stack addresses this proxy is checked against.
+    ///        - `execTimelock` — not a shares field. `deployShares` checks the recorded value against
+    ///          chain state (`_recordedExecTimelock`); on the orchestrator path it is bound by
+    ///          `CcipOivDeployer`'s effective salt, and on the direct path stack governance is the
+    ///          stack deployer's own input, trusted exactly as before this commitment existed.
     ///
     ///      `config.admin` IS bound, and an earlier version of this list excluded it "so that rotating
     ///      exec ownership does not strand `promoteShares`". That was wrong on both halves. It left the
@@ -1473,7 +1479,8 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     ///      field over.
     ///      And it did not buy what it claimed: promotion after a rotation works by passing the
     ///      ORIGINAL `admin`, which is what `CcipOivDeployer.promoteShares` already does, and
-    ///      `_recordedExecTimelock` tolerates the rotated owner. What the exclusion actually bought was
+    ///      `_recordedExecTimelock` tolerates the rotated owner of a fund born without an exec
+    ///      timelock. What the exclusion actually bought was
     ///      the ability to pass the NEW owner as `admin` and still reach the canonical address — a
     ///      convenience, traded here for the capture above.
     ///      pinned: test_deployShares_aSubstitutedAdminCannotReachThePublishedProxy
@@ -1737,7 +1744,7 @@ contract KpkOivFactory is Ownable, ReentrancyGuard {
     /// @param additionalAssets Additional assets to register via `updateAsset`.
     /// @param proxySalt       CREATE2 salt for the ERC-1967 proxy created by this factory so the
     ///                        proxy address is deterministic from `(caller, baseSalt)`.
-    /// @return impl  Address of the newly deployed KpkShares implementation.
+    /// @return impl  The shared `kpkSharesMastercopy` this proxy delegates to; not deployed here.
     /// @return proxy Address of the ERC-1967 proxy (the fund's shares token).
     function _deploySharesProxy(
         KpkShares.ConstructorParams memory params,

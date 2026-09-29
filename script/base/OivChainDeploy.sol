@@ -240,6 +240,10 @@ abstract contract OivChainDeploy is Script {
 
     // ── Full per-chain deploy ────────────────────────────────────────────────────
 
+    /// @dev The production deployer EOA. It is baked into the factory's and orchestrator's init code,
+    ///      so every canonical salt-v4 address is a function of it; see `_runChain`'s guard.
+    address internal constant KPK_DEPLOYER_EOA = 0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72;
+
     /// @notice Empty preflight → factory + deployer → orchestrator (+configure), in one broadcast.
     /// @param expectedChainId The chain this script's hardcoded router/LINK belong to. Guarded against
     ///                   `block.chainid` so a wrong `--rpc-url` cannot configure the orchestrator with
@@ -263,6 +267,19 @@ abstract contract OivChainDeploy is Script {
         // The broadcasting key signs the onlyOwner setters; it must be `eoaOwner` (which is also
         // baked into the factory/orchestrator init-code), or those calls would revert mid-broadcast.
         require(msg.sender == eoaOwner, "broadcasting sender must equal eoaOwner");
+        // The two silent-and-wrong outcomes of this path. A different signer builds a complete,
+        // self-consistent stack at NON-canonical addresses (eoaOwner is in the factory/orchestrator
+        // init code) and the post-flight passes, since it checks only self-consistency. A codeless
+        // finalOwner burns ownership of both contracts on that chain. Refuse both before any
+        // broadcast; `finalOwner == eoaOwner` stays legal for local and test runs.
+        require(
+            eoaOwner == KPK_DEPLOYER_EOA || vm.envOr("ALLOW_NONCANONICAL_EOA", false),
+            "eoaOwner is not the canonical kpk deployer (set ALLOW_NONCANONICAL_EOA=true to override)"
+        );
+        require(
+            finalOwner == eoaOwner || finalOwner.code.length > 0,
+            "finalOwner has no code on this chain - ownership would be burned"
+        );
 
         bytes memory factoryInitCode = _factoryInitCode(eoaOwner);
         bytes memory sharesMastercopyInitCode = _sharesMastercopyInitCode();
@@ -461,11 +478,14 @@ abstract contract OivChainDeploy is Script {
         // executor with `minDelay == 0`. That passes all three and leaves them able to schedule and
         // immediately execute arbitrary calls from this published address.
         //
-        // `AccessControlUpgradeable` is non-enumerable, so no on-chain check can rule it out; the
-        // role set has to be inspected off-chain, or the race removed by giving the mastercopy a
-        // wrapper whose CONSTRUCTOR calls `_disableInitializers()` (which moves the mastercopy
-        // address and every timelock address with it). Until then this line means "wired as
-        // expected", not "provably uncontrolled".
-        console.log("     NOTE: timelock mastercopy control is NOT proven here - see the comment above.");
+        // `AccessControlUpgradeable` storage is non-enumerable, so no `require` here can rule it out.
+        // The EVENT LOG can: every grant emits `RoleGranted`, so after the broadcast, exactly one
+        // `RoleGranted` at the mastercopy — `DEFAULT_ADMIN_ROLE` to itself, `sender == eoaOwner` —
+        // plus exactly one `Initialized(1)` in a tx from `eoaOwner` proves nobody else holds a role.
+        // That read needs the real chain, not this simulation:
+        //   cast logs --from-block <deploy block> --address <mastercopy> \
+        //     "RoleGranted(bytes32,address,address)" --rpc-url <chain>
+        // Until it passes, this line means "wired as expected", not "provably uncontrolled".
+        console.log("     NOTE: timelock mastercopy control is NOT proven here - check its RoleGranted log on-chain.");
     }
 }

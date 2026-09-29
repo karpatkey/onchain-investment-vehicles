@@ -1241,15 +1241,24 @@ contract CcipOivDeployer is Ownable, ReentrancyGuard, IAny2EVMMessageReceiver, I
     ///         factory's shares commitment — so it is part of every shares address on both paths. The
     ///         accurate position, in the order a rotation meets it:
     ///
-    ///           - A rotated owner CAN promote. Authorization is the exec modifier's live owner, and
-    ///             `KpkOivFactory._recordedExecTimelock` tolerates an owner that is not `admin`.
+    ///           - A rotated owner CAN promote a fund born WITHOUT an exec timelock. Authorization is
+    ///             the exec modifier's live owner, and `KpkOivFactory._recordedExecTimelock` tolerates
+    ///             an owner that is not `admin`.
     ///             pinned: test_promoteShares_acceptsRotatedGovernanceWithoutMovingAnything
-    ///           - Unless the fund carries no `sharesTimelock`, in which case it is refused
+    ///           - Unless that fund carries no `sharesTimelock`, in which case it is refused
     ///             `PromotionWouldRearmTheBirthAdmin` — not because the rotation broke addressing, but
     ///             because the promoted token's `DEFAULT_ADMIN_ROLE` would go to the replaced admin.
     ///             pinned: test_promoteShares_refusesAPromotionThatWouldRearmTheBirthAdmin
-    ///           - Rotating to a hand-deployed kit timelock is fine and is RECORDED, not refused; that
-    ///             case used to be the one rotation that genuinely bricked promotion for ever.
+    ///           - Rotating to a hand-deployed kit timelock is RECORDED by `_recordedExecTimelock`, not
+    ///             refused; that case used to brick `deployShares` for ever. It is still a rotation,
+    ///             though, so the bullet above applies to promotion: without a `sharesTimelock` it is
+    ///             refused `PromotionWouldRearmTheBirthAdmin`. Give such a fund its timelocks at birth.
+    ///           - A fund born WITH an exec timelock is never refused that way, but must keep its birth
+    ///             timelock as the exec owner to stay promotable. `_recordedExecTimelock` predicts the
+    ///             birth timelock and reverts `TimelockMismatch` unless that clone still owns the
+    ///             modifier, and `execTimelock` is in the effective salt, so it cannot be restated. A
+    ///             rotation away from it, even one the timelock itself executes, ends promotion until
+    ///             ownership comes back.
     ///             pinned: test_deployShares_recordsAHandDeployedExecTimelockInsteadOfReverting
     ///           - What has never worked and still does not: restating `admin` as the new owner. It is
     ///             salt-bound on this path AND in the factory's shares commitment, so it moves every

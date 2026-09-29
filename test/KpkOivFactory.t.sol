@@ -2396,6 +2396,34 @@ contract KpkOivFactoryTest is OivTestConstants {
         factory.deployOiv(oivConfig);
     }
 
+    /// @notice Same sweep, the THRESHOLD clause. The owner-set test above changes only the owner set,
+    ///         and with the default single-owner config the threshold cannot move on its own, so
+    ///         deleting the threshold comparison survived the whole suite. A squatter
+    ///         signing a two-owner, threshold-1 Manager Safe can raise it to 2: the owner set still
+    ///         matches exactly, but every manager transaction now needs a second signature the
+    ///         fund never agreed to.
+    function test_adopt_rejectsASafeWithAChangedThreshold() public {
+        address other = makeAddr("secondManagerSigner");
+        oivConfig.managerSafe.owners = new address[](2);
+        (oivConfig.managerSafe.owners[0], oivConfig.managerSafe.owners[1]) =
+            managerSigner < other ? (managerSigner, other) : (other, managerSigner);
+        oivConfig.managerSafe.threshold = 1;
+
+        KpkOivFactory.OivInstance memory predicted = factory.predictOivAddresses(oivConfig, address(this));
+        address[] memory mods = new address[](1);
+        mods[0] = predicted.managerRolesModifier;
+        address squatted = _squatSafe(
+            makeAddr("thresholdSquatter"), oivConfig.managerSafe.owners, 1, mods, _stackSalt(address(this), 4)
+        );
+        assertEq(squatted, predicted.managerSafe, "premise: the squat landed at the predicted Manager Safe");
+
+        vm.prank(squatted);
+        ISafeModules(squatted).changeThreshold(2);
+
+        vm.expectRevert(abi.encodeWithSelector(KpkOivFactory.AdoptedSafeMismatch.selector, squatted));
+        factory.deployOiv(oivConfig);
+    }
+
     /// @notice The economics, asserted rather than argued: adoption skips the deploys, so a squat
     ///         subsidises the fund instead of denying it. This is what makes `StackNotDeployed`'s
     ///         claim — "an attacker who occupies those addresses has paid the fund's gas bill" —
@@ -2566,6 +2594,8 @@ interface ISafeModules {
     function enableModule(address module) external;
 
     function addOwnerWithThreshold(address owner, uint256 threshold) external;
+
+    function changeThreshold(uint256 threshold) external;
 
     function setGuard(address guard) external;
 

@@ -11,12 +11,17 @@
 #   KEYSTORE_PASSWORD_FILE (optional) path to a file holding the keystore password, so a multi-chain
 #                        run is non-interactive instead of prompting once per chain. gitignore it.
 #   PRIVATE_KEY          (fallback) raw deployer key, used only when DEPLOYER_NAME is unset.
-#   DEPLOY_FINAL_OWNER   (optional) owner to hand factory+orchestrator to; defaults to the deployer
-#                        EOA (keep control — recommended for testing; set to a multisig for prod).
+#   DEPLOY_FINAL_OWNER   owner to hand factory+orchestrator to (the OIV Safe in production). REQUIRED
+#                        for a broadcast: an unset value used to fall back to the deployer EOA silently,
+#                        leaving the EOA owning both contracts. Set ALLOW_EOA_OWNER=1 to keep the EOA
+#                        deliberately (local/test runs). Dry runs may omit it.
 #   DRY_RUN=1            (optional) simulate only (omit --broadcast).
+#   ALLOW_NONCANONICAL_EOA=true (optional) let `_runChain` sign with an EOA other than the production
+#                        kpk deployer. Without it a different signer is refused, because it would build a
+#                        self-consistent stack at non-canonical addresses.
 #   VERIFY=1             (optional) pass --verify (needs ETHERSCAN_API_KEY + foundry etherscan cfg).
 #
-# Refuses any chain whose registry verdict is NOT-READY. The Solidity script additionally guards
+# Refuses any chain whose registry verdict is NOT-READY, and any chain marked `excluded`. The Solidity script additionally guards
 # every on-chain prerequisite and reverts if anything is missing.
 set -euo pipefail
 
@@ -41,6 +46,12 @@ if [ "$verdict" != "READY" ] && [ "$verdict" != "READY-AFTER-EMPTY" ]; then
   echo "REFUSING: '$CHAIN' has verdict '$verdict' (only READY / READY-AFTER-EMPTY are deployable) — $(echo "$entry" | jq -r '.note // "missing prerequisites"')"
   exit 1
 fi
+# `excluded` chains (bob, katana) are deliberately outside the baked 19-chain topology: a stack there
+# is an orphan no orchestrator can reach. deploy-all.sh already skips them; refuse them here too.
+if [ "$(echo "$entry" | jq -r '.excluded // false')" = "true" ]; then
+  echo "REFUSING: '$CHAIN' is marked excluded in the registry (not part of the baked topology)"
+  exit 1
+fi
 
 # Resolve the per-chain script file case-insensitively so internal casing of the registry name can
 # never silently mismatch the generated file name.
@@ -59,6 +70,12 @@ else
 fi
 EOA=$(cast wallet address "${signer[@]}")
 FINAL="${DEPLOY_FINAL_OWNER:-$EOA}"
+if [ "${DRY_RUN:-0}" != "1" ] && [ "$(echo "$FINAL" | tr 'A-F' 'a-f')" = "$(echo "$EOA" | tr 'A-F' 'a-f')" ] \
+   && [ "${ALLOW_EOA_OWNER:-0}" != "1" ]; then
+  echo "REFUSING: finalOwner would be the deployer EOA ($EOA). Set DEPLOY_FINAL_OWNER (the OIV Safe"
+  echo "  in production), or ALLOW_EOA_OWNER=1 to keep the EOA as owner on purpose."
+  exit 1
+fi
 
 bflag="--broadcast"; [ "${DRY_RUN:-0}" = "1" ] && bflag=""
 # Only pass --verify when the chain actually has an [etherscan] entry in foundry.toml — otherwise the
@@ -75,9 +92,18 @@ fi
 
 echo "=== Deploying OIV infra to $CHAIN (verdict $verdict) ==="
 echo "  eoaOwner=$EOA  finalOwner=$FINAL  dryRun=${DRY_RUN:-0}"
+LOG=$(mktemp)
+# --slow: wait for each receipt before sending the next tx, so a dropped tx is a clean stop that a
+# re-run resumes from (every step has a [SKIP] branch) rather than a nonce gap behind later txs.
 ( cd "$ROOT" && forge script "$script" \
-    --rpc-url "$CHAIN" "${signer[@]}" $bflag $vflag \
-    --sig "run(address,address)" "$EOA" "$FINAL" )
+    --rpc-url "$CHAIN" "${signer[@]}" $bflag $vflag --slow \
+    --sig "run(address,address)" "$EOA" "$FINAL" ) 2>&1 | tee "$LOG"
+predicted() { grep -m1 "Predicted $1:" "$LOG" | grep -oE '0x[0-9a-fA-F]{40}' | head -1 || true; }
+FACTORY=$(predicted KpkOivFactory); SHARES_MC=$(predicted "KpkShares mastercopy")
+TL_MC=$(predicted "Timelock mastercopy"); ORCH=$(predicted CcipOivDeployer); TL_DEP=$(predicted KpkTimelockDeployer)
+for v in FACTORY SHARES_MC TL_MC ORCH TL_DEP; do
+  [ -n "${!v}" ] || { echo "ERROR: could not parse 'Predicted' address for $v from forge output ($LOG) — verify on-chain by hand"; exit 1; }
+done
 
 # ── Post-broadcast on-chain verification ──────────────────────────────────────
 # The Solidity preflight in OivChainDeploy runs INSIDE vm.startBroadcast(), so its post-condition
@@ -118,21 +144,53 @@ if [ "${DRY_RUN:-0}" != "1" ]; then
     exit 1
   fi
 
-  # Mainnet only: the orchestrator's chainId->CCIP-selector registry does NOT survive a salt bump —
-  # a freshly CREATE2'd orchestrator starts empty, and deployEverywhere reverts UnknownChain on the
-  # first destination. Seeding is owner-only, so it must happen while the EOA still owns it.
-  if [ "$CHAIN" = "ethereum" ]; then
-    ORCH_COUNT=""
-    if [ -n "${ORCHESTRATOR:-}" ]; then
-      ORCH_COUNT=$(cast call "$ORCHESTRATOR" "getChainIdCount()(uint256)" --rpc-url "$CHAIN" 2>/dev/null || true)
-    fi
-    if [ -n "$ORCH_COUNT" ]; then
-      echo "  [..]   mainnet orchestrator selector registry: $ORCH_COUNT destinations"
-      [ "$ORCH_COUNT" = "0" ] && echo "  WARNING: registry is EMPTY — seed it with setChainSelectors BEFORE handing ownership to the Safe."
-    else
-      echo "  NOTE: set ORCHESTRATOR=<address> to have this script check the selector registry."
-      echo "        A salt-v3 orchestrator starts with an EMPTY registry; seed it from the EOA"
-      echo "        (setChainSelectors) BEFORE transferring ownership, or re-seeding needs a Safe tx."
-    fi
+  # The five salt-v4 contracts, read from the chain (the Solidity post-flight only saw the simulation).
+  # The CCIP selector registry is baked into the orchestrator's constructor; there is nothing to seed,
+  # and `CcipDeployEverywhere.setChainSelectors` must NOT be run (it is legacy and omits chain 1).
+  lc() { echo "$1" | tr 'A-F' 'a-f'; }
+  expect() { # label got want
+    if [ -n "$2" ] && [ "$(lc "$2")" = "$(lc "$3")" ]; then echo "  [OK]   $1"; else echo "  [FAIL] $1 — got '$2', want '$3'"; fail=1; fi
+  }
+  for pair in "KpkShares mastercopy:$SHARES_MC" "Timelock mastercopy:$TL_MC" "KpkTimelockDeployer:$TL_DEP" \
+              "KpkOivFactory:$FACTORY" "CcipOivDeployer:$ORCH"; do
+    name=${pair%%:*}; addr=${pair##*:}
+    size=$(cast codesize "$addr" --rpc-url "$CHAIN" 2>/dev/null || echo 0)
+    if [ -n "$addr" ] && [ "${size:-0}" -gt 0 ]; then echo "  [OK]   $name has code at $addr"; else echo "  [FAIL] $name: no code at '$addr'"; fail=1; fi
+  done
+  call() { cast call "$@" --rpc-url "$CHAIN" 2>/dev/null || true; }
+  expect "factory.owner() is finalOwner"            "$(call "$FACTORY" 'owner()(address)')" "$FINAL"
+  expect "orchestrator.owner() is finalOwner"       "$(call "$ORCH" 'owner()(address)')" "$FINAL"
+  expect "factory.kpkSharesMastercopy()"            "$(call "$FACTORY" 'kpkSharesMastercopy()(address)')" "$SHARES_MC"
+  expect "factory.timelockDeployer()"               "$(call "$FACTORY" 'timelockDeployer()(address)')" "$TL_DEP"
+  expect "orchestrator.factory()"                   "$(call "$ORCH" 'factory()(address)')" "$FACTORY"
+  expect "timelockDeployer.timelockMastercopy()"    "$(call "$TL_DEP" 'timelockMastercopy()(address)')" "$TL_MC"
+  expect "timelock mastercopy getMinDelay() is 0"   "$(call "$TL_MC" 'getMinDelay()(uint256)')" "0"
+  # The orchestrator must be CONFIGURED for this chain, not just owned. If it was handed to finalOwner
+  # before `configure` landed, the Solidity script prints [ACTION REQUIRED] and still exits 0, and
+  # every check above passes, while fan-out from or to this chain cannot work.
+  expect "orchestrator.router() is this chain's router"   "$(call "$ORCH" 'router()(address)')"    "$(echo "$entry" | jq -r .ccipRouter)"
+  expect "orchestrator.linkToken() is this chain's LINK"  "$(call "$ORCH" 'linkToken()(address)')" "$(echo "$entry" | jq -r .linkToken)"
+  if grep -q "\[ACTION REQUIRED\]" "$LOG"; then
+    echo "  [FAIL] the deploy script reported [ACTION REQUIRED] — see its output above"
+    fail=1
   fi
+  # The mastercopy's initializer must be CLAIMED (a separate tx from its CREATE2, so it can be dropped
+  # or front-run). Read OZ v5's Initializable slot rather than probing `initialize` with an eth_call:
+  # a probe cannot tell "reverted because claimed" from an RPC failure, so it would pass on an outage.
+  # Only an exact 1 passes; anything unreadable is treated as NOT claimed.
+  INIT_SLOT=0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00  # Initializable.sol INITIALIZABLE_STORAGE
+  init=$(cast storage "$TL_MC" "$INIT_SLOT" --rpc-url "$CHAIN" 2>/dev/null || true)
+  case "$init" in
+    0x0000000000000000000000000000000000000000000000000000000000000001)
+      echo "  [OK]   timelock mastercopy initializer is claimed (_initialized == 1)" ;;
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+      echo "  [FAIL] timelock mastercopy initializer is still OPEN — claim it before anything else:"
+      echo "    cast send $TL_MC 'initialize(uint256,address[],address[],address)' 0 '[]' '[]' 0x0000000000000000000000000000000000000000 --rpc-url $CHAIN <signer flags>"
+      fail=1 ;;
+    *)
+      echo "  [FAIL] could not read the timelock mastercopy's initializer slot (got '$init') — treat as NOT claimed and re-check"
+      fail=1 ;;
+  esac
+  [ "$fail" = "1" ] && { echo ""; echo "ERROR: on-chain state does not match the deploy. Do NOT deploy funds or fan out to this chain."; exit 1; }
+  echo "  All on-chain checks passed for $CHAIN."
 fi

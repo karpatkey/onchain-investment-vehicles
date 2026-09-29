@@ -6,7 +6,7 @@
 # Usage:
 #   source .env && script/deploy-all.sh
 # Honors the same env as deploy-chain.sh: DEPLOYER_NAME (keystore, preferred) [+ KEYSTORE_PASSWORD_FILE
-# so the 21-chain loop is non-interactive] or PRIVATE_KEY (fallback), plus DEPLOY_FINAL_OWNER, DRY_RUN,
+# so the 19-chain loop is non-interactive] or PRIVATE_KEY (fallback), plus DEPLOY_FINAL_OWNER, DRY_RUN,
 # VERIFY.
 #
 # NOTE: infra deploy is per-chain and idempotent. The actual fund fan-out (deployEverywhere) is a
@@ -24,6 +24,19 @@ command -v jq >/dev/null || { echo "jq required"; exit 1; }
 # quietly turns the 19-chain set into 21. `script/CcipDeployEverywhere.s.sol` has honoured this flag
 # since the seeding incident recorded in `script/deployed-infra.json`; this script was missed.
 mapfile -t CHAINS < <(jq -r '.networks[] | select((.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") and (.excluded != true)) | .name' "$REG")
+# Ethereum LAST. This does NOT close the fan-out window by itself: every chain's orchestrator has the
+# full registry baked in and is fan-out-ready the moment it lands, and a fan-out to a destination with
+# no code yet is consumed by CCIP as "executed" with the lane fee spent. The guard is the rule printed
+# below — no fan-out until every chain passes. Mainnet goes last because it is the usual origin and
+# the one chain whose timelock kit already exists, so it runs with the most prior evidence.
+mapfile -t CHAINS < <(printf '%s\n' "${CHAINS[@]}" | grep -vx ethereum; printf '%s\n' "${CHAINS[@]}" | grep -x ethereum || true)
+
+# Refuse up front rather than letting every chain fail one by one in deploy-chain.sh.
+if [ "${DRY_RUN:-0}" != "1" ] && [ -z "${DEPLOY_FINAL_OWNER:-}" ] && [ "${ALLOW_EOA_OWNER:-0}" != "1" ]; then
+  echo "REFUSING: DEPLOY_FINAL_OWNER is unset, so the deployer EOA would stay owner of the factory and"
+  echo "  orchestrator on every chain. Set it (the OIV Safe in production), or ALLOW_EOA_OWNER=1."
+  exit 1
+fi
 echo "Wired chains (${#CHAINS[@]}): ${CHAINS[*]}"
 EXCLUDED=$(jq -r '[.networks[] | select(.excluded == true) | .name] | join(" ")' "$REG")
 [ -n "$EXCLUDED" ] && echo "Excluded (deliberately not pursued): $EXCLUDED"
@@ -54,8 +67,8 @@ echo "Fleet summary: ${#OK_CHAINS[@]} ok, ${#FAILED_CHAINS[@]} failed (of ${#CHA
 [ ${#FAILED_CHAINS[@]} -gt 0 ] && echo "  FAILED:    ${FAILED_CHAINS[*]}   (idempotent — re-run: script/deploy-chain.sh <chain>)"
 [ ${#UNVERIFIED_CHAINS[@]} -gt 0 ] && echo "  UNVERIFIED (deployed, no [etherscan] cfg — verify manually): ${UNVERIFIED_CHAINS[*]}"
 
-# Build the destination chain-ID list (all destinations, i.e. exclude the source role). Callers target
-# chains by id; the orchestrator resolves each to its CCIP selector via its owner-managed mapping.
+# Build the destination chain-ID list. Callers target chains by id; the orchestrator resolves each to
+# its CCIP selector through the registry baked into its constructor.
 # NOT filtered on `role=="destination"`, and that omission is the point. `role` is a leftover of the
 # retired designated-source model: it excludes chain 1, so a Base-origin fan-out never targeted
 # Ethereum. Every wired non-excluded chain belongs in the list regardless of origin, because
@@ -64,9 +77,8 @@ CHAIN_IDS=$(jq -r '[.networks[] | select((.verdict=="READY" or .verdict=="READY-
 
 # Self-check rather than trust: if the filter above is ever dropped, this fails loudly instead of
 # printing a command that reverts on arrival with the lane fee already spent. An excluded chain has no
-# entry in the orchestrator's baked registry, so `dispatchTo` reverts `UnknownChain(chainId)` at
-# `src/CcipOivDeployer.sol:1433` before any fee is paid.
-# pinned: test/CcipOivDeployer.t.sol test_dispatchTo (UnknownChain expectations at :970, :1580)
+# entry in the orchestrator's baked registry, so `dispatchTo` reverts `UnknownChain(chainId)` in
+# `_resolveStackSelectors` (src/CcipOivDeployer.sol) before any fee is paid.
 for _id in ${CHAIN_IDS//,/ }; do
   if [ "$(jq -r --argjson id "$_id" '[.networks[] | select(.chainId==$id and .excluded==true)] | length' "$REG")" != "0" ]; then
     echo "BUG: chain $_id is marked excluded but reached the fan-out list" >&2; exit 1
@@ -77,6 +89,9 @@ cat <<EOF
 
 ############################################################
 Infra deployed on all wired chains.
+
+DO NOT fan anything out until EVERY wired chain has passed its post-broadcast checks and been
+verified on-chain: a destination with no code consumes the message and keeps the fee.
 
 NEXT (manual, deliberate) — fan a fund out from ANY wired chain (permissionless; caller pays
 native fees). Substitute your origin for 'ethereum' below; there is no designated source chain.
@@ -112,11 +127,10 @@ native fees). Substitute your origin for 'ethereum' below; there is no designate
      not read your fund config, so it cannot remove the two kinds of chain that WILL fail:
        * your ORIGIN chain (you are dispatching FROM it), and
        * every chain in your fund's .sharesChains (refused: SharesChainRefusesStack).
-     With script/oiv-config.example.json (.sharesChains = [1, 100]) the chain that must go is 100
-     (gnosis). Chain 1 is already absent because ethereum's registry role is not "destination" — so if
-     ethereum is your origin there is nothing extra to drop, but if you dispatch FROM a destination-role
-     chain you must remove that chain's own id as well. Verified against the example config: the
-     command below yields 17 ids, without 100, 60808 or 747474.
+     The list above INCLUDES chain 1 (it is deliberately not role-filtered). With
+     script/oiv-config.example.json (.sharesChains = [1, 100]) both 1 and 100 must go, and so must
+     your origin's own id. The command below removes the fund's shares chains; verified against the
+     example config it yields 17 ids, without 1, 100, 60808 or 747474.
        jq -r --argjson drop "\$(jq -c '.sharesChains' script/<fund>-config.json)" \
          '[.networks[] | select((.verdict|startswith("READY")) and (.excluded != true))
            | .chainId] - \$drop | join(",")' script/ccip-networks.json

@@ -426,4 +426,97 @@ contract OivConfigReaderTest is Test {
         vm.expectRevert(bytes("config: base asset has no code on this chain - add an .oiv.assetOverrides entry for it"));
         script.deployOiv("script/oiv-config.example.json");
     }
+
+    // ── additionalAssets: a malformed entry must refuse, not truncate ─────────────
+    //
+    // The reader counts entries by probing `[i].asset` and stops at the first index without one. A
+    // typo'd key or a gap used to end the list there, silently dropping that entry and everything
+    // after it. The fund then deployed without those assets, and because `additionalAssets` is in the
+    // shares salt, at addresses a corrected config can never reach.
+
+    address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+
+    function _withAdditionalAssets(string memory arr) internal view returns (string memory) {
+        return vm.replace(json, '"additionalAssets": []', string.concat('"additionalAssets": ', arr));
+    }
+
+    function test_additionalAssets_parsesEveryWellFormedEntry() public view {
+        KpkOivFactory.OivConfig memory c = reader.oivConfig(
+            _withAdditionalAssets(
+                string.concat(
+                    '[{"asset":"',
+                    vm.toString(USDT),
+                    '","canDeposit":true,"canRedeem":false},',
+                    '{"asset":"',
+                    vm.toString(WBTC),
+                    '","canDeposit":false,"canRedeem":true}]'
+                )
+            )
+        );
+        assertEq(c.additionalAssets.length, 2, "both entries parsed");
+        assertEq(c.additionalAssets[0].asset, USDT);
+        assertTrue(c.additionalAssets[0].canDeposit && !c.additionalAssets[0].canRedeem, "entry 0 flags");
+        assertEq(c.additionalAssets[1].asset, WBTC);
+        assertTrue(!c.additionalAssets[1].canDeposit && c.additionalAssets[1].canRedeem, "entry 1 flags");
+    }
+
+    function test_additionalAssets_refusesATypodAssetKey() public {
+        string memory bad = _withAdditionalAssets(
+            string.concat('[{"address":"', vm.toString(USDT), '","canDeposit":true,"canRedeem":true}]')
+        );
+        vm.expectRevert(bytes("config: .oiv.additionalAssets[0] has no .asset key"));
+        reader.oivConfig(bad);
+    }
+
+    /// @dev `n` well-formed entries with distinct addresses, optionally followed by one malformed entry.
+    function _nAssets(uint256 n, bool malformedTail) internal pure returns (string memory arr) {
+        arr = "[";
+        for (uint256 i = 0; i < n; i++) {
+            arr = string.concat(
+                arr,
+                i == 0 ? "" : ",",
+                '{"asset":"',
+                vm.toString(address(uint160(0x1000 + i))),
+                '","canDeposit":true,"canRedeem":true}'
+            );
+        }
+        if (malformedTail) {
+            arr = string.concat(arr, ',{"address":"', vm.toString(USDT), '","canDeposit":true,"canRedeem":true}');
+        }
+        arr = string.concat(arr, "]");
+    }
+
+    /// @notice Found by Copilot on the first version of this fix: the cap check looks only for
+    ///         `[cap].asset`, and the malformed-entry check used to be skipped at the cap, so a
+    ///         malformed entry sitting exactly at index MAX_ADDITIONAL_ASSETS was dropped silently.
+    function test_additionalAssets_refusesAMalformedEntryExactlyAtTheCap() public {
+        string memory bad = _withAdditionalAssets(_nAssets(100, true));
+        vm.expectRevert(bytes("config: .oiv.additionalAssets[100] has no .asset key"));
+        reader.oivConfig(bad);
+    }
+
+    /// @notice The boundary's negative control: exactly MAX_ADDITIONAL_ASSETS well-formed entries is legal.
+    function test_additionalAssets_acceptsExactlyTheCap() public view {
+        KpkOivFactory.OivConfig memory c = reader.oivConfig(_withAdditionalAssets(_nAssets(100, false)));
+        assertEq(c.additionalAssets.length, 100, "all 100 parsed");
+    }
+
+    function test_additionalAssets_refusesAGapInsteadOfTruncating() public {
+        string memory bad = _withAdditionalAssets(
+            string.concat(
+                '[{"asset":"',
+                vm.toString(USDT),
+                '","canDeposit":true,"canRedeem":true},',
+                '{"address":"',
+                vm.toString(WBTC),
+                '","canDeposit":true,"canRedeem":true},',
+                '{"asset":"',
+                vm.toString(WBTC),
+                '","canDeposit":true,"canRedeem":true}]'
+            )
+        );
+        vm.expectRevert(bytes("config: .oiv.additionalAssets[1] has no .asset key"));
+        reader.oivConfig(bad);
+    }
 }
