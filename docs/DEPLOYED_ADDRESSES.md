@@ -3,7 +3,8 @@
 Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer`, the shared `KpkShares` mastercopy and the timelock kit), deployed through the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Each contract lands at the same address on every EVM chain by construction (same canonical deployer, same salt, same constructor args). Whether a given address is deployed yet is stated per section and per row below; do not read this line as a deployment claim.
 
 > **This file records only the CURRENT infra, plus the older stack a live fund still runs on.**
-> Deploy new funds exclusively through the **salt v3** addresses in the next section. The
+> Deploy new funds exclusively through the **salt v4** addresses in the next section. The salt-v3
+> stack below it is superseded and listed only because XAUt Carry and WBTC Carry run on it. The
 > `0x0d94…d420` factory further down is the pre-patch **v2.1.0** build (the June-2026 ERC-1271
 > bypass); it is listed **only** because the kUSD fund lives on it, never as a deploy target.
 > The intermediate **salt-v1 and salt-v2** builds are unused by any fund and are therefore not
@@ -11,72 +12,74 @@ Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer
 
 ---
 
-## Pending — salt v4 (MOSTLY not deployed — read the per-row status)
+## Current — salt v4 (LIVE on 19 chains, Security Council-owned)
 
-> **⚠️ This heading used to say "NOT DEPLOYED — predictions only", and that was false.** Verified on
-> mainnet 2026-09-23 with `eth_call` / `eth_getCode`: the `KpkTimelockDeployer` and its
-> `TimelockControllerUpgradeable` mastercopy **are live**, as a matched pair — the deployer at
-> `0xdd23Ba8B…` returns `timelockMastercopy() == 0x9760280f…`, `MAX_ROLE_MEMBERS() == 10` and
-> `MIN_DELAY_FLOOR() == 43200`. The factory, the shares mastercopy and the orchestrator genuinely have
-> no code.
->
-> **Why this mattered rather than being untidy:** believing the whole set was undeployed, a session
-> edited `src/KpkTimelockDeployer.sol` — comment-only — which moved its CREATE2 prediction off the
-> live contract, and the drift guards did not notice. **They cannot**: they compare the pinned address
-> to the PREDICTION, and both are computed from the same source. Nothing in the repo compares either
-> to chain state. Treat any edit touching that file **or its import graph** (including
-> `src/interfaces/IKpkTimelockDeployer.sol`, and any global compiler setting such as `evm_version`) as
-> a decision to fork the deployed timelock kit.
+Deployed **2026-09-29** from `main@fe62dd4` (squash of #50 + #60), built in a fresh clone with forge
+1.7.1 and solc 0.8.34. Salts are `uint256(4)`. Every contract is CREATE2-deployed through
+`0x4e59b44847b379578588920cA78FbF26c0B4956C`, so each address is identical on every chain.
 
-`deployOiv` / `deployStack` now take timelock configuration and deploy a fund's `TimelockController`
-instances through a new `KpkTimelockDeployer`. That changed `KpkOivFactory`'s runtime, so its CREATE2
-address moved — and with it `KpkSharesDeployer` (factory address is a constructor argument) and
-`CcipOivDeployer` (factory address is an immutable). Salts were bumped `3 → 4`.
+| Contract | Salt-v4 address | Runtime codehash (identical on all 19) |
+|---|---|---|
+| `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` | `0x5b14bc7b7882da06e279e67f3e687d09dbe81cb0247c812d69d1ee9224ee72e2` |
+| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` | `0x15be0ec4f19b6e0ae36ffd5122a6a76aa4bab8baec95001a96a61fe13ab37b02` |
+| `KpkShares` mastercopy (shared by every fund's proxy) | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` | `0x7e4ff4382a936b7918edbc8680c2ebe9feaec86456fe80eb19ec694934cc52d2` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` | `0x91b5ed730171b39e69001ea25dcd590fd750793e610a6051dfeeb057bff0bb56` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` | `0xa20d8821acbf67e64e40e113fdc3f2c96e940a02250af7096a6cd11eba876ff2` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) | — |
 
-**Two of the five already exist on-chain** — `KpkTimelockDeployer` and its
-`TimelockControllerUpgradeable` mastercopy, marked in the table and verified by `eth_call` against
-mainnet on 2026-09-23. Live timelock clones govern funds against them, so an edit that moves either
-prediction **forks the deployed kit**; it is not merely a number to update. The other three are
-predictions from the source in this branch and are free to move.
+`Ownable.owner` of the factory and the orchestrator is the **Security Council Safe
+`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 19 chains, transferred inside each chain's deploy. Read back
+on-chain on 19/19, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
+orchestrator's `factory()` / `router()` / `linkToken()`, every codehash above, and the timelock
+mastercopy's initializer (claimed, inert; exactly one `RoleGranted` on every chain). The factory has no
+infrastructure setters. The orchestrator owner still controls the CCIP wiring
+(`configure`, `setChainSelector(s)` / `removeChainSelector`, withdrawals). The CCIP selector registry
+is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step.
 
-All five are pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol), which
-compares each pin to the PREDICTION — both sides computed from the same source, so it cannot notice
-that a prediction has drifted off a contract that is actually deployed. That is what
-[`test/DeployedKitSync.t.sol`](../test/DeployedKitSync.t.sol) is for: it forks mainnet and asserts the
-two deployed predictions still have code there.
+Chains: ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll,
+sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. **Excluded:** bob, katana. Per-chain
+blocks and creation transactions are in [`script/deployed-infra.json`](../script/deployed-infra.json).
 
-Re-derive everything from a **fresh `git clone --recurse-submodules`** before any rollout — a drifted
-working tree silently produces different bytecode, and therefore different addresses (see the
-clean-clone warning further down).
+**Source verification** (read back 2026-09-29, 5 contracts per chain):
 
-| Contract | Predicted salt-v4 address |
-|---|---|
-| `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` |
-| `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
-| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` — **DEPLOYED** (live; 8,311 B) |
-| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` |
-| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` — **DEPLOYED** (live; 7,075 B) |
-| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) |
+| Backend | Chains served | Verified |
+|---|---|---|
+| Sourcify | 19 | 95/95 exact match |
+| Etherscan V2 | 17 (not scroll, ink) | 80/85: **arbitrum pending**, see below |
+| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain | 40/40 |
+| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll | 50/50 |
+| Routescan | ethereum, avalanche, mantle, plasma | 20/20 |
+| Tenderly | 18 (hyperevm is not a Tenderly network) | 90/90 |
 
-`KpkTimelockDeployer`'s constructor takes the timelock mastercopy address
-(`src/KpkTimelockDeployer.sol:122`), so like the others its address depends on what it is given.
-`script/base/OivChainDeploy.sol` deploys the shares mastercopy, the timelock mastercopy and the
-timelock deployer BEFORE the factory, because the factory now takes the shares mastercopy and the
-timelock deployer as mandatory constructor arguments. The `setKpkSharesMastercopy` /
-`setTimelockDeployer` setters this file used to describe no longer exist — there is no
-construct-then-wire window left, and therefore no state in which a factory is live but unwired.
+Per-chain notes:
+- **Ethereum:** the timelock kit (`TimelockControllerUpgradeable` mastercopy + `KpkTimelockDeployer`)
+  was already live since 2026-09-21 and was skipped; only the other three were deployed (6 txs).
+- **BNB:** the public RPC failed mid-broadcast after the timelock mastercopy's CREATE2 and before its
+  `initialize`. The approved `initialize` was sent by hand
+  (`0xd456b50fa447da2c2efa67f22eabc382b4069256c1200d6134e2224c6f4179dd`), 326 blocks after the CREATE2.
+  It succeeded, which proves nobody initialized it first, and the log shows that single grant. Then the
+  remaining 6 txs.
+- **HyperEVM:** the timelock mastercopy's CREATE2 and `initialize` were sent as **one** Multicall3
+  `aggregate3` transaction in a small block
+  (`0xef677b24ac548511411f40221dc887dd3fa3f15b34cc431f24fd8926989c89dc`), so it was never open. Big
+  blocks were enabled for the other 7 txs and disabled afterwards. Its `RoleGranted` sender is therefore
+  Multicall3.
+- **Arbitrum / Arbiscan:** every Etherscan V2 verification job on chain 42161 sat "Pending in queue" for
+  4+ hours on 2026-09-29, while the same key and inputs verified in minutes on the other 16 chains. The
+  contracts are verified on Sourcify, Blockscout, OKLink and Tenderly. Resubmission and a manual
+  submission are in progress; update this row when Arbiscan reads back.
 
-> **`DeployOiv.FACTORY` now points at the salt-v4 prediction**, so the fund-deploy script cannot be
-> run until the rollout lands. Until then the live infra is the salt-v3 stack below.
+> **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
+> graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a
+> global compiler setting forks it. `test/DeployedKitSync.t.sol` forks mainnet and asserts the source
+> still predicts the live kit; `test/FactoryAddressSync.t.sol` pins the other three predictions.
 
-> **The rollout constraint at the bottom of this file applies in full.** No fund may straddle a v3
-> factory on one chain and a v4 factory on another — the factory's address is inside each Avatar
-> Safe's `setup()` initializer, so the same `(caller, salt)` produces different Avatar Safe addresses
-> under the two generations, silently.
+> **The rollout constraint at the bottom of this file applies in full.** No fund may straddle salt v3
+> and salt v4 across chains: the factory's address is inside each Avatar Safe's `setup()` initializer.
 
 ---
 
-## Current — salt v3 (LIVE on 19 chains, Safe-owned)
+## Superseded — salt v3 (existing funds only: XAUt Carry, WBTC Carry)
 
 Deployed **2026-07-24**. The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moved; `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three moved together**. Only `Empty` keeps its address. Salts are `uint256(3)`.
 
