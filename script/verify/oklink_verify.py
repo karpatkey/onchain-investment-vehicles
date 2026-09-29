@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Verify the salt-v3 canonical contracts on OKLink, and report what is already verified.
+"""Verify the current (salt-v4) canonical contracts on OKLink, and report what is already verified.
 
 Usage (from the repo root, with foundry on PATH):
 
     python3 script/verify/oklink_verify.py --prepare   # regenerate the standard-JSON inputs
-    python3 script/verify/oklink_verify.py             # sweep all 30 targets
+    python3 script/verify/oklink_verify.py             # sweep every active target (10 chains x 5)
 
 Safe and idempotent: a target that is already verified is reported as such and left
 alone, and anything genuinely unverified is submitted and polled to a final result.
@@ -72,6 +72,13 @@ CONTRACTS = {
     "kpkOivFactory": {
         "address": "0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F",
         "identifier": "src/KpkOivFactory.sol:KpkOivFactory",
+        # HISTORICAL until salt-v4 ships. `address` above is the LIVE salt-v3 deployment, and the
+        # checked-in std-JSON matches THAT bytecode (it still names `kpkSharesDeployer` and has no
+        # `timelockDeployer`). This branch rewrites the source to salt-v4, so regenerating from HEAD
+        # would replace a correct artifact with one that cannot verify at this address — and the
+        # atomic `os.replace` added for robustness makes that overwrite RELIABLE rather than
+        # occasional, which is worse. Flip this to False and re-pin `address` once salt-v4 is deployed.
+        "historical": True,
         "ctor": (
             "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
             "000000000000000000000000a6b71e26c5e0845f74c812102ca7114b6a896ab2"
@@ -83,20 +90,81 @@ CONTRACTS = {
             "0000000000000000000000000000000000000000000000000000000000000000"
         ),
     },
+    # HISTORICAL, and no longer re-runnable from this tree: `src/KpkSharesDeployer.sol` was deleted
+    # when the factory moved to shared mastercopies. This contract is part of the LIVE salt-v3 stack
+    # and is already verified 30/30, so the entry is kept as the record of what was verified. To
+    # re-verify it, check out a commit that still contains the source.
     "kpkSharesDeployer": {
         "address": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
-        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",
+        "identifier": "src/KpkSharesDeployer.sol:KpkSharesDeployer",  # deleted from HEAD
+        # Historical: kept so the record of what was verified at this address survives, but excluded
+        # from every active loop. `prepare()` already skipped regenerating it (the source is gone),
+        # while `main()` still submitted the committed artifact on every chain — re-verifying a
+        # retired contract and counting it toward the coverage total.
+        "historical": True,
         "ctor": "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f",
     },
     "ccipOivDeployer": {
         "address": "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b",
         "identifier": "src/CcipOivDeployer.sol:CcipOivDeployer",
+        # HISTORICAL until salt-v4 ships — same reason as the factory. The pinned artifact still
+        # carries `mainnetChainSelector` and no `_isKnownSelector`, i.e. the pre-mesh source that
+        # matches the live salt-v3 bytecode at this address.
+        "historical": True,
         "ctor": (
             "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
             "000000000000000000000000bafbca1804b6e46d4c54cac0a0273f5b2a8f677f"
         ),
     },
 }
+
+# ── Salt v4: the current generation. Addresses are the CREATE2 predictions from `OivChainDeploy`;
+# the constructor args were checked by rebuilding each init code from them and reproducing the
+# predicted address. `--prepare` regenerates their standard-JSON from this tree, so run it from the
+# same frozen clone the rollout deployed from. The two timelock-kit entries are the contracts that
+# are already live on mainnet (built from this source; see test/DeployedKitSync.t.sol).
+CONTRACTS.update({
+    "kpkOivFactoryV4": {
+        "address": "0x73Bb12a05669748f3c9cbE8764271c69182f49E5",
+        "identifier": "src/KpkOivFactory.sol:KpkOivFactory",
+        # owner (deployer EOA), six Safe/Zodiac addresses, kpkSharesMastercopy, timelockDeployer
+        "ctor": (
+            "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
+            "000000000000000000000000a6b71e26c5e0845f74c812102ca7114b6a896ab2"
+            "00000000000000000000000041675c099f32341bf84bfc5382af534df5c7461a"
+            "0000000000000000000000002dd68b007b46fbe91b9a7c3eda5a7a1063cb5b47"
+            "000000000000000000000000fd0732dc9e303f09fcef3a7388ad10a83459ec99"
+            "000000000000000000000000000000000000addb49795b0f9ba5bc298cdda236"
+            "000000000000000000000000f2964ce6161ce0e75964fe7927ce114cb0b283d5"
+            "000000000000000000000000729fb58a61a6f8349657fbc9f17ba4d36c9e72fc"
+            "000000000000000000000000dd23ba8b2c4d3d916605361e29600121defc2d9f"
+        ),
+    },
+    "ccipOivDeployerV4": {
+        "address": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+        "identifier": "src/CcipOivDeployer.sol:CcipOivDeployer",
+        "ctor": (
+            "000000000000000000000000aa5a7c7ea51f276301f881f9ccb501a1dfef4f72"
+            "00000000000000000000000073bb12a05669748f3c9cbe8764271c69182f49e5"
+        ),
+    },
+    "kpkSharesMastercopy": {
+        "address": "0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC",
+        "identifier": "src/kpkShares.sol:KpkShares",
+        "ctor": "",
+    },
+    "timelockMastercopy": {
+        "address": "0x9760280fED9e760668186334f88b6d763A7d976E",
+        "identifier": "lib/openzeppelin-contracts-upgradeable/contracts/governance/TimelockControllerUpgradeable.sol:TimelockControllerUpgradeable",
+        "ctor": "",
+    },
+    "kpkTimelockDeployer": {
+        "address": "0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f",
+        "identifier": "src/KpkTimelockDeployer.sol:KpkTimelockDeployer",
+        "ctor": "0000000000000000000000009760280fed9e760668186334f88b6d763a7d976e",
+    },
+})
+
 
 # The 10 of our 19 deployed chains that OKLink serves, in `chainShortName` form.
 # `Empty` is deliberately absent from CONTRACTS: it is a no-logic contract and fails
@@ -126,13 +194,40 @@ def prepare():
     """Regenerate the standard-JSON inputs with forge (optimizer/viaIR live inside)."""
     os.makedirs(STD_DIR, exist_ok=True)
     for name, meta in CONTRACTS.items():
-        with open(std_path(name), "w") as fh:
-            subprocess.run(
-                ["forge", "verify-contract",
-                 "0x0000000000000000000000000000000000000000",
-                 meta["identifier"], "--show-standard-json-input"],
-                cwd=REPO, stdout=fh, check=True,
-            )
+        if meta.get("historical"):
+            print("skip %s: historical record, not regenerated" % name)
+            continue
+        # Entries whose source no longer exists in this tree are skipped, not attempted. `forge`
+        # exits non-zero on an unresolvable identifier, and because the output file is opened for
+        # writing FIRST, attempting it truncated the checked-in artifact to zero bytes and then
+        # raised — leaving every later entry unregenerated and a subsequent plain run submitting an
+        # empty standard-JSON body, which passes the existence precondition further down.
+        src = meta["identifier"].split(":")[0]
+        if not os.path.exists(os.path.join(REPO, src)):
+            print("skip %s: %s is not in this tree (kept as a record of what was verified)" % (name, src))
+            continue
+
+        # Generated to a temporary path and moved into place only on success. The source-existence
+        # check above narrows ONE cause of the truncation described there; it does not prevent it.
+        # `open(dest, "w")` truncates before `forge` runs, so a stale identifier, a compile error, or
+        # any other non-zero exit still replaced the committed artifact with an empty file — and an
+        # empty file passes the existence precondition further down, which is how a plain run came to
+        # submit an empty standard-JSON body.
+        tmp = std_path(name) + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                subprocess.run(
+                    ["forge", "verify-contract",
+                     "0x0000000000000000000000000000000000000000",
+                     meta["identifier"], "--show-standard-json-input"],
+                    cwd=REPO, stdout=fh, check=True,
+                )
+            if os.path.getsize(tmp) == 0:
+                raise RuntimeError("forge produced an empty standard-JSON input for %s" % name)
+            os.replace(tmp, std_path(name))
+        except Exception:
+            os.path.exists(tmp) and os.remove(tmp)
+            raise
         print("wrote %s (%d bytes)" % (std_path(name), os.path.getsize(std_path(name))))
 
 
@@ -195,14 +290,35 @@ def main():
         prepare()
         return 0
 
-    for name in CONTRACTS:
+    active = [n for n, m in CONTRACTS.items() if not m.get("historical")]
+
+    # A verifier must never report success it did not earn. Every `CONTRACTS` entry is currently
+    # marked historical, which makes `active` empty — and without this guard the submit loop ran zero
+    # times, `total` came out as `len(CHAINS) * 0`, and the script printed "0/0 verified ... 0
+    # problem(s)" and exited 0. A caller reading that exit code concludes the sweep passed, when in
+    # fact no API call was made at all. Same failure this repo already called out in
+    # `script/DeployKpkOivFactory.s.sol`, which used to print "[OK] deployed at ..." for state that
+    # never reached a chain.
+    #
+    # To verify a new generation, add its entries to `CONTRACTS` without `historical`. The historical
+    # ones are kept deliberately, as the record of what was verified at the salt-v3 addresses.
+    if not active:
+        print("NOTHING TO VERIFY: every CONTRACTS entry is marked historical, so no target was")
+        print("checked and no API call was made. This is not a successful sweep.")
+        print("Add the current generation's entries to CONTRACTS to verify them.")
+        return 1
+
+    for name in active:
         if not os.path.exists(std_path(name)):
             print("missing %s -- run with --prepare first" % std_path(name))
             return 1
+    for name, meta in CONTRACTS.items():
+        if meta.get("historical"):
+            print("skip %s: historical record, not re-verified" % name)
 
     verified, pending, problems = [], [], []
     for chain in CHAINS:
-        for name in CONTRACTS:
+        for name in active:
             code, guid = submit(chain, name)
             target = "%s/%s" % (chain, name)
             if code == ALREADY_VERIFIED:
@@ -231,7 +347,10 @@ def main():
             print("%-34s still pending after 120s" % target)
             problems.append((target, "timeout"))
 
-    total = len(CHAINS) * len(CONTRACTS)
+    # `active`, not `CONTRACTS`: the submit loop already excludes historical entries, and
+    # leaving the denominator on the full set reported them as verified coverage they never
+    # contributed to — 30/30 while only 20 targets were checked.
+    total = len(CHAINS) * len(active)
     print("\n%d/%d verified (%d already, %d newly submitted), %d problem(s)"
           % (total - len(problems), total, len(verified), len(pending), len(problems)))
     for target, why in problems:

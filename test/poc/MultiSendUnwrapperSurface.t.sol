@@ -8,7 +8,6 @@ import {KpkShares} from "src/kpkShares.sol";
 import {
     TimelockControllerUpgradeable
 } from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
-import {KpkShares} from "src/kpkShares.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 

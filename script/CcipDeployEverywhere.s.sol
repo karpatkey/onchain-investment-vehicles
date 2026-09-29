@@ -34,21 +34,53 @@ contract CcipDeployEverywhere is OivConfigReader {
     // ── Entry points ───────────────────────────────────────────────────────────
 
     function predict(address orchestrator, string calldata configPath) external view {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         KpkOivFactory factory = orch.factory();
         // Use the orchestrator's predictOiv (applies the config-bound salt the deploy path uses), NOT
         // the factory's raw predictOivAddresses, which would key on the un-derived config.salt.
-        KpkOivFactory.OivInstance memory predicted = orch.predictOiv(config);
+        KpkOivFactory.OivInstance memory predicted = orch.predictOiv(config, _buildSharesChains(json));
 
         console.log("============================================================");
         console.log("  Predicted OIV addresses (caller = orchestrator)");
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Factory:              ", address(factory));
-        _logInstance(predicted);
-        console.log("  NOTE: addresses are bound to this exact config (salt = keccak256(config)) and are");
-        console.log("        identical on every chain for this orchestrator. Changing any field moves them.");
+        _logInstance(predicted, _shouldDeployShares(json));
+        console.log("  NOTE: bound to this config AND its .sharesChains topology; the base asset is");
+        console.log("        excluded from the salt, so these are identical on every chain. Any other");
+        console.log("        field, or the topology, moves them.");
+        console.log("============================================================");
+    }
+
+    /// @notice Deploys THIS chain's part of a fund with no CCIP — the shares token if the topology
+    ///         says this chain carries it, the operational stack otherwise.
+    /// @dev    Run this on every shares chain after the first. The fan-out deliberately skips shares
+    ///         chains, because a stack landing on one would permanently take the addresses its own
+    ///         `deployOiv` needs — so each is filled here instead. Shares never travel over CCIP:
+    ///         `deployOiv` measures ~2.88M gas against a 3,000,000 destination cap on half the lanes.
+    ///
+    ///         Ordering against the fan-out does not matter, and because the whole config is
+    ///         salt-bound the result is byte-identical whoever pays the gas.
+    function deployLocal(address orchestrator, string calldata configPath) external {
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        CcipOivDeployer.SharesChain[] memory topology = _buildSharesChains(json);
+        CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
+
+        vm.startBroadcast();
+        KpkOivFactory.OivInstance memory instance = orch.deployLocal(config, topology);
+        vm.stopBroadcast();
+
+        console.log("============================================================");
+        if (instance.kpkSharesProxy == address(0)) {
+            console.log("  Stack deployed locally (this chain carries no shares)");
+        } else {
+            console.log("  Fund deployed locally (this chain carries shares)");
+        }
+        console.log("============================================================");
+        _logInstance(instance, instance.kpkSharesProxy != address(0));
         console.log("============================================================");
     }
 
@@ -56,18 +88,30 @@ contract CcipDeployEverywhere is OivConfigReader {
         external
         view
     {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
         (uint256 totalFee, uint256[] memory feePerDestination) =
-            orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
+            orch.quoteDeployEverywhere(config, _buildSharesChains(json), destChainIds, gasLimit);
 
         console.log("============================================================");
         console.log("  CCIP fan-out NATIVE fee quote");
         console.log("============================================================");
         console.log("  Orchestrator:         ", orchestrator);
         console.log("  Gas limit per dest:   ", gasLimit);
+        // `_resolveStackSelectors` skips the LOCAL chain — deliberately, so naming it stays a no-op
+        // rather than a revert — so `feePerDestination` is shorter than `destChainIds` whenever the
+        // local id appears. Indexing both with `i` therefore read past the array, or, with the local
+        // id in the middle, silently attached every later fee to the wrong chain. (Shares chains and
+        // duplicates revert instead of being skipped, so the local chain is the only source of the
+        // mismatch.)
+        uint256 f;
         for (uint256 i = 0; i < destChainIds.length; i++) {
-            console.log("  chainId / fee (native wei):", destChainIds[i], feePerDestination[i]);
+            if (destChainIds[i] == block.chainid) {
+                console.log("  chainId (local, not messaged - no fee):", destChainIds[i]);
+                continue;
+            }
+            console.log("  chainId / fee (native wei):", destChainIds[i], feePerDestination[f++]);
         }
         console.log("  TOTAL fee (native wei):", totalFee);
         console.log("  >>> Send at least this as msg.value to deployEverywhere; surplus is refunded.");
@@ -80,14 +124,16 @@ contract CcipDeployEverywhere is OivConfigReader {
         uint256[] calldata destChainIds,
         uint256 gasLimit
     ) external {
-        KpkOivFactory.OivConfig memory config = _buildOivConfig(vm.readFile(configPath));
+        string memory json = vm.readFile(configPath);
+        KpkOivFactory.OivConfig memory config = _buildOivConfig(json);
+        CcipOivDeployer.SharesChain[] memory topology = _buildSharesChains(json);
         CcipOivDeployer orch = CcipOivDeployer(payable(orchestrator));
 
         // Size the native fee now and send it as msg.value, with a buffer so a fee increase between
         // this quote and the broadcast tx doesn't revert. The orchestrator refunds any surplus to the
         // broadcasting EOA. Buffer is operator-tunable via FEE_BUFFER_PCT (default 10%); raise it on
         // volatile L1 fan-outs.
-        (uint256 totalFee,) = orch.quoteDeployEverywhere(config, destChainIds, gasLimit);
+        (uint256 totalFee,) = orch.quoteDeployEverywhere(config, topology, destChainIds, gasLimit);
         uint256 bufferPct = vm.envOr("FEE_BUFFER_PCT", uint256(10));
         uint256 valueToSend = totalFee + (totalFee * bufferPct) / 100;
 
@@ -95,13 +141,20 @@ contract CcipDeployEverywhere is OivConfigReader {
         // `--private-key`); no raw key is read from the environment here.
         vm.startBroadcast();
         (KpkOivFactory.OivInstance memory instance, bytes32[] memory messageIds) =
-            orch.deployEverywhere{value: valueToSend}(config, destChainIds, gasLimit);
+            orch.deployEverywhere{value: valueToSend}(config, topology, destChainIds, gasLimit);
         vm.stopBroadcast();
 
         console.log("============================================================");
-        console.log("  deployEverywhere complete (local OIV deployed, CCIP dispatched)");
+        // Branch, because the origin need not carry shares: `_deployEverywhere` runs `deployStack`
+        // locally when this chain is absent from the topology, and saying "local OIV deployed" there
+        // tells the operator a shares token exists when only the stack does.
+        console.log(
+            instance.kpkSharesProxy != address(0)
+                ? "  deployEverywhere complete (local OIV deployed, CCIP dispatched)"
+                : "  deployEverywhere complete (local STACK only - this chain carries no shares - CCIP dispatched)"
+        );
         console.log("============================================================");
-        _logInstance(instance);
+        _logInstance(instance, instance.kpkSharesProxy != address(0));
         console.log("------------------------------------------------------------");
         // messageIds are in dispatch order; the orchestrator drops the local chain (if present in
         // destChainIds), so the two arrays may not align 1:1 — log by dispatch index, not by chainId.
@@ -116,9 +169,21 @@ contract CcipDeployEverywhere is OivConfigReader {
     /// @notice Owner helper: seed the orchestrator's chainId → CCIP-selector mapping from the canonical
     ///         `script/ccip-networks.json` registry, for every wired DESTINATION chain (verdict READY /
     ///         READY-AFTER-EMPTY). Broadcasts `setChainSelectors` from PRIVATE_KEY, which must be the
-    ///         orchestrator owner. Run only on the SOURCE orchestrator (typically mainnet) — the chain
-    ///         you will call `deployEverywhere` on; sidechains resolve nothing locally (they receive a
-    ///         `StackConfig` over CCIP), so they never need this mapping.
+    ///         orchestrator owner.
+    ///
+    /// @dev    LEGACY, and REDUNDANT on any current orchestrator: the constructor bakes all 19 chains
+    ///         in, so a freshly deployed instance already knows every wired chain and needs no seeding.
+    ///         Its previous NatSpec said "run only on the SOURCE orchestrator … sidechains resolve
+    ///         nothing locally", and the mesh change made both halves false — EVERY orchestrator now
+    ///         resolves selectors locally, and must contain its OWN chain id or `onlyWiredChain` rejects
+    ///         it.
+    ///
+    ///         That is the trap if this helper is ever used against a registry that is not already
+    ///         complete: `_seedable` still requires `role == "destination"`, so it emits 18 entries and
+    ///         never chain 1. An operator would get a success log and then `UnknownChain(1)` from
+    ///         `deployEverywhere` on mainnet. Today the constructor masks it. Prefer `setChainSelector`
+    ///         for a one-off addition, and treat this as a rebuild-from-registry of the destination set
+    ///         only.
     function setChainSelectors(address orchestrator, string calldata registryPath) external {
         string memory json = vm.readFile(registryPath);
 
@@ -163,9 +228,12 @@ contract CcipDeployEverywhere is OivConfigReader {
         console.log("============================================================");
     }
 
-    /// @dev A registry entry is seedable into the chain mapping when it is wired AND a CCIP
-    ///      destination (the source chain is deployed to locally, never via CCIP).
     /// @dev A chain is seedable only if it is wired, is a destination, AND is not marked `excluded`.
+    ///      The `destination` requirement is a LEGACY artifact of the retired source/destination split —
+    ///      a stale duplicate of this comment still described "the source chain is deployed to locally,
+    ///      never via CCIP", which the mesh change falsified. It is kept only so the seeded set matches
+    ///      what the salt-v3 rollout actually seeded (pinned by `test/SelectorSeedScope.t.sol`); see the
+    ///      warning on `setChainSelectors` for why that makes this helper unsafe to rely on now.
     ///      The exclusion check is load-bearing: `verdict` describes whether a chain COULD host the
     ///      infra, not whether it DOES. `bob` and `katana` are both `READY-AFTER-EMPTY` but have no
     ///      infra deployed (the deployer was unfunded there), so without this they get selectors and

@@ -5,20 +5,29 @@ import {Test} from "forge-std/Test.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
 import {OivChainDeploy} from "../script/base/OivChainDeploy.sol";
 
-/// @dev Exposes the factory's internal `EXPECTED_EMPTY_CODEHASH` for cross-checking. Constructor args
-///      only need to be non-zero (never called), so placeholders suffice.
+/// @dev Exposes the factory's internal `EXPECTED_EMPTY_CODEHASH` for cross-checking. The constructor
+///      rejects a zero OR codeless value for all EIGHT infrastructure arguments, so every placeholder
+///      below has to be a real contract — an earlier version of this comment said they "only need to
+///      be non-zero", which is why the `Coded` stub exists at all.
+/// @dev Smallest thing with code. Used for all eight infrastructure args, not two.
+contract Coded {}
+
 contract FactoryCodehashExposer is KpkOivFactory {
     constructor()
         KpkOivFactory(
-            address(0x1),
-            address(0x2),
-            address(0x3),
-            address(0x4),
-            address(0x5),
-            address(0x6),
-            address(0x7),
-            address(0x8),
-            address(0x9)
+            // Nine args: owner, then the six Safe/Zodiac infra addresses, then the shares mastercopy
+            // and timelock deployer (constructor-mandatory, no setters). The constructor rejects a
+            // CODELESS value for all eight infra args, so every one gets a real (empty) contract.
+            // This exposer never calls any of them.
+            address(new Coded()), // owner
+            address(new Coded()), // safeProxyFactory
+            address(new Coded()), // safeSingleton
+            address(new Coded()), // safeModuleSetup
+            address(new Coded()), // safeFallbackHandler
+            address(new Coded()), // moduleProxyFactory
+            address(new Coded()), // rolesModifierMastercopy
+            address(new Coded()), // kpkSharesMastercopy
+            address(new Coded()) //  timelockDeployer
         )
     {}
 

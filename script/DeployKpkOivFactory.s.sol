@@ -6,109 +6,105 @@ import {OivChainDeploy} from "./base/OivChainDeploy.sol";
 import {KpkOivFactory} from "../src/KpkOivFactory.sol";
 
 /// @title  DeployKpkOivFactory
-/// @notice Deploys the `KpkShares` mastercopy and `KpkOivFactory` deterministically across every chain via
-///         the canonical CREATE2 deployer, producing identical addresses on every chain. The
-///         address-critical constants/salts/init-code live in `OivChainDeploy` (the single source of
-///         truth shared with the per-chain scripts), so the standalone and per-chain paths can never
-///         drift to different factory addresses. The factory bakes in the PATCHED Roles Modifier
-///         v2.1.1 mastercopy (`0xF2964CE6…83D5`).
+/// @notice **Verifies** that a chain's factory wiring is correct and complete. It does not onboard a
+///         chain and it sends no transactions; the name is kept only because
+///         `docs/DEPLOYED_ADDRESSES.md` records historical runs under it.
 ///
-/// @dev    Flow: pre-compute predicted addresses → CREATE2 factory (idempotent) → CREATE2 deployer
-///         (idempotent) → `setKpkSharesMastercopy` → `transferOwnership(finalOwner)`.
+/// @dev    It cannot onboard, and three attempts to guard it as though it could each failed for the
+///         same underlying reason: only `OivChainDeploy._runChain` wires `timelockDeployer`, and it
+///         needs a chain id and CCIP router this entry point does not take.
 ///
-/// Usage (per chain):
-///   source .env && forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
-///     --rpc-url <chain> --account $DEPLOYER_NAME --broadcast --verify \
-///     --sig "run(address,address)" <eoaOwner> <finalOwner>
+///         It used to try anyway. Until this revision the body still ran `vm.startBroadcast()`,
+///         `_ensureEmpty()`, `_ensureMultiSendUnwrapper()`, two CREATE2 deployments, a
+///         since-removed `setKpkSharesMastercopy` and `transferOwnership` — while the header above already
+///         described it as a verifier invoked without `--broadcast`. Run as documented, those
+///         executed in simulation only, so the script printed `[OK] KpkOivFactory deployed at …`
+///         and `[OK] factory.kpkSharesMastercopy set` for state that never reached the chain. A
+///         verifier reporting repairs it did not make is the worst possible output for a script
+///         whose entire job is telling you whether a chain is what the rollout believes it is.
 ///
-/// `<eoaOwner>` MUST equal the broadcasting account (it calls the onlyOwner setters and is baked
-/// into the factory's CREATE2 init-code — enforced below).
+///         The repair path was also already dead in practice: every wired chain has handed the
+///         factory to its Safe, so the `onlyOwner` setters are out of reach of any EOA this script
+///         could run as, and `transferOwnership` no longer has an owner to transfer from. What is
+///         removed here is therefore simulated capability, not real capability.
+///
+///         To ONBOARD a chain use `script/chains/Deploy_<Chain>.s.sol`.
+///
+/// Usage (per chain) — read-only, no `--broadcast`, no `--sender`, no key:
+///   forge script script/DeployKpkOivFactory.s.sol:DeployKpkOivFactory \
+///     --rpc-url <chain> --sig "run(address,address)" <eoaOwner> <finalOwner>
+///
+///   `eoaOwner` is still required because the factory's CREATE2 salt binds it, so its address cannot
+///   be derived without it. It is used for prediction only; this script never acts as it.
 contract DeployKpkOivFactory is OivChainDeploy {
-    function run(address eoaOwner, address finalOwner) external {
+    function run(address eoaOwner, address finalOwner) external view {
         require(eoaOwner != address(0), "eoaOwner is zero");
         require(finalOwner != address(0), "finalOwner is zero");
-        require(msg.sender == eoaOwner, "broadcasting sender must equal eoaOwner");
 
-        bytes memory factoryInitCode = _factoryInitCode(eoaOwner);
-        address predictedFactory = _create2Address(SALT_FACTORY, factoryInitCode);
-        bytes memory deployerInitCode = _sharesMastercopyInitCode();
-        address predictedDeployer = _create2Address(SALT_SHARES_MASTERCOPY, deployerInitCode);
+        address predictedFactory = _create2Address(SALT_FACTORY, _factoryInitCode(eoaOwner));
+        address predictedMastercopy = _create2Address(SALT_SHARES_MASTERCOPY, _sharesMastercopyInitCode());
 
         console.log("==========================================");
-        console.log("Predicted KpkOivFactory:    ", predictedFactory);
-        console.log("Predicted KpkShares mastercopy:", predictedDeployer);
-        console.log("EOA owner (during deploy):  ", eoaOwner);
-        console.log("Final owner (post-deploy):  ", finalOwner);
+        console.log("  VERIFY ONLY - this script sends nothing");
         console.log("==========================================");
+        console.log("Expected KpkOivFactory:        ", predictedFactory);
+        console.log("Expected KpkShares mastercopy: ", predictedMastercopy);
+        console.log("Expected final owner:          ", finalOwner);
+        console.log("------------------------------------------");
 
-        vm.startBroadcast();
-
-        // Same preflight `_runChain` performs. This standalone path is documented in README.md as a
-        // per-chain onboarding entry point, so without these a chain can be wired with a working
-        // factory and no `Empty` / MultiSendUnwrapper — every later fund deploy on it then reverts,
-        // including a CCIP fan-out delivery whose fee was already spent on the source chain.
-        _ensureEmpty();
-        _ensureMultiSendUnwrapper();
-
-        if (predictedFactory.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_FACTORY, factoryInitCode));
-            require(ok, "factory CREATE2 deploy failed");
-            console.log("[OK]   KpkOivFactory deployed at:    ", predictedFactory);
-        } else {
-            console.log("[SKIP] KpkOivFactory already at:     ", predictedFactory);
-        }
-
-        if (predictedDeployer.code.length == 0) {
-            (bool ok,) = CANONICAL_CREATE2_DEPLOYER.call(abi.encodePacked(SALT_SHARES_MASTERCOPY, deployerInitCode));
-            require(ok, "deployer CREATE2 deploy failed");
-            console.log("[OK]   KpkShares mastercopy deployed at:", predictedDeployer);
-        } else {
-            console.log("[SKIP] KpkShares mastercopy already at: ", predictedDeployer);
-        }
+        // Every check below is an assertion about live chain state. None of them can be satisfied by
+        // this script, which is the point: a failure here means the chain needs
+        // `script/chains/Deploy_<Chain>.s.sol`, not a re-run of this one.
+        require(predictedFactory.code.length > 0, "factory is not deployed on this chain");
+        console.log("[OK]   factory present");
 
         KpkOivFactory factory = KpkOivFactory(predictedFactory);
-        if (factory.kpkSharesMastercopy() == address(0)) {
-            factory.setKpkSharesMastercopy(predictedDeployer);
-            console.log("[OK]   factory.kpkSharesDeployer set");
-        } else if (factory.kpkSharesMastercopy() == predictedDeployer) {
-            console.log("[SKIP] factory.kpkSharesDeployer already wired");
-        } else {
-            revert("factory.kpkSharesDeployer is set to an unexpected address");
-        }
 
-        if (factory.owner() == eoaOwner && eoaOwner != finalOwner) {
-            factory.transferOwnership(finalOwner);
-            console.log("[OK]   transferOwnership ->", finalOwner);
-        } else if (factory.owner() == finalOwner) {
-            console.log("[SKIP] factory already owned by:     ", finalOwner);
-        } else if (factory.owner() != eoaOwner) {
-            revert("factory.owner is unexpected; refusing to handoff");
-        }
+        require(EMPTY.code.length > 0, "Empty is not deployed on this chain");
+        require(keccak256(EMPTY.code) == keccak256(EMPTY_RUNTIME), "Empty: unexpected bytecode at canonical address");
+        console.log("[OK]   Empty canonical at      ", EMPTY);
 
-        vm.stopBroadcast();
-
-        require(KpkOivFactory(predictedFactory).owner() == finalOwner, "post-flight: owner mismatch");
-        // This script wires the shares deployer but NOT `timelockDeployer`, which only the per-chain
-        // `script/chains/Deploy_<Chain>.s.sol` scripts (via OivChainDeploy) deploy and set. A chain
-        // onboarded through this script alone would look healthy and then revert
-        // `TimelockDeployerNotSet` on every timelocked fund — and in a CCIP fan-out the SOURCE chain
-        // validates only its own deployer, so the message dispatches and the destination reverts with
-        // the fee already spent. Fail here instead, pointing at the script that does the whole job.
+        require(MULTI_SEND.codehash == MULTI_SEND_CODEHASH, "MultiSend missing/non-canonical on this chain");
         require(
-            KpkOivFactory(predictedFactory).timelockDeployer() != address(0),
-            "post-flight: timelockDeployer not wired - use script/chains/Deploy_<Chain>.s.sol, not this script"
+            MULTI_SEND_CALLS_ONLY.codehash == MULTI_SEND_CALLS_ONLY_CODEHASH,
+            "MultiSendCallOnly missing/non-canonical on this chain"
         );
         require(
-            KpkOivFactory(predictedFactory).kpkSharesMastercopy() == predictedDeployer,
-            "post-flight: kpkSharesMastercopy mismatch"
+            MULTISEND_UNWRAPPER.codehash == MULTISEND_UNWRAPPER_CODEHASH,
+            "MultiSendUnwrapper missing/non-canonical - batched fund transactions would be rejected"
         );
-        require(predictedDeployer.code.length != 0, "post-flight: shares mastercopy has no code");
+        console.log("[OK]   MultiSend + unwrapper canonical");
+
+        // The wiring that this script historically failed to perform, and the reason it must never
+        // claim a chain is ready. The factory now takes `timelockDeployer` as a mandatory constructor
+        // argument, so it can no longer be unset — this check has shifted from "is it wired" to "is it
+        // wired to the address THIS generation predicts", which a stale deployment of either contract
+        // still gets wrong. In a CCIP fan-out that mismatch reverts on the destination with the
+        // source-chain fee already spent.
+        require(
+            factory.timelockDeployer() == _predictTimelockDeployer(),
+            "timelockDeployer is unset or not the canonical one for this generation"
+        );
+        // The stored address matching is not the same as the deployer EXISTING. A factory latched to
+        // the predicted address before that address was deployed satisfies the check above, and this
+        // script would report the chain verified while every timelocked fund later fails on the
+        // interface call. The whole point of a verifier is to catch that.
+        require(
+            factory.timelockDeployer().code.length > 0,
+            "timelockDeployer address is correct but has no code on this chain"
+        );
+        console.log("[OK]   timelockDeployer        ", factory.timelockDeployer());
+
+        require(factory.kpkSharesMastercopy().code.length > 0, "kpkSharesMastercopy has no code on this chain");
+
+        require(factory.kpkSharesMastercopy() == predictedMastercopy, "kpkSharesMastercopy mismatch");
+        console.log("[OK]   kpkSharesMastercopy     ", factory.kpkSharesMastercopy());
+
+        require(factory.owner() == finalOwner, "factory owner is not the expected final owner");
+        console.log("[OK]   owner                   ", factory.owner());
 
         console.log("==========================================");
-        console.log("[OK] Deployment verified");
-        console.log("KpkOivFactory:     ", predictedFactory);
-        console.log("KpkSharesDeployer: ", predictedDeployer);
-        console.log("Owner:             ", finalOwner);
+        console.log("  Chain verified.");
         console.log("==========================================");
     }
 }

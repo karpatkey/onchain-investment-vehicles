@@ -5,7 +5,7 @@ Tooling and smart contracts for deploying **tokenized funds ("OIVs") entirely on
 A fund is not a single contract. It is a small stack of Safe + [Zodiac Roles](https://www.zodiac.wiki/documentation/roles-modifier) contracts plus an ERC-20 shares token, wired together. This repo provides:
 
 - **`KpkOivFactory`** — an on-chain factory that deploys and wires a complete fund stack in **one transaction**, at deterministic addresses.
-- **`CcipOivDeployer`** — a Chainlink CCIP orchestrator that, from **one mainnet transaction**, fans the operational stack out to multiple sidechains so the fund lands at the **same addresses everywhere**.
+- **`CcipOivDeployer`** — a Chainlink CCIP orchestrator that, from **one transaction on any wired chain**, fans the operational stack out to the others so the fund lands at the **same addresses everywhere**.
 - **`kpkShares`** — the fund's ERC-20 shares token (request-based subscribe/redeem, fees, multi-asset). This is the externally-audited core; its detailed reference lives in **[docs/KpkShares.md](docs/KpkShares.md)**.
 
 ---
@@ -48,8 +48,8 @@ Every fund the factory deploys is the same five-to-seven-contract stack:
 
 | Entry point | Deploys | Typical use |
 |---|---|---|
-| `deployOiv(config)` | the full fund: the 5-contract operational stack **+** a per-fund `kpkShares` implementation and UUPS proxy, with asset allowances and operator wiring | **mainnet** |
-| `deployStack(config)` | the 5-contract operational stack only (no shares token) | **sidechains** |
+| `deployOiv(config)` | the full fund: the 5-contract operational stack **+** a UUPS `kpkShares` proxy backed by the chain's **shared** `KpkShares` mastercopy, with asset allowances and operator wiring | chains in `sharesChains` |
+| `deployStack(config)` | the 5-contract operational stack only (no shares token) | every other wired chain |
 
 Key properties:
 
@@ -64,18 +64,19 @@ Full reference: **[docs/KpkOivFactory.md](docs/KpkOivFactory.md)**.
 
 ## Cross-chain deployment via Chainlink CCIP
 
-`CcipOivDeployer` extends a fund across chains in a single mainnet transaction, preserving the address invariant.
+`CcipOivDeployer` extends a fund across chains in a single transaction from any wired chain, preserving the address invariant.
 
 Because `KpkOivFactory` mixes `msg.sender` into its salts, identical addresses across chains require the **same caller** on every chain. The orchestrator is deployed at **one identical address on all chains** (deterministic CREATE2, chain-identical creation code) and is therefore the uniform factory caller everywhere — without putting any CCIP logic into the factory's deployment path.
 
-- **`deployEverywhere(config, gasLimit)`** (or `deployEverywhere(config, destChainIds, gasLimit)` to target an explicit subset) — deploys the full OIV locally (mainnet) and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain.
-- **`dispatchTo(config, destChainIds, gasLimit)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
+- **`deployEverywhere(config, sharesChains, gasLimit)`** (or `deployEverywhere(config, sharesChains, destChainIds, gasLimit)` to target an explicit subset) — deploys this chain's part of the fund and CCIP-sends the derived `StackConfig` to each destination chain, where the sibling orchestrator's `ccipReceive` calls `deployStack`. Result: the same Avatar/Manager/Roles addresses on every chain. **The local half is conditional:** the full OIV when the origin appears in `sharesChains`, the operational stack alone when it does not — so a fan-out started from a stack-only chain is coherent, but gives that chain no shares token. Each remaining shares chain is filled by its own `deployLocal(config, sharesChains)`; the fan-out skips them deliberately.
+- **`dispatchTo(config, sharesChains, destChainIds, gasLimit)`** — CCIP-only fan-out (no local deploy) to add a fund to a new chain, or re-send after a failed delivery, without changing the salt.
 - **Permissionless.** `deployEverywhere` and `dispatchTo` are permissionless; only infrastructure setters (`configure` / `withdraw*`) are owner-gated.
-- **Security.** `ccipReceive` accepts a message only from the configured router, the mainnet source chain, and a source sender equal to its own (sibling) address.
+- **Security.** `ccipReceive` accepts a message only from the configured router, a chain in its own registry, and a source sender equal to its own (sibling) address. The sender check is the load-bearing one — only a contract at that same deterministic address can pass it.
+- **Symmetric.** Any wired chain can initiate. The origin never entered the address derivation: the orchestrator is the uniform factory caller everywhere and the salt is `keccak256(abi.encode(config-with-zeroed-base-asset, sharesChains))`, composed once and shipped — so a fan-out from Base produces the same addresses as one from Ethereum. Pinned by `test_topology_originChainDoesNotEnterTheDerivation`.
 - **Fees.** Paid in native gas by the caller via `msg.value` (surplus refunded); size with `quoteDeployEverywhere`.
-- **Async, not atomic.** Sidechain stacks land after Ethereum finality (~15 min); a failed CCIP message is manually re-executable.
+- **Async, not atomic.** Destination stacks land after the source chain's finality (~15 min from Ethereum); a failed CCIP message is manually re-executable.
 
-**Supported networks:** 21 on-chain-verified mainnets where the full prerequisite stack exists at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2.1.1 ∩ canonical CREATE2 deployer ∩ a live CCIP lane from Ethereum). The machine-readable registry — 23 chains, the 21 wired plus 2 not-yet-ready — is **[`script/ccip-networks.json`](script/ccip-networks.json)**.
+**Supported networks:** **19 wired mainnets**, each on-chain-verified for the full prerequisite stack at canonical addresses (Safe v1.4.1 ∩ Zodiac Roles v2.1.1 ∩ canonical CREATE2 deployer ∩ a live CCIP lane). These are the 19 baked into `CcipOivDeployer`'s constructor registry. The machine-readable registry — **[`script/ccip-networks.json`](script/ccip-networks.json)** — holds **23** entries: the 19 wired, **2 deliberately excluded** (`bob`, `katana`: `READY-AFTER-EMPTY` but not onboarded, and `excluded: true` keeps them out of every seeded array), and **2 not ready** (`sei`, `mode`: no Roles v2.1.1 mastercopy on-chain). Wiring a chain means adding it to the constructor, so the registry file is the record, not the source.
 
 Full reference, the supported-network table, and the new-chain onboarding checklist: **[docs/CCIP_CROSS_CHAIN_DEPLOY.md](docs/CCIP_CROSS_CHAIN_DEPLOY.md)**.
 
@@ -113,7 +114,7 @@ Visual walk-throughs of the deployment flow (with diagrams):
 src/
   KpkOivFactory.sol        on-chain factory: deployOiv / deployStack
   CcipOivDeployer.sol      Chainlink CCIP cross-chain orchestrator
-  KpkSharesDeployer.sol    deploys a per-fund kpkShares implementation
+  KpkTimelockDeployer.sol  clones a per-fund TimelockController from a shared mastercopy
   kpkShares.sol            the fund's ERC-20 shares token (audited)
   IkpkShares.sol           kpkShares interface
   FeeModules/              WatermarkFee (perf fee) + IPerfFeeModule
@@ -121,7 +122,8 @@ src/
   utils/                   Empty (Avatar Safe signer), RecoverFunds
 script/
   DeployOiv.s.sol          deploy a fund via the factory
-  DeployKpkOivFactory.s.sol deterministic factory + deployer deployment
+  DeployKpkOivFactory.s.sol verifies an onboarded chain's wiring (sends nothing)
+  chains/Deploy_<Chain>.s.sol onboards a chain end to end (use this one)
   DeployCcipOivDeployer.s.sol deterministic orchestrator deployment
   ccip-networks.json       CCIP router / LINK / selector registry (23 chains)
   README.md                script usage guide (kpkShares management scripts)
