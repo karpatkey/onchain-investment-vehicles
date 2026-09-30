@@ -40,12 +40,12 @@ Chains: ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, cel
 sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. **Excluded:** bob, katana. Per-chain
 blocks and creation transactions are in [`script/deployed-infra.json`](../script/deployed-infra.json).
 
-**Source verification** (read back 2026-09-29, 5 contracts per chain):
+**Source verification** (read back 2026-09-30, 5 contracts per chain): **complete, with no gaps**.
 
 | Backend | Chains served | Verified |
 |---|---|---|
 | Sourcify | 19 | 95/95 exact match |
-| Etherscan V2 | 17 (not scroll, ink) | 80/85: **arbitrum pending**, see below |
+| Etherscan V2 | 17 (not scroll, ink) | 85/85 |
 | Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain | 40/40 |
 | OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll | 50/50 |
 | Routescan | ethereum, avalanche, mantle, plasma | 20/20 |
@@ -64,10 +64,11 @@ Per-chain notes:
   (`0xef677b24ac548511411f40221dc887dd3fa3f15b34cc431f24fd8926989c89dc`), so it was never open. Big
   blocks were enabled for the other 7 txs and disabled afterwards. Its `RoleGranted` sender is therefore
   Multicall3.
-- **Arbitrum / Arbiscan:** every Etherscan V2 verification job on chain 42161 sat "Pending in queue" for
-  4+ hours on 2026-09-29, while the same key and inputs verified in minutes on the other 16 chains. The
-  contracts are verified on Sourcify, Blockscout, OKLink and Tenderly. Resubmission and a manual
-  submission are in progress; update this row when Arbiscan reads back.
+- **Arbitrum / Arbiscan:** every Etherscan V2 API verification job on chain 42161 sat "Pending in queue"
+  for 4+ hours on 2026-09-29, while the same key and inputs verified in minutes on the other 16 chains.
+  All five were then verified through Arbiscan's web form (standard-JSON input, the same files), and
+  checked by API read-back on 2026-09-30: name, compiler, optimizer, EVM version, license, constructor
+  arguments byte-for-byte, a full (not "similar") match, and an ABI identical to the build.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a

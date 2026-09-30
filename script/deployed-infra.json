@@ -189,8 +189,8 @@
         }
       },
       "owner": "safe",
-      "explorerVerified": false,
-      "explorerVerifiedNote": "Arbiscan (Etherscan V2) queue stuck 'Pending in queue' on 2026-09-29; verified on Sourcify, Blockscout, OKLink, Tenderly."
+      "explorerVerified": true,
+      "explorerVerifiedNote": "Arbiscan API queue stalled on 2026-09-29; verified via the Arbiscan web form (standard-JSON input) and confirmed by API read-back on 2026-09-30."
     },
     {
       "name": "bnb",
@@ -650,15 +650,15 @@
     }
   ],
   "verification": {
-    "_comment": "Read-back counts on 2026-09-29 (5 contracts per chain). A chain a backend does not serve is not counted.",
+    "_comment": "Read-back counts on 2026-09-30 (5 contracts per chain): complete, no gaps. A chain a backend does not serve is not counted.",
     "sourcify": {
       "chains": 19,
       "verified": "95/95 exact_match"
     },
     "etherscanV2": {
       "chains": 17,
-      "verified": "80/85",
-      "gap": "arbitrum 0/5: Arbiscan queue stuck; being resubmitted / verified by hand"
+      "verified": "85/85",
+      "note": "arbitrum verified via the Arbiscan web form on 2026-09-29/30 after the API queue stalled"
     },
     "blockscout": {
       "chains": [
