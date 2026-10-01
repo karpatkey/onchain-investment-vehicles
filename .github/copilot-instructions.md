@@ -19,9 +19,10 @@ import graph, or to a global setting (`evm_version`, `optimizer_runs`, `bytecode
   live timelock clones governing real funds. Do not edit them, including comments, without treating
   it as a deliberate decision to fork the deployed kit. `test/DeployedKitSync.t.sol` forks mainnet and
   fails when you do.
-- `KpkOivFactory` and `CcipOivDeployer` are not yet deployed and are free to move; their pinned
-  addresses in `script/DeployOiv.s.sol`, `test/FactoryAddressSync.t.sol` and
-  `docs/DEPLOYED_ADDRESSES.md` are re-derived after a change, not defended.
+- `KpkOivFactory` and `CcipOivDeployer` are **deployed** (salt v4, 19 chains). Any change to their
+  source or import graph creates a new generation at new addresses; `script/DeployOiv.s.sol`'s
+  `FACTORY` and `test/FactoryAddressSync.t.sol` pin the live ones, so such a change means a deliberate
+  re-rollout, not a re-derivation.
 
 **EIP-170 (24,576 B) is a live budget, not a theoretical one.** `KpkOivFactoryHarness` sits ~227
 bytes above `KpkOivFactory`, so **the harness row is the binding constraint** — read margins off
