@@ -452,21 +452,23 @@ Fee rates are in basis points (100 bps = 1%). The skill handles the conversion f
 
 ## Deployed factory addresses
 
-The current **salt-v3** build, deployed at the same address on every chain via the canonical CREATE2 deployer (2026-07-24):
+The current **salt-v4** build, deployed at the same address on every chain via the canonical CREATE2 deployer (2026-09-29/30, from `main@fe62dd4`):
 
 | Contract         | Address                                      |
 |------------------|----------------------------------------------|
-| `KpkOivFactory`  | `0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F` |
-| `KpkSharesDeployer` | `0xea084E763F8535CBe28759b990F963BeDf60be9a` |
-| `CcipOivDeployer` | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
+| `KpkOivFactory`  | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` |
+| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` |
+| `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
 
-Deployed on 19 chains, owned by the OIV governance Safe (`owner() == Safe` verified on-chain on all 19).
+Deployed on 19 chains, factory and orchestrator owned by the Security Council Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (`owner() == Safe` verified on-chain on all 19).
 
-> ### ⚠️ Deploy only through the addresses above
+> ### ⚠️ Deploy new funds only through the addresses above
 >
-> Earlier factory generations are still live on-chain, and **only the salt-v3 addresses above are safe to deploy through**. The salt-v2 build predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — repairable only by multisig afterwards, because ownership is handed over during the deploy. The older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0; `script/DeployCcipOivDeployer.s.sol` hard-refuses that one (`OivChainDeploy.LEGACY_FACTORY`, pinned by `test/FactoryAddressSync.t.sol`).
+> Earlier factory generations are still live on-chain, and **only the salt-v4 addresses above are the deploy target for new funds**. A fund never straddles generations: extending an existing fund to another chain goes through the generation it was born on, and pushing it through a different one creates a *different* fund. The **salt-v3** stack (`KpkOivFactory` `0xbafb…677F`, orchestrator `0x6F2A…f11b`) is superseded and recorded in [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) only because XAUt Carry and WBTC Carry run on it. The salt-v2 build predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — repairable only by multisig afterwards, because ownership is handed over during the deploy. The older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0; it is listed only because kUSD lives on it, and `script/DeployCcipOivDeployer.s.sol` hard-refuses it (`OivChainDeploy.LEGACY_FACTORY`, pinned by `test/FactoryAddressSync.t.sol`).
 >
-> Superseded addresses are intentionally not listed in this repo — it records the current infra plus the stack the live kUSD fund runs on. If you need an old generation's address, take it from git history rather than re-adding it here.
+> Other superseded addresses are intentionally not listed in this repo — it records the current infra plus the stacks live funds run on. If you need an old generation's address, take it from git history rather than re-adding it here.
 
 For the authoritative per-chain address / tx / block record see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).
