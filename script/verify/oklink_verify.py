@@ -321,7 +321,11 @@ def main():
         for name in active:
             code, guid = submit(chain, name)
             target = "%s/%s" % (chain, name)
-            if code == ALREADY_VERIFIED:
+            # OKLink changed its answer for an already-verified target (observed 2026-09-29): instead of
+            # code 50026 it now returns code 0 with the MESSAGE in `data`, e.g. "0x…is already verified.
+            # Skipping verification." Treating that string as a job guid made every already-verified
+            # target poll to a timeout and report as a problem. Accept both forms.
+            if code == ALREADY_VERIFIED or (code == "0" and guid and "already verified" in guid.lower()):
                 verified.append(target)
                 print("%-34s already verified" % target)
             elif code == "0" and guid:

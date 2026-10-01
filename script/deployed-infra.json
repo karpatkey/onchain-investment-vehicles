@@ -1,188 +1,30 @@
 {
-  "_comment": "Deployment record for the v2.1.1 OIV cross-chain infra (SALT V3). Deployed EOA-owned, configured (mainnet selector registry seeded), then ownership transferred to the OIV Safe. The three `canonical` contracts share one address on every chain (deterministic CREATE2, salt v3, eoaOwner 0xAa5A...4F72); `emptyContract` is unchanged from earlier salts. `chains[]` = the 19 deployed chains (FINAL set). `excluded[]` = chains deliberately not pursued. SALT V3 supersedes salt v2, which predated the MultiSend unwrap-adapter fix and so produced Roles Modifiers that reject batched multiSend calls. The salt-v1 and salt-v2 addresses are deliberately NOT recorded in this repo: no fund uses them, this file tracks only the current infra, and git history has them if ever needed. A fund must NOT straddle two factory versions - the factory address is baked into the Avatar Safe setup() initializer, so the same salt yields different Safe addresses across versions. BUILD NOTE: foundry.toml leaves bytecode_hash at its solc default, so these addresses depend on the build environment (dependency source PATHS are hashed into the metadata); they were produced from a fresh `git clone --recurse-submodules` of main at 9120f63 and are pinned by test/FactoryAddressSync.t.sol. Human companion: docs/DEPLOYED_ADDRESSES.md.",
+  "_comment": "Salt v4 OIV infrastructure, deployed 2026-09-29 on 19 chains from main@fe62dd4 (frozen clone, forge 1.7.1). Same address on every chain (CREATE2 via 0x4e59...956C). owner()==finalOwner (Security Council Safe) on factory and orchestrator, read on-chain on all 19. Salt v3 is kept under `superseded` for the funds that still run on it.",
   "version": "2.1.1",
+  "saltVersion": 4,
+  "sourceCommit": "fe62dd4bcf3a6ad3870d6e767314827972b949a2",
   "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
   "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+  "finalOwnerLabel": "Security Council Safe (5-of-8)",
   "canonical": {
-    "_comment": "Same address on every chain (deterministic CREATE2, salt v3). owner()==finalOwner (Safe) post-handover, verified on-chain on all 19.",
-    "kpkOivFactory": "0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F",
-    "kpkSharesDeployer": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
-    "ccipOivDeployer": "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b",
+    "kpkOivFactory": "0x73Bb12a05669748f3c9cbE8764271c69182f49E5",
+    "ccipOivDeployer": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+    "kpkSharesMastercopy": "0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC",
+    "timelockMastercopy": "0x9760280fED9e760668186334f88b6d763A7d976E",
+    "timelockDeployer": "0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f",
     "emptyContract": "0xA4703438f8cc4fc2C2503a7e43935Da16BA74652"
   },
-  "chains": [
-    {
-      "name": "ethereum",
-      "chainId": 1,
-      "deployed": true,
-      "block": 25605129,
-      "txHash": "0x39f7d6f3d491f9680ec8b4be330d205cd94d2323be82a08e62e31cbb0bc630c7",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "optimism",
-      "chainId": 10,
-      "deployed": true,
-      "block": 154663882,
-      "txHash": "0x967205ee52f286802ce76ff56149abbbb315395924de3e5ae9dbdc7f65e68b70",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "gnosis",
-      "chainId": 100,
-      "deployed": true,
-      "block": 47372831,
-      "txHash": "0xecd4798c9b61fc741977f9712df6fa390ecf72b3384133e753b846631112b6df",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "base",
-      "chainId": 8453,
-      "deployed": true,
-      "block": 49068618,
-      "txHash": "0x3c3a21af1cc1d03513d536abcbc518b9ead900d64db5bdd2902377eca6d67617",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "arbitrum",
-      "chainId": 42161,
-      "deployed": true,
-      "block": 487340953,
-      "txHash": "0x44e9ad9b8ed2adb9d1460fdd72d6f838c3acc3647861166c7c169abc562a4f39",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "bnb",
-      "chainId": 56,
-      "deployed": true,
-      "block": 111926335,
-      "txHash": "0xa22df9933e37c3cf55a6b6b70a3423f1caae20748dc39c0ec22262c119f1c3df",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "polygon",
-      "chainId": 137,
-      "deployed": true,
-      "block": 90814430,
-      "txHash": "0xc19d4eb2746ef6de9c4c4441281014b5735e60a59054a1d4fba37a9cf21a62c3",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "avalanche",
-      "chainId": 43114,
-      "deployed": true,
-      "block": 91143742,
-      "txHash": "0x5ba0a5343b5af33ad4c5267456c5bade3a7f17035b2f55dc3a4611bf98ef5408",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "celo",
-      "chainId": 42220,
-      "deployed": true,
-      "block": 73025918,
-      "txHash": "0xc186646d3f2c2842642f8011ac14759a3fbef086a9979f1149ec80fdd52878f1",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "linea",
-      "chainId": 59144,
-      "deployed": true,
-      "block": 31507780,
-      "txHash": "0xd3bae36190e9cde435c9ce2e2cbcf4f4bafa6ec21ad7077c37c11c2b14b577fe",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "scroll",
-      "chainId": 534352,
-      "deployed": true,
-      "block": 34466088,
-      "txHash": "0x8f300af065a5c262d29307baf688764527788a8712f8ef4505f3c4a1b6968c6d",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "sonic",
-      "chainId": 146,
-      "deployed": true,
-      "block": 76442370,
-      "txHash": "0x9140ab063d7a274e88c1318bbe6823aae64598d7815ba29198664cb9136316db",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "unichain",
-      "chainId": 130,
-      "deployed": true,
-      "block": 54178385,
-      "txHash": "0x64bea6725c16309d4fe7f707bb83c8147717633582bc191a4b2100d50290593f",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "worldchain",
-      "chainId": 480,
-      "deployed": true,
-      "block": 32795562,
-      "txHash": "0x4f320ec2354c39b83ad64781192b9a19c94b941b89254542b36e7f627af36775",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "hyperevm",
-      "chainId": 999,
-      "deployed": true,
-      "block": 41348936,
-      "txHash": "0x5d909b4ccaa6a9fbe87d03562f94e31cb051351aa453d4ae4bea64e2d2787d9f",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "mantle",
-      "chainId": 5000,
-      "deployed": true,
-      "block": 98398236,
-      "txHash": "0x0b604e9f92f38ca171fc5bf282d491a9108dd062525f3de5bbaa0a3de6fae460",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "plasma",
-      "chainId": 9745,
-      "deployed": true,
-      "block": 27986461,
-      "txHash": "0xae31d1a1955b3dac193f4e632c04c380770b5ab2e4a86148262c6084b8e1c4e5",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "ink",
-      "chainId": 57073,
-      "deployed": true,
-      "block": 51428424,
-      "txHash": "0x2e71620d493ecce649116e2c1115fee64f4fe0c6fb29bb7a21deddfeb897ff6b",
-      "owner": "safe",
-      "explorerVerified": true
-    },
-    {
-      "name": "berachain",
-      "chainId": 80094,
-      "deployed": true,
-      "block": 23956067,
-      "txHash": "0x8479a007e4f064121559dd378b5f3a2a251dfb25afa6c1a07632b0306c2774da",
-      "owner": "safe",
-      "explorerVerified": true
-    }
-  ],
+  "runtimeCodehashes": {
+    "kpkOivFactory": "0x5b14bc7b7882da06e279e67f3e687d09dbe81cb0247c812d69d1ee9224ee72e2",
+    "ccipOivDeployer": "0x15be0ec4f19b6e0ae36ffd5122a6a76aa4bab8baec95001a96a61fe13ab37b02",
+    "kpkSharesMastercopy": "0x7e4ff4382a936b7918edbc8680c2ebe9feaec86456fe80eb19ec694934cc52d2",
+    "timelockMastercopy": "0x91b5ed730171b39e69001ea25dcd590fd750793e610a6051dfeeb057bff0bb56",
+    "timelockDeployer": "0xa20d8821acbf67e64e40e113fdc3f2c96e940a02250af7096a6cd11eba876ff2"
+  },
+  "bakedRegistry": {
+    "_comment": "CCIP selector registry seeded in the orchestrator constructor; no post-deploy seeding.",
+    "count": 19
+  },
   "excluded": [
     {
       "name": "bob",
@@ -195,130 +37,996 @@
       "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
     }
   ],
-  "saltVersion": 3,
-  "mainnetSelectorRegistry": {
-    "_comment": "Seeded from the EOA BEFORE ownership moved to the Safe. A salt-v3 orchestrator starts EMPTY - the v2 registry does not carry over. The seeding script initially wrote 20 entries because bob+katana are verdict READY-AFTER-EMPTY; both were removed via removeChainSelector while the EOA still owned the orchestrator. script/CcipDeployEverywhere.s.sol now honours an `excluded` flag so this cannot recur (test/SelectorSeedScope.t.sol).",
-    "destinationChainIdCount": 18,
-    "seededBeforeHandover": {
-      "count": 18,
-      "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
-    },
-    "removedAfterSeeding": [
-      {
-        "name": "bob",
-        "chainId": 60808
-      },
-      {
-        "name": "katana",
-        "chainId": 747474
-      }
-    ],
-    "verifiedOnChainPostHandover": true
-  },
-  "verification": {
-    "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends (Sourcify v2 57/57, Etherscan V2 51/51 on its 17 chains, Blockscout 30/30, Routescan 15/15 on its 5 chains, Tenderly 54/57 public, OKLink 30/30 on its 10 chains). Every figure was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi / OKLink check-verify-result), never from a forge exit code. OKLink was settled on 2026-07-25 - see its entry below; the earlier 'indeterminate, IP rate-limited' reading was a misdiagnosis.",
-    "contractsCovered": [
-      "kpkOivFactory",
-      "kpkSharesDeployer",
-      "ccipOivDeployer"
-    ],
-    "verifiers": {
-      "sourcifyV2": {
-        "_comment": "Keyless, exact_match, and the lead backend: it auto-propagated to Etherscan/Routescan/Blockscout, which is why the later Etherscan sweep found everything 'already verified'.",
-        "result": "57/57 (19 chains x 3 contracts)",
-        "match": "exact_match"
-      },
-      "etherscanV2": {
-        "_comment": "17 chains support Etherscan V2. scroll (534352) and ink (57073) are NOT on V2 - covered by Blockscout instead. This also lights up the branded UIs (Basescan, Arbiscan, Lineascan, HyperEVMScan, SonicScan, ...) since they share the same DB.",
-        "result": "51/51 on supported chains",
-        "chains": [
-          "ethereum",
-          "optimism",
-          "gnosis",
-          "base",
-          "arbitrum",
-          "bnb",
-          "polygon",
-          "avalanche",
-          "celo",
-          "linea",
-          "sonic",
-          "unichain",
-          "worldchain",
-          "hyperevm",
-          "mantle",
-          "plasma",
-          "berachain"
-        ]
-      },
-      "blockscout": {
-        "_comment": "10 instances x 3 contracts. NOTE: scroll.blockscout.com now 301-redirects to scrollscan.com - a read that does not follow redirects reports a false gap.",
-        "result": "30/30",
-        "instances": [
-          "eth.blockscout.com",
-          "gnosis.blockscout.com",
-          "base.blockscout.com",
-          "arbitrum.blockscout.com",
-          "polygon.blockscout.com",
-          "celo.blockscout.com",
-          "scroll.blockscout.com",
-          "unichain.blockscout.com",
-          "explorer.inkonchain.com",
-          "worldchain-mainnet.explorer.alchemy.com"
-        ]
-      },
-      "routescan": {
-        "_comment": "Populated via Sourcify propagation. 15/15 for the five chains Routescan actually hosts; the others are simply not Routescan networks.",
-        "result": "15/15",
-        "chains": [
-          "ethereum",
-          "avalanche",
-          "mantle",
-          "plasma",
-          "berachain"
-        ]
-      },
-      "tenderly": {
-        "_comment": "PUBLIC verify in the karpatkey/agents project (always public - see the /verify-contracts skill). hyperevm (999) is not a supported Tenderly network, which is structural, not a gap.",
-        "result": "54/57",
-        "unsupported": [
-          "hyperevm"
-        ]
-      },
-      "oklink": {
-        "_comment": "SETTLED 2026-07-25 (issue #39). OKLink verification is KEYLESS (an OKX trading API key does NOT work here - it returns Invalid OK-ACCESS-KEY; that credential is for a different product). OKLink serves TEN of our chains, not nine - gnosis was missed in the salt-v2 survey and has now been verified too, so the target count is 30, not 27. THE 50026 DIAGNOSIS WAS WRONG: `{code: 50026, msg: 'System error, please try again later.'}` on the submit route is NOT IP rate-limiting - it is OKLink's unhelpful rendering of 'this (chain, address) already has a SUCCESSFUL verification'. Established by controlled experiment: 50026 tracks the (chain, address) pair and is independent of payload, size and IP (a 200-byte throwaway payload at one of our addresses 50026s, while the same payload at an unrelated address is accepted, as is our full 244KB payload at an unrelated address); gnosis returned code 0 before it was verified and 50026 minutes later once its three contracts came back Success; and addresses carrying only FAILED jobs keep accepting resubmits. A full 30-target resweep on 2026-07-25 returned 50026 for every one, so all 30 are verified. The sweep is self-healing - anything genuinely unverified is accepted and queued - and re-running it is safe and idempotent: script/verify/oklink_verify.py.",
-        "result": "30/30 (10 chains x 3 contracts)",
-        "chains": [
-          "ethereum",
-          "optimism",
-          "gnosis",
-          "base",
-          "arbitrum",
-          "bnb",
-          "polygon",
-          "avalanche",
-          "linea",
-          "scroll"
-        ],
-        "directlyReadConfirmed": {
-          "_comment": "Read back by guid from check-verify-result (keyless, never throttled). The other 20 are established by the 50026 equivalence above, because OKLink only mints a guid - the sole status handle - for a contract that is NOT already verified, so an already-verified target cannot be re-read directly.",
-          "gnosis": [
-            "kpkOivFactory",
-            "kpkSharesDeployer",
-            "ccipOivDeployer"
-          ],
-          "kpkSharesDeployerOn": [
-            "optimism",
-            "base",
-            "bnb",
-            "polygon",
-            "avalanche",
-            "linea",
-            "scroll"
-          ]
+  "chains": [
+    {
+      "name": "ethereum",
+      "chainId": 1,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 26085600,
+      "txHash": "0x4b91121f3a3923ee18ee6478c4f1e1fe6763e9a2b23f48bccec014af8519f240",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xd8a7b38913cd08c3ce79ccacb7fa15525a69c6235a7dc1a5d639b0a1323e3d8f",
+          "block": 26085600
         },
-        "impact": "None on coverage either way: every chain OKLink serves already holds Sourcify v2 + Etherscan V2 (or Blockscout for scroll) + Tenderly. OKLink is a sixth backend.",
-        "trackingIssue": "#39"
+        "factory": {
+          "tx": "0x4b91121f3a3923ee18ee6478c4f1e1fe6763e9a2b23f48bccec014af8519f240",
+          "block": 26085601
+        },
+        "orch": {
+          "tx": "0x4c471cdf92455a7001b6d17e86bb053b9396054b22c8b084fc71dadf3c1dbffe",
+          "block": 26085603
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "note": "Timelock kit (TL_MC, TL_DEP) already live since 2026-09-21; only the other three were deployed."
+    },
+    {
+      "name": "optimism",
+      "chainId": 10,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 157549892,
+      "txHash": "0x3c5ac7a036e6b51f8bdfd8991900c757a5063d39bb15aee0fb609b35089ec637",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xaba4f89d16dabcc9bda54bcc079a8011d5642a4ab52c682ec37fad8c5cceec89",
+          "block": 157549892
+        },
+        "tl_mc": {
+          "tx": "0x2822e03df7c8af59ad8587147b24e79cdf7e56125dbbd1da7638887c5cc70c33",
+          "block": 157549893
+        },
+        "tl_dep": {
+          "tx": "0x187e1c1841a3beceed765ec626fa0c960f135b98fdc564d1a9a310500b553520",
+          "block": 157549895
+        },
+        "factory": {
+          "tx": "0x3c5ac7a036e6b51f8bdfd8991900c757a5063d39bb15aee0fb609b35089ec637",
+          "block": 157549896
+        },
+        "orch": {
+          "tx": "0x790098b013ec50840599b2817739d9bf81a5dc4635f832aeeb127356faa89859",
+          "block": 157549898
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "gnosis",
+      "chainId": 100,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 48502285,
+      "txHash": "0xd9e68031835dd1a3c6b7c7df20705c7a107fc6159dda90e8be224ce6de84cf62",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x9b2a04da06e63b16a98ae21250bb6ce34c1343e3587e6cb201b9439b4f03ef42",
+          "block": 48502285
+        },
+        "tl_mc": {
+          "tx": "0xfc4914afb32a91f5475a5a2af4db871425de8391427021706f512547205b1f9a",
+          "block": 48502286
+        },
+        "tl_dep": {
+          "tx": "0xfff598909ba79c2490ecca6f5bcf722b4c1001055b8d3042ac69c6a5b66ce6f7",
+          "block": 48502289
+        },
+        "factory": {
+          "tx": "0xd9e68031835dd1a3c6b7c7df20705c7a107fc6159dda90e8be224ce6de84cf62",
+          "block": 48502290
+        },
+        "orch": {
+          "tx": "0x10f0ffde1563d3a9e4aa6128007b4add6cadad49d6a30f6132098ca700a4f203",
+          "block": 48502292
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "base",
+      "chainId": 8453,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 51953496,
+      "txHash": "0x8392ccf75386ff33ae85d245968b7a01aa4483a0e09787cc7f405d7bf3b10fab",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x7efe85101211c4b80eeead4d15fb72e57e2be9991106feaaf6cdb3fbe4e0e548",
+          "block": 51953496
+        },
+        "tl_mc": {
+          "tx": "0x2d74cbee5d0fb3a1f56a5c3588a2b96c37b9a50ab33d3be59135abd9c3346f6c",
+          "block": 51953497
+        },
+        "tl_dep": {
+          "tx": "0x55b0913fbc8fc6aa70678d20ee24cb6c72437ebeb3ad66f6cc721c1a008be23f",
+          "block": 51953499
+        },
+        "factory": {
+          "tx": "0x8392ccf75386ff33ae85d245968b7a01aa4483a0e09787cc7f405d7bf3b10fab",
+          "block": 51953501
+        },
+        "orch": {
+          "tx": "0x18de978536501eacfe76e7ec9f0b747e627572afaa670b4da90d2c3e460e1569",
+          "block": 51953503
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "arbitrum",
+      "chainId": 42161,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 510081218,
+      "txHash": "0x99d292230b791ae2f408729b9e7c4304fbc9ae278762c072a6d369678a66cceb",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xcbcbb978b1c87625c8b3bf6e2a71f20ae93e5b39e8428d603c7a37be1b245c1f",
+          "block": 510081218
+        },
+        "tl_mc": {
+          "tx": "0xaff3eafd97a180bcd3ec05afbe1f6afc39ed2918ff7cae83dd532f1b8b0dfe5e",
+          "block": 510081223
+        },
+        "tl_dep": {
+          "tx": "0x6fd7ab431d3538b51914738256c87aecfe72de56de5cbcdaaf377822cfe47830",
+          "block": 510081232
+        },
+        "factory": {
+          "tx": "0x99d292230b791ae2f408729b9e7c4304fbc9ae278762c072a6d369678a66cceb",
+          "block": 510081238
+        },
+        "orch": {
+          "tx": "0x08908e689d0448c5ac1d559337a75c6a3f7b3aaa6663d81d82064daacf1fb3ef",
+          "block": 510081248
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "explorerVerifiedNote": "Arbiscan API queue stalled on 2026-09-29; verified via the Arbiscan web form (standard-JSON input) and confirmed by API read-back on 2026-09-30."
+    },
+    {
+      "name": "bnb",
+      "chainId": 56,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 124770533,
+      "txHash": "0x9d353cc89c539421b84103d0b1ee95aed415ed42758018cb7a2cc608352310e5",
+      "creations": {
+        "tl_dep": {
+          "tx": "0x7e4f0c94bedd3be17dad495be331e0df721f96c515a578c2515c8c47cb41784f",
+          "block": 124771585
+        },
+        "factory": {
+          "tx": "0x9d353cc89c539421b84103d0b1ee95aed415ed42758018cb7a2cc608352310e5",
+          "block": 124771591
+        },
+        "orch": {
+          "tx": "0x73907ce91d80088586a0ce248b3d239e38036ec30d8767878ddfd823ccceaf26",
+          "block": 124771602
+        },
+        "shares_mc": {
+          "tx": "0x90f03e6f75bc31406c91484838fe9c0ba6a3f4b76df7ea159023ec7f31a71657",
+          "block": 124770533
+        },
+        "tl_mc": {
+          "tx": "0x410c9c83cfe9bff473af86ba96a0fa55c999acb9dce0d27931dd8ef6178c9119",
+          "block": 124770636
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "extraTxs": {
+        "TL_MC_initialize": "0xd456b50fa447da2c2efa67f22eabc382b4069256c1200d6134e2224c6f4179dd"
+      },
+      "note": "publicnode RPC failed mid-broadcast after the TL mastercopy CREATE2; the approved initialize was sent by hand (326-block open window; the log proves no other claimant), then the remaining 6 txs."
+    },
+    {
+      "name": "polygon",
+      "chainId": 137,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 94670852,
+      "txHash": "0xf567f2295c4100f397f8df4b8f31fd20428b120b1ccbf66e3fba5a334a1ba463",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xf9911902f8c2e7b09b045f87456e98400d8000df476fabd44ae8331ef87cd015",
+          "block": 94670852
+        },
+        "tl_mc": {
+          "tx": "0x11c279a917c5c34ebcbdeef261398110da0fb4321b124bce8a81638bfc616c37",
+          "block": 94670855
+        },
+        "tl_dep": {
+          "tx": "0x95d7c98e54449cb5cae46720fa73c6c0f42fc8597394217cb610681ae10bc4af",
+          "block": 94670860
+        },
+        "factory": {
+          "tx": "0xf567f2295c4100f397f8df4b8f31fd20428b120b1ccbf66e3fba5a334a1ba463",
+          "block": 94670862
+        },
+        "orch": {
+          "tx": "0x70e9bd04fe0507f3f3782b639c4d3e3f9cd603de5519b9d8bb8aa07ab087fe06",
+          "block": 94670867
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "avalanche",
+      "chainId": 43114,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 96410506,
+      "txHash": "0x8e4d1f6c8dca8a6995c50fe3d4a01efd1d872dd167576a771a01f8af3964cfba",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x417ab59133b8511220dd8e78c8cb5180eb089ba5afbc124639656310191cea60",
+          "block": 96410506
+        },
+        "tl_mc": {
+          "tx": "0x80abaf51426b8e58996e23f2cde4926f26e3a89efaa83515666ab453b2c8db45",
+          "block": 96410509
+        },
+        "tl_dep": {
+          "tx": "0x20d4d2e83e6c49c7e6dd90fbce5712b3f5ea9e1cb3ceb29f59956cf89744aabf",
+          "block": 96410514
+        },
+        "factory": {
+          "tx": "0x8e4d1f6c8dca8a6995c50fe3d4a01efd1d872dd167576a771a01f8af3964cfba",
+          "block": 96410516
+        },
+        "orch": {
+          "tx": "0x8b59805837af49026b54d9b5892b0b11af12ab353a43724bcbd7c5a5e2ed639e",
+          "block": 96410520
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "celo",
+      "chainId": 42220,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 78804490,
+      "txHash": "0x9296c97ac766b6f92f5874c8cbb29b2044a9cd19e0edb25ab98e809daa25fa48",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xd73dfdef1b3a54aefd89e139b8bc478df9dcec1f7b9b92e43e688691a1d78997",
+          "block": 78804490
+        },
+        "tl_mc": {
+          "tx": "0xc4e1504824d3fa6f2e9f60819b6100036400c0ae3acc256440379088ad68d4a8",
+          "block": 78804499
+        },
+        "tl_dep": {
+          "tx": "0xa2a6272cd7da12e738076c2b50316d4db3f2e81929d2802e93aa70e2d061df80",
+          "block": 78804514
+        },
+        "factory": {
+          "tx": "0x9296c97ac766b6f92f5874c8cbb29b2044a9cd19e0edb25ab98e809daa25fa48",
+          "block": 78804523
+        },
+        "orch": {
+          "tx": "0x798889c3aea62d80f76afaf4f7c3d8a442f81fd65b5f2a8a75bc518abf40d49f",
+          "block": 78804533
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "linea",
+      "chainId": 59144,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 32184037,
+      "txHash": "0xbc765aa3fd3caed84bda77b84d41d98901788d70d98023f2942cf52554a27c22",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xa845cbeff95416a7ea70fa9d1f75d36491e461da8c6a06491de8007fa53bbe65",
+          "block": 32184037
+        },
+        "tl_mc": {
+          "tx": "0x935d58fb8702c7efdd512a0d6b485e8f9f3d91a8913a61d1e96c2197b18dbfb0",
+          "block": 32184038
+        },
+        "tl_dep": {
+          "tx": "0xdcb9878ac22f5782b4e4525206bb3f7afc610dc6132c1fac80c1efcd27b76cb8",
+          "block": 32184040
+        },
+        "factory": {
+          "tx": "0xbc765aa3fd3caed84bda77b84d41d98901788d70d98023f2942cf52554a27c22",
+          "block": 32184041
+        },
+        "orch": {
+          "tx": "0x8ce9182758c3cf10cdf8517adfeca18cb62a9d24db7c4e673fd4a5b258ab7294",
+          "block": 32184043
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "scroll",
+      "chainId": 534352,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 35219012,
+      "txHash": "0xb4cf428ff3b137e19bad991a6f72e521fc0cf5d01d185c989b9ef10a4281c064",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x9455e5482d77f1df8e374b86ec8bc9325c4bbc118fcc8fd311b34165fe4f2314",
+          "block": 35219012
+        },
+        "tl_mc": {
+          "tx": "0x1a5c1f3037778dcb42648184c6db9a260d38d7961ab240d27ccdc5f4d1108d3f",
+          "block": 35219013
+        },
+        "tl_dep": {
+          "tx": "0x1a814800f2121d7e348dbbd6b1fe708fd8ef8409bbacb1775debd2932fb768ba",
+          "block": 35219015
+        },
+        "factory": {
+          "tx": "0xb4cf428ff3b137e19bad991a6f72e521fc0cf5d01d185c989b9ef10a4281c064",
+          "block": 35219016
+        },
+        "orch": {
+          "tx": "0xb2bf2e69cd1e0b151f3eae8f8de65cc4ecfcd494c2fcc8cba9b64262991b4170",
+          "block": 35219018
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "sonic",
+      "chainId": 146,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 80098788,
+      "txHash": "0x93d153e8a09bf48cd0f5816e7ee617787f2879200b2ae086a45498ec8a7a5aed",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x310b1c5b3c0c2897fdf753d840459a3c6e5f8cb340f488dd97b5fc18542df66c",
+          "block": 80098788
+        },
+        "tl_mc": {
+          "tx": "0x56b175ed261e9ad4144fceb7f732649f17dfd2619a578afa27469790cd8764f8",
+          "block": 80098790
+        },
+        "tl_dep": {
+          "tx": "0xe6131e790b50e50f1145c74312c2035780707343b8683bf904633267aa120b1e",
+          "block": 80098795
+        },
+        "factory": {
+          "tx": "0x93d153e8a09bf48cd0f5816e7ee617787f2879200b2ae086a45498ec8a7a5aed",
+          "block": 80098798
+        },
+        "orch": {
+          "tx": "0xbb2982e65cbd3f54a8490e5990cd61bc4f3297ed4fa9dc88524f5ee023ea5446",
+          "block": 80098801
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "unichain",
+      "chainId": 130,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 59956058,
+      "txHash": "0x37be97dfa4d23c27fc8ea0404828aee049c72183d3def93a6d79a91dc90e7d92",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x94714bbce4a13540ed61f5901e80c2c9457885424d3b9d02ae91a1dd592903f2",
+          "block": 59956058
+        },
+        "tl_mc": {
+          "tx": "0xf4fbc9d086d4f033371d98f896789473547e7af361317d1fb8840f2476e5af00",
+          "block": 59956063
+        },
+        "tl_dep": {
+          "tx": "0xf6a7c0386a3b9ae53f6e58b387f4d39084aaa6bdd5f3a3bc2385aa9cfc9cfdea",
+          "block": 59956070
+        },
+        "factory": {
+          "tx": "0x37be97dfa4d23c27fc8ea0404828aee049c72183d3def93a6d79a91dc90e7d92",
+          "block": 59956076
+        },
+        "orch": {
+          "tx": "0x2e5821bc4b7e213709f70adffcb0cf28764827fee9a9eede20d6faa26553183b",
+          "block": 59956085
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "worldchain",
+      "chainId": 480,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 35684564,
+      "txHash": "0x4cffad6312c31da0e050d9188471e5cfe31e4b6db7c580ef0f646cf8ea6b845e",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x95e5d1afa52ee35bab8576c752c95c3339794f5a2936a234e454ddaf1c9290c9",
+          "block": 35684564
+        },
+        "tl_mc": {
+          "tx": "0x03fabb5630d99b20c655be60541aff157ea7de5f3a16873451aeb89f5039f59f",
+          "block": 35684566
+        },
+        "tl_dep": {
+          "tx": "0x769306893cfc7056e3a688f40461d935ddb6ecde3900c598078fded86bb7eb0f",
+          "block": 35684570
+        },
+        "factory": {
+          "tx": "0x4cffad6312c31da0e050d9188471e5cfe31e4b6db7c580ef0f646cf8ea6b845e",
+          "block": 35684572
+        },
+        "orch": {
+          "tx": "0x1a721e87ceb04699b8e886c099d16dedc945ac2a585379c031d6ef7f72213dbc",
+          "block": 35684575
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "hyperevm",
+      "chainId": 999,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 47231002,
+      "txHash": "0xb3f9ee63723690f863bb291db27f68745020c092a0613a279984da4e816e2509",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x0d26ebd7ad7408b87786d2a34dbacbc2c0c40bc686564bfd651ce7089c89cb9d",
+          "block": 47231078
+        },
+        "tl_dep": {
+          "tx": "0x087adfe78333763072fa6ed1e9e5c6204c8fbfde1ca38ac9ca6393cf6a9b06d7",
+          "block": 47231139
+        },
+        "factory": {
+          "tx": "0xb3f9ee63723690f863bb291db27f68745020c092a0613a279984da4e816e2509",
+          "block": 47231200
+        },
+        "orch": {
+          "tx": "0x76da9843d1563f84a3500fb72dbac5084b922a33524165f964d5f5e1cb8262dc",
+          "block": 47231322
+        },
+        "tl_mc": {
+          "tx": "0xef677b24ac548511411f40221dc887dd3fa3f15b34cc431f24fd8926989c89dc",
+          "block": 47231002
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "extraTxs": {
+        "TL_MC_create2_and_initialize_multicall3": "0xef677b24ac548511411f40221dc887dd3fa3f15b34cc431f24fd8926989c89dc"
+      },
+      "note": "TL mastercopy CREATE2 + initialize sent atomically via Multicall3 in a small block before big blocks were enabled; big blocks on -> 7 txs -> off."
+    },
+    {
+      "name": "mantle",
+      "chainId": 5000,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 101288525,
+      "txHash": "0x4f2f2c489df50cfe8f2bbeae41e4b3f456ed5a2580d30f3435bd6a831a757d7f",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x54bcd92100052de3cc70275adc5da155d282f91ed1e5665c260359608340945d",
+          "block": 101288525
+        },
+        "tl_mc": {
+          "tx": "0xd95c77cd087a946cebcd1576d049fc949d8362097183a59380ad132dae95749e",
+          "block": 101288531
+        },
+        "tl_dep": {
+          "tx": "0x10f6dbe1cf2ad928a2a87e39e971bbed884f3e0ef6dd681d6ca13581a6d06262",
+          "block": 101288542
+        },
+        "factory": {
+          "tx": "0x4f2f2c489df50cfe8f2bbeae41e4b3f456ed5a2580d30f3435bd6a831a757d7f",
+          "block": 101288549
+        },
+        "orch": {
+          "tx": "0xf1eeb59d0804a692e2cc999d3df54cd0f73088a761268c9d17c4d6d43171a269",
+          "block": 101288562
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "plasma",
+      "chainId": 9745,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 33766683,
+      "txHash": "0x3a0300568150aae89c98110d1700261f978dbd68eb8e3866442a4c2d68d15d05",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x27ead83f23273eb8b6d955ba6bcffe6d34e3e7cb028da1eb88f1ddbe006db33a",
+          "block": 33766683
+        },
+        "tl_mc": {
+          "tx": "0xe0db798543f54624fbbcbbe02d5ca8efb21a24573de8f98e0748e5e9ee8dba64",
+          "block": 33766684
+        },
+        "tl_dep": {
+          "tx": "0x242cbebd5c25ef0b23da938d8ead0829bab4db3333e0f7380b99905681bac3b8",
+          "block": 33766689
+        },
+        "factory": {
+          "tx": "0x3a0300568150aae89c98110d1700261f978dbd68eb8e3866442a4c2d68d15d05",
+          "block": 33766691
+        },
+        "orch": {
+          "tx": "0xb5dfb16db30fd9f006ea3ddb9b5152c168bc19625005b9808d9a9fa0b0857255",
+          "block": 33766697
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "ink",
+      "chainId": 57073,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 57206573,
+      "txHash": "0x83b151a7338984bd1dd735e920ef11730859b45514ac3993cd49224821ede51f",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x56c5a080d4311ccb1386711cc76295b4a98e291851f7a5982bd868daa16e3271",
+          "block": 57206573
+        },
+        "tl_mc": {
+          "tx": "0x55da87e6de29d575e8524a270ca279a19469bb54941df9479b043837d0e7a639",
+          "block": 57206576
+        },
+        "tl_dep": {
+          "tx": "0x1da02068add7ea32cdaa4a64e69d93e307279baba606adf7cf45cdd71fd96849",
+          "block": 57206582
+        },
+        "factory": {
+          "tx": "0x83b151a7338984bd1dd735e920ef11730859b45514ac3993cd49224821ede51f",
+          "block": 57206585
+        },
+        "orch": {
+          "tx": "0x4d95ac7fa80062eca89fe53610543b2b5312ffbb70b2de633972f3dfecb99ed8",
+          "block": 57206591
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    },
+    {
+      "name": "berachain",
+      "chainId": 80094,
+      "deployed": true,
+      "deployedAt": "2026-09-29",
+      "block": 26846842,
+      "txHash": "0x88eb348841b856027377fbe50bb73e2e3f55e237e3e2ddd559c9b89eab4a6d86",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x75f87366df170d8096867b787e67f12e06d94148a3d3cb5da0e96055fcc8e951",
+          "block": 26846842
+        },
+        "tl_mc": {
+          "tx": "0xeef7b82717cb8657c526aa2ea7a1ac52d40ac1f241eb6f53cb1cf055d5b03f7d",
+          "block": 26846844
+        },
+        "tl_dep": {
+          "tx": "0x6f5720b17c3243db764977c22eccb397ab736e8b0c8af1426d57f00c8f808250",
+          "block": 26846847
+        },
+        "factory": {
+          "tx": "0x88eb348841b856027377fbe50bb73e2e3f55e237e3e2ddd559c9b89eab4a6d86",
+          "block": 26846849
+        },
+        "orch": {
+          "tx": "0xa5ee69a3b54023b874ef772f06c553d6b5298fa93787f55099e36672d0f13f2a",
+          "block": 26846853
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true
+    }
+  ],
+  "verification": {
+    "_comment": "Read-back counts on 2026-09-30 (5 contracts per chain): complete, no gaps. A chain a backend does not serve is not counted.",
+    "sourcify": {
+      "chains": 19,
+      "verified": "95/95 exact_match"
+    },
+    "etherscanV2": {
+      "chains": 17,
+      "verified": "85/85",
+      "note": "arbitrum verified via the Arbiscan web form on 2026-09-29/30 after the API queue stalled"
+    },
+    "blockscout": {
+      "chains": [
+        "ethereum",
+        "base",
+        "arbitrum",
+        "polygon",
+        "celo",
+        "unichain",
+        "ink",
+        "worldchain"
+      ],
+      "verified": "40/40"
+    },
+    "oklink": {
+      "chains": [
+        "ethereum",
+        "optimism",
+        "gnosis",
+        "base",
+        "arbitrum",
+        "bnb",
+        "polygon",
+        "avalanche",
+        "linea",
+        "scroll"
+      ],
+      "verified": "50/50"
+    },
+    "routescan": {
+      "chains": [
+        "ethereum",
+        "avalanche",
+        "mantle",
+        "plasma"
+      ],
+      "verified": "20/20"
+    },
+    "tenderly": {
+      "chains": 18,
+      "verified": "90/90",
+      "note": "hyperevm is not a Tenderly network"
+    }
+  },
+  "superseded": {
+    "_comment": "Previous generation (salt v3), live since 2026-07-24; XAUt Carry and WBTC Carry run on it. Never deploy new funds through it.",
+    "saltV3": {
+      "version": "2.1.1",
+      "eoaOwner": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72",
+      "finalOwner": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+      "canonical": {
+        "_comment": "Same address on every chain (deterministic CREATE2, salt v3). owner()==finalOwner (Safe) post-handover, verified on-chain on all 19.",
+        "kpkOivFactory": "0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F",
+        "kpkSharesDeployer": "0xea084E763F8535CBe28759b990F963BeDf60be9a",
+        "ccipOivDeployer": "0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b",
+        "emptyContract": "0xA4703438f8cc4fc2C2503a7e43935Da16BA74652"
+      },
+      "chains": [
+        {
+          "name": "ethereum",
+          "chainId": 1,
+          "deployed": true,
+          "block": 25605129,
+          "txHash": "0x39f7d6f3d491f9680ec8b4be330d205cd94d2323be82a08e62e31cbb0bc630c7",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "optimism",
+          "chainId": 10,
+          "deployed": true,
+          "block": 154663882,
+          "txHash": "0x967205ee52f286802ce76ff56149abbbb315395924de3e5ae9dbdc7f65e68b70",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "gnosis",
+          "chainId": 100,
+          "deployed": true,
+          "block": 47372831,
+          "txHash": "0xecd4798c9b61fc741977f9712df6fa390ecf72b3384133e753b846631112b6df",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "base",
+          "chainId": 8453,
+          "deployed": true,
+          "block": 49068618,
+          "txHash": "0x3c3a21af1cc1d03513d536abcbc518b9ead900d64db5bdd2902377eca6d67617",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "arbitrum",
+          "chainId": 42161,
+          "deployed": true,
+          "block": 487340953,
+          "txHash": "0x44e9ad9b8ed2adb9d1460fdd72d6f838c3acc3647861166c7c169abc562a4f39",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "bnb",
+          "chainId": 56,
+          "deployed": true,
+          "block": 111926335,
+          "txHash": "0xa22df9933e37c3cf55a6b6b70a3423f1caae20748dc39c0ec22262c119f1c3df",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "polygon",
+          "chainId": 137,
+          "deployed": true,
+          "block": 90814430,
+          "txHash": "0xc19d4eb2746ef6de9c4c4441281014b5735e60a59054a1d4fba37a9cf21a62c3",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "avalanche",
+          "chainId": 43114,
+          "deployed": true,
+          "block": 91143742,
+          "txHash": "0x5ba0a5343b5af33ad4c5267456c5bade3a7f17035b2f55dc3a4611bf98ef5408",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "celo",
+          "chainId": 42220,
+          "deployed": true,
+          "block": 73025918,
+          "txHash": "0xc186646d3f2c2842642f8011ac14759a3fbef086a9979f1149ec80fdd52878f1",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "linea",
+          "chainId": 59144,
+          "deployed": true,
+          "block": 31507780,
+          "txHash": "0xd3bae36190e9cde435c9ce2e2cbcf4f4bafa6ec21ad7077c37c11c2b14b577fe",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "scroll",
+          "chainId": 534352,
+          "deployed": true,
+          "block": 34466088,
+          "txHash": "0x8f300af065a5c262d29307baf688764527788a8712f8ef4505f3c4a1b6968c6d",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "sonic",
+          "chainId": 146,
+          "deployed": true,
+          "block": 76442370,
+          "txHash": "0x9140ab063d7a274e88c1318bbe6823aae64598d7815ba29198664cb9136316db",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "unichain",
+          "chainId": 130,
+          "deployed": true,
+          "block": 54178385,
+          "txHash": "0x64bea6725c16309d4fe7f707bb83c8147717633582bc191a4b2100d50290593f",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "worldchain",
+          "chainId": 480,
+          "deployed": true,
+          "block": 32795562,
+          "txHash": "0x4f320ec2354c39b83ad64781192b9a19c94b941b89254542b36e7f627af36775",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "hyperevm",
+          "chainId": 999,
+          "deployed": true,
+          "block": 41348936,
+          "txHash": "0x5d909b4ccaa6a9fbe87d03562f94e31cb051351aa453d4ae4bea64e2d2787d9f",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "mantle",
+          "chainId": 5000,
+          "deployed": true,
+          "block": 98398236,
+          "txHash": "0x0b604e9f92f38ca171fc5bf282d491a9108dd062525f3de5bbaa0a3de6fae460",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "plasma",
+          "chainId": 9745,
+          "deployed": true,
+          "block": 27986461,
+          "txHash": "0xae31d1a1955b3dac193f4e632c04c380770b5ab2e4a86148262c6084b8e1c4e5",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "ink",
+          "chainId": 57073,
+          "deployed": true,
+          "block": 51428424,
+          "txHash": "0x2e71620d493ecce649116e2c1115fee64f4fe0c6fb29bb7a21deddfeb897ff6b",
+          "owner": "safe",
+          "explorerVerified": true
+        },
+        {
+          "name": "berachain",
+          "chainId": 80094,
+          "deployed": true,
+          "block": 23956067,
+          "txHash": "0x8479a007e4f064121559dd378b5f3a2a251dfb25afa6c1a07632b0306c2774da",
+          "owner": "safe",
+          "explorerVerified": true
+        }
+      ],
+      "excluded": [
+        {
+          "name": "bob",
+          "chainId": 60808,
+          "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
+        },
+        {
+          "name": "katana",
+          "chainId": 747474,
+          "reason": "EXCLUDED by decision 2026-07-22 (not pursued). Deployer unfunded; otherwise READY-AFTER-EMPTY."
+        }
+      ],
+      "saltVersion": 3,
+      "mainnetSelectorRegistry": {
+        "_comment": "Seeded from the EOA BEFORE ownership moved to the Safe. A salt-v3 orchestrator starts EMPTY - the v2 registry does not carry over. The seeding script initially wrote 20 entries because bob+katana are verdict READY-AFTER-EMPTY; both were removed via removeChainSelector while the EOA still owned the orchestrator. script/CcipDeployEverywhere.s.sol now honours an `excluded` flag so this cannot recur (test/SelectorSeedScope.t.sol).",
+        "destinationChainIdCount": 18,
+        "seededBeforeHandover": {
+          "count": 18,
+          "seeder": "0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72"
+        },
+        "removedAfterSeeding": [
+          {
+            "name": "bob",
+            "chainId": 60808
+          },
+          {
+            "name": "katana",
+            "chainId": 747474
+          }
+        ],
+        "verifiedOnChainPostHandover": true
+      },
+      "verification": {
+        "status": "Salt-v3 explorer verification, 2026-07-24/25. All 19 chains verified on at least FOUR independent backends (Sourcify v2 57/57, Etherscan V2 51/51 on its 17 chains, Blockscout 30/30, Routescan 15/15 on its 5 chains, Tenderly 54/57 public, OKLink 30/30 on its 10 chains). Every figure was confirmed by a READ (getsourcecode / is_verified / Sourcify contract lookup / Routescan getabi / OKLink check-verify-result), never from a forge exit code. OKLink was settled on 2026-07-25 - see its entry below; the earlier 'indeterminate, IP rate-limited' reading was a misdiagnosis.",
+        "contractsCovered": [
+          "kpkOivFactory",
+          "kpkSharesDeployer",
+          "ccipOivDeployer"
+        ],
+        "verifiers": {
+          "sourcifyV2": {
+            "_comment": "Keyless, exact_match, and the lead backend: it auto-propagated to Etherscan/Routescan/Blockscout, which is why the later Etherscan sweep found everything 'already verified'.",
+            "result": "57/57 (19 chains x 3 contracts)",
+            "match": "exact_match"
+          },
+          "etherscanV2": {
+            "_comment": "17 chains support Etherscan V2. scroll (534352) and ink (57073) are NOT on V2 - covered by Blockscout instead. This also lights up the branded UIs (Basescan, Arbiscan, Lineascan, HyperEVMScan, SonicScan, ...) since they share the same DB.",
+            "result": "51/51 on supported chains",
+            "chains": [
+              "ethereum",
+              "optimism",
+              "gnosis",
+              "base",
+              "arbitrum",
+              "bnb",
+              "polygon",
+              "avalanche",
+              "celo",
+              "linea",
+              "sonic",
+              "unichain",
+              "worldchain",
+              "hyperevm",
+              "mantle",
+              "plasma",
+              "berachain"
+            ]
+          },
+          "blockscout": {
+            "_comment": "10 instances x 3 contracts. NOTE: scroll.blockscout.com now 301-redirects to scrollscan.com - a read that does not follow redirects reports a false gap.",
+            "result": "30/30",
+            "instances": [
+              "eth.blockscout.com",
+              "gnosis.blockscout.com",
+              "base.blockscout.com",
+              "arbitrum.blockscout.com",
+              "polygon.blockscout.com",
+              "celo.blockscout.com",
+              "scroll.blockscout.com",
+              "unichain.blockscout.com",
+              "explorer.inkonchain.com",
+              "worldchain-mainnet.explorer.alchemy.com"
+            ]
+          },
+          "routescan": {
+            "_comment": "Populated via Sourcify propagation. 15/15 for the five chains Routescan actually hosts; the others are simply not Routescan networks.",
+            "result": "15/15",
+            "chains": [
+              "ethereum",
+              "avalanche",
+              "mantle",
+              "plasma",
+              "berachain"
+            ]
+          },
+          "tenderly": {
+            "_comment": "PUBLIC verify in the karpatkey/agents project (always public - see the /verify-contracts skill). hyperevm (999) is not a supported Tenderly network, which is structural, not a gap.",
+            "result": "54/57",
+            "unsupported": [
+              "hyperevm"
+            ]
+          },
+          "oklink": {
+            "_comment": "SETTLED 2026-07-25 (issue #39). OKLink verification is KEYLESS (an OKX trading API key does NOT work here - it returns Invalid OK-ACCESS-KEY; that credential is for a different product). OKLink serves TEN of our chains, not nine - gnosis was missed in the salt-v2 survey and has now been verified too, so the target count is 30, not 27. THE 50026 DIAGNOSIS WAS WRONG: `{code: 50026, msg: 'System error, please try again later.'}` on the submit route is NOT IP rate-limiting - it is OKLink's unhelpful rendering of 'this (chain, address) already has a SUCCESSFUL verification'. Established by controlled experiment: 50026 tracks the (chain, address) pair and is independent of payload, size and IP (a 200-byte throwaway payload at one of our addresses 50026s, while the same payload at an unrelated address is accepted, as is our full 244KB payload at an unrelated address); gnosis returned code 0 before it was verified and 50026 minutes later once its three contracts came back Success; and addresses carrying only FAILED jobs keep accepting resubmits. A full 30-target resweep on 2026-07-25 returned 50026 for every one, so all 30 are verified. The sweep is self-healing - anything genuinely unverified is accepted and queued - and re-running it is safe and idempotent: script/verify/oklink_verify.py.",
+            "result": "30/30 (10 chains x 3 contracts)",
+            "chains": [
+              "ethereum",
+              "optimism",
+              "gnosis",
+              "base",
+              "arbitrum",
+              "bnb",
+              "polygon",
+              "avalanche",
+              "linea",
+              "scroll"
+            ],
+            "directlyReadConfirmed": {
+              "_comment": "Read back by guid from check-verify-result (keyless, never throttled). The other 20 are established by the 50026 equivalence above, because OKLink only mints a guid - the sole status handle - for a contract that is NOT already verified, so an already-verified target cannot be re-read directly.",
+              "gnosis": [
+                "kpkOivFactory",
+                "kpkSharesDeployer",
+                "ccipOivDeployer"
+              ],
+              "kpkSharesDeployerOn": [
+                "optimism",
+                "base",
+                "bnb",
+                "polygon",
+                "avalanche",
+                "linea",
+                "scroll"
+              ]
+            },
+            "impact": "None on coverage either way: every chain OKLink serves already holds Sourcify v2 + Etherscan V2 (or Blockscout for scroll) + Tenderly. OKLink is a sixth backend.",
+            "trackingIssue": "#39"
+          }
+        }
       }
     }
   }
