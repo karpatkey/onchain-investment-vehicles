@@ -345,7 +345,7 @@ from; no Foundry script is required.
    **Read** `getChainIds()`. Calling `setChainSelectors` afterwards is redundant, not dangerous:
    the repo helper `CcipDeployEverywhere.setChainSelectors(address,string)` filters
    `script/ccip-networks.json` through
-   `_seedable`, which rejects rows marked `excluded: true`, so `bob` and `katana` are never emitted
+   `_seedable`, which rejects rows marked `excluded: true`, so `bob`, `katana` and `robinhood` are never emitted
    — pinned by `test/SelectorSeedScope.t.sol`. What IS dangerous is supplying an unfiltered array
    by hand: adding those two makes the no-array `deployEverywhere` spend non-refundable fees on two
    dead lanes. An earlier version of this step attributed that hazard to the helper itself.

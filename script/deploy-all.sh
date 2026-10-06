@@ -20,7 +20,7 @@ command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
 # `excluded` is filtered here, not just in the fan-out list below. `verdict` says a chain COULD host
 # the infra, not that we intend it to: bob and katana are READY-AFTER-EMPTY and deliberately not
-# pursued, so without this the loop deploys infra to two chains the rollout excluded on purpose and
+# pursued (robinhood is excluded too: deployed 2026-10-06 but not in the baked CCIP registry), so without this the loop deploys infra to two chains the rollout excluded on purpose and
 # quietly turns the 19-chain set into 21. `script/CcipDeployEverywhere.s.sol` has honoured this flag
 # since the seeding incident recorded in `script/deployed-infra.json`; this script was missed.
 mapfile -t CHAINS < <(jq -r '.networks[] | select((.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") and (.excluded != true)) | .name' "$REG")
