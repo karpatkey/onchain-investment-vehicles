@@ -6,9 +6,9 @@ The factory contract is already deployed at the same address on all supported ch
 
 > **Security + multi-chain update (June 2026).** New deployments use the **patched Zodiac Roles
 > Modifier v2.1.1** mastercopy (`0xF2964CE6…83D5`); v2.1.0 had the June-2026 ERC-1271 authorization
-> bypass. This changes `KpkOivFactory`'s CREATE2 address, so it must be **redeployed** per chain (the
-> previously-published `0x0d94…d420` is the old, pre-patch build). Cross-chain deployment now covers
-> **21 verified chains** — see `docs/CCIP_CROSS_CHAIN_DEPLOY.md` and the config-driven runner
+> bypass. The previously-published `0x0d94…d420` factory is the old, pre-patch build (kUSD still runs
+> on it; never deploy through it). The current salt-v4 infra is live on **19 chains** — see
+> [Deployed factory addresses](#deployed-factory-addresses), `docs/CCIP_CROSS_CHAIN_DEPLOY.md` and the config-driven runner
 > `script/deploy-chain.sh` / `script/deploy-all.sh` (single source of truth: `script/ccip-networks.json`).
 
 ---
@@ -42,14 +42,13 @@ The skill handles the configuration, and `DeployOiv.s.sol` handles the on-chain 
 ## What gets deployed
 
 ### Full OIV (`deployOiv`) — mainnet
-Deploys seven contracts wired together:
+Deploys six contracts wired together (plus the optional exec and shares timelocks):
 - **Avatar Safe** — holds fund assets. Cannot execute transactions directly; all execution flows through the Roles Modifiers.
 - **Manager Safe** — operational multisig used by fund managers.
 - **execRolesModifier** — primary execution layer in front of the Avatar Safe.
 - **subRolesModifier** — nested layer for automated/bot permissions.
 - **managerRolesModifier** — guards actions by the Manager Safe itself.
-- **kpkShares implementation** — isolated per-fund so upgrades don't affect other funds.
-- **kpkShares proxy** — the fund's ERC-20 shares token. Investors hold these.
+- **kpkShares proxy** — the fund's ERC-20 shares token. Investors hold these. It is an ERC-1967 proxy pointing at the chain's shared `KpkShares` mastercopy (`0x729F…72fC`); no per-fund implementation is deployed.
 
 ### Operational stack only (`deployStack`) — sidechains
 Deploys the same five infrastructure contracts (Avatar Safe through managerRolesModifier), without the shares token. Used to extend an existing mainnet fund to additional chains.
@@ -247,7 +246,7 @@ forge script script/DeployOiv.s.sol \
   --rpc-url mainnet
 ```
 
-**Note:** The `kpkShares` implementation and proxy are deployed via `CREATE2`, so their addresses are deterministic from the deployer, salt, and config. The `predict` entry point prints them, and `KpkOivFactory.predictOivAddresses()` returns them (`kpkSharesImpl` and `kpkSharesProxy`).
+**Note:** The `kpkShares` proxy is deployed via `CREATE2`, so its address is deterministic from the deployer, salt, and config. The `predict` entry point prints it, and `KpkOivFactory.predictOivAddresses()` returns it (`kpkSharesProxy`); `kpkSharesImpl` in the prediction is the chain's shared mastercopy, not a per-fund deployment.
 
 ### `deploy(configPath)` — the multichain entry point
 
@@ -452,21 +451,23 @@ Fee rates are in basis points (100 bps = 1%). The skill handles the conversion f
 
 ## Deployed factory addresses
 
-The current **salt-v3** build, deployed at the same address on every chain via the canonical CREATE2 deployer (2026-07-24):
+The current **salt-v4** build, deployed at the same address on every chain via the canonical CREATE2 deployer (2026-09-29, from `main@fe62dd4`; on Ethereum the timelock kit dates from 2026-09-21, and `Empty` is unchanged from earlier generations):
 
 | Contract         | Address                                      |
 |------------------|----------------------------------------------|
-| `KpkOivFactory`  | `0xbafbca1804B6e46D4c54Cac0A0273F5B2A8F677F` |
-| `KpkSharesDeployer` | `0xea084E763F8535CBe28759b990F963BeDf60be9a` |
-| `CcipOivDeployer` | `0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b` |
+| `KpkOivFactory`  | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` |
+| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` |
+| `KpkShares` mastercopy | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
 
-Deployed on 19 chains, owned by the OIV governance Safe (`owner() == Safe` verified on-chain on all 19).
+Deployed on 19 chains, factory and orchestrator owned by the Security Council Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (`owner() == Safe` verified on-chain on all 19).
 
-> ### ⚠️ Deploy only through the addresses above
+> ### ⚠️ Deploy new funds only through the addresses above
 >
-> Earlier factory generations are still live on-chain, and **only the salt-v3 addresses above are safe to deploy through**. The salt-v2 build predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — repairable only by multisig afterwards, because ownership is handed over during the deploy. The older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0; `script/DeployCcipOivDeployer.s.sol` hard-refuses that one (`OivChainDeploy.LEGACY_FACTORY`, pinned by `test/FactoryAddressSync.t.sol`).
+> Earlier factory generations are still live on-chain, and **the salt-v4 addresses above are the only deploy target for new funds**. A fund never straddles generations: extending an existing fund to another chain goes through the generation it was born on, and pushing it through a different one creates a *different* fund. The **salt-v3** stack (`KpkOivFactory` `0xbafb…677F`, orchestrator `0x6F2A…f11b`) is superseded and recorded in [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) only because XAUt Carry and WBTC Carry run on it. The salt-v2 build predates the MultiSend unwrap-adapter fix, so **every fund deployed through it gets Roles Modifiers that reject batched `multiSend` calls** — repairable only by multisig afterwards, because ownership is handed over during the deploy. The older `0x0d94…d420` build additionally embeds the vulnerable Roles Modifier v2.1.0; it is listed only because kUSD lives on it, and `script/DeployCcipOivDeployer.s.sol` hard-refuses it (`OivChainDeploy.LEGACY_FACTORY`, pinned by `test/FactoryAddressSync.t.sol`).
 >
-> Superseded addresses are intentionally not listed in this repo — it records the current infra plus the stack the live kUSD fund runs on. If you need an old generation's address, take it from git history rather than re-adding it here.
+> Other superseded addresses are intentionally not listed in this repo — it records the current infra plus the stacks live funds run on. If you need an old generation's address, take it from git history rather than re-adding it here.
 
 For the authoritative per-chain address / tx / block record see [`docs/DEPLOYED_ADDRESSES.md`](docs/DEPLOYED_ADDRESSES.md) and [`script/deployed-infra.json`](script/deployed-infra.json).

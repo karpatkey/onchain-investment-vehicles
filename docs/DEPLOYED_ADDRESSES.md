@@ -75,7 +75,7 @@ Per-chain notes:
 > global compiler setting forks it. `test/DeployedKitSync.t.sol` forks mainnet and asserts the source
 > still predicts the live kit; `test/FactoryAddressSync.t.sol` pins the other three predictions.
 
-> **The rollout constraint at the bottom of this file applies in full.** No fund may straddle salt v3
+> **The rollout constraint at the end of the salt-v3 section below applies in full.** No fund may straddle salt v3
 > and salt v4 across chains: the factory's address is inside each Avatar Safe's `setup()` initializer.
 
 ---
@@ -124,13 +124,13 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 >
 > **Any future rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone confirms the table matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant. The salt-v3 addresses above were produced this way, from a clone of `main` at `9120f63`.
 
-> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. v3 is now complete on all 19 chains, so deploy new funds only through the v3 factory above.
+> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. v4 is now complete on all 19 chains, so deploy new funds only through the salt-v4 factory at the top of this file; a fund born on v3 (XAUt Carry, WBTC Carry) is extended only through the v3 stack above.
 
 ---
 
 ## The kUSD fund's stack — pre-v2.1.1 factory `0x0d94…d420`
 
-> **Not a historical record — this is where a live fund runs.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It is documented because **the kUSD fund below still lives on it** (mainnet + Optimism/Gnosis/Base/Arbitrum), so these are the addresses you need to operate or audit that fund. **Never deploy anything new through it** — use the salt-v3 factory above. `script/base/OivChainDeploy.sol` keeps this factory address as `LEGACY_FACTORY` and `script/DeployCcipOivDeployer.s.sol` refuses to wire it into an orchestrator, pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol).
+> **Not a historical record — this is where a live fund runs.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It is documented because **the kUSD fund below still lives on it** (mainnet + Optimism/Gnosis/Base/Arbitrum), so these are the addresses you need to operate or audit that fund. **Never deploy anything new through it** — use the salt-v4 factory at the top of this file. `script/base/OivChainDeploy.sol` keeps this factory address as `LEGACY_FACTORY` and `script/DeployCcipOivDeployer.s.sol` refuses to wire it into an orchestrator, pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol).
 >
 > Superseded infra that **nothing uses** — the salt-v1 and salt-v2 builds — is deliberately **not** recorded here. This file carries only the current infra plus the stack a live fund depends on. Older generations remain on-chain and are recoverable from git history if ever needed.
 
