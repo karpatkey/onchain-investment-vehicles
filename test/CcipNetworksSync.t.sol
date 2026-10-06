@@ -110,10 +110,10 @@ contract CcipNetworksSyncTest is Test {
     }
 
     /// @dev Independently count deployable registry entries and assert it equals the number of
-    ///      per-chain scripts this test covers — so adding a wired chain without a script (or vice
+    ///      per-chain scripts this test covers (excluded rows included) — so adding a chain without a script (or vice
     ///      versa) fails here instead of going unnoticed.
-    function test_wiredChainCountMatchesScripts() public {
-        uint256 wired = 0;
+    function test_deployableChainCountMatchesScripts() public {
+        uint256 deployable = 0;
         for (uint256 i = 0; i < 64; i++) {
             string memory verdictKey = string.concat(".networks[", vm.toString(i), "].verdict");
             if (!vm.keyExists(json, verdictKey)) break;
@@ -121,9 +121,13 @@ contract CcipNetworksSyncTest is Test {
             if (
                 keccak256(bytes(v)) == keccak256(bytes("READY"))
                     || keccak256(bytes(v)) == keccak256(bytes("READY-AFTER-EMPTY"))
-            ) wired++;
+            ) deployable++;
         }
-        assertEq(wired, 22, "wired-chain count in registry drifted from per-chain scripts");
+        assertEq(
+            deployable,
+            22,
+            "deployable-chain count (READY verdicts, excluded rows included) drifted from the per-chain scripts"
+        );
     }
 
     /// @dev The registry's `.infra` block is a hand-maintained second copy of the canonical infra
