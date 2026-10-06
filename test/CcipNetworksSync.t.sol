@@ -25,6 +25,7 @@ import {Deploy_Ink} from "../script/chains/Deploy_Ink.s.sol";
 import {Deploy_Bob} from "../script/chains/Deploy_Bob.s.sol";
 import {Deploy_Berachain} from "../script/chains/Deploy_Berachain.s.sol";
 import {Deploy_Katana} from "../script/chains/Deploy_Katana.s.sol";
+import {Deploy_Robinhood} from "../script/chains/Deploy_Robinhood.s.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 
 /// @title  CcipNetworksSyncTest
@@ -105,6 +106,7 @@ contract CcipNetworksSyncTest is Test {
         _assertWired("bob", address(new Deploy_Bob()));
         _assertWired("berachain", address(new Deploy_Berachain()));
         _assertWired("katana", address(new Deploy_Katana()));
+        _assertWired("robinhood", address(new Deploy_Robinhood()));
     }
 
     /// @dev Independently count deployable registry entries and assert it equals the number of
@@ -121,7 +123,7 @@ contract CcipNetworksSyncTest is Test {
                     || keccak256(bytes(v)) == keccak256(bytes("READY-AFTER-EMPTY"))
             ) wired++;
         }
-        assertEq(wired, 21, "wired-chain count in registry drifted from per-chain scripts");
+        assertEq(wired, 22, "wired-chain count in registry drifted from per-chain scripts");
     }
 
     /// @dev The registry's `.infra` block is a hand-maintained second copy of the canonical infra

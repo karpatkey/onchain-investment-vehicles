@@ -12,13 +12,15 @@ Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer
 
 ---
 
-## Current — salt v4 (LIVE on 19 chains, Security Council-owned)
+## Current — salt v4 (LIVE on 20 chains, Security Council-owned)
 
 Deployed **2026-09-29** from `main@fe62dd4` (squash of #50 + #60), built in a fresh clone with forge
 1.7.1 and solc 0.8.34. Salts are `uint256(4)`. Every contract is CREATE2-deployed through
-`0x4e59b44847b379578588920cA78FbF26c0B4956C`, so each address is identical on every chain.
+`0x4e59b44847b379578588920cA78FbF26c0B4956C`, so each address is identical on every chain. Robinhood Chain
+(chainId `4663`) was added as the 20th chain on **2026-10-06**, from a copy of the same frozen clone (see
+its per-chain note below).
 
-| Contract | Salt-v4 address | Runtime codehash (identical on all 19) |
+| Contract | Salt-v4 address | Runtime codehash (identical on all 20) |
 |---|---|---|
 | `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` | `0x5b14bc7b7882da06e279e67f3e687d09dbe81cb0247c812d69d1ee9224ee72e2` |
 | `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` | `0x15be0ec4f19b6e0ae36ffd5122a6a76aa4bab8baec95001a96a61fe13ab37b02` |
@@ -28,28 +30,29 @@ Deployed **2026-09-29** from `main@fe62dd4` (squash of #50 + #60), built in a fr
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) | — |
 
 `Ownable.owner` of the factory and the orchestrator is the **Security Council Safe
-`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 19 chains, transferred inside each chain's deploy. Read back
-on-chain on 19/19, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
+`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 20 chains, transferred inside each chain's deploy. Read back
+on-chain on 20/20, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
 orchestrator's `factory()` / `router()` / `linkToken()`, every codehash above, and the timelock
 mastercopy's initializer (claimed, inert; exactly one `RoleGranted` on every chain). The factory has no
 infrastructure setters. The orchestrator owner still controls the CCIP wiring
 (`configure`, `setChainSelector(s)` / `removeChainSelector`, withdrawals). The CCIP selector registry
-is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step.
+is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step. Robinhood is
+deployed but is **not** one of those 19; see its note below.
 
 Chains: ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll,
-sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain. **Excluded:** bob, katana. Per-chain
+sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain, robinhood. **Excluded:** bob, katana. Per-chain
 blocks and creation transactions are in [`script/deployed-infra.json`](../script/deployed-infra.json).
 
-**Source verification** (read back 2026-09-30, 5 contracts per chain): **complete, with no gaps**.
+**Source verification** (read back 2026-09-30, Robinhood 2026-10-06; 5 contracts per chain): **complete, with no gaps**.
 
 | Backend | Chains served | Verified |
 |---|---|---|
-| Sourcify | 19 | 95/95 exact match |
-| Etherscan V2 | 17 (not scroll, ink) | 85/85 |
-| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain | 40/40 |
-| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll | 50/50 |
-| Routescan | ethereum, avalanche, mantle, plasma | 20/20 |
-| Tenderly | 18 (hyperevm is not a Tenderly network) | 90/90 |
+| Sourcify | 20 | 100/100 exact match |
+| Etherscan V2 | 18 (not scroll, ink) | 90/90 |
+| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain, robinhood | 45/45 |
+| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll, robinhood | 55/55 |
+| Routescan | ethereum, avalanche, mantle, plasma (not robinhood) | 20/20 |
+| Tenderly | 19 (hyperevm is not a Tenderly network) | 95/95 |
 
 Per-chain notes:
 - **Ethereum:** the timelock kit (`TimelockControllerUpgradeable` mastercopy + `KpkTimelockDeployer`)
@@ -69,6 +72,28 @@ Per-chain notes:
   All five were then verified through Arbiscan's web form (standard-JSON input, the same files), and
   checked by API read-back on 2026-09-30: name, compiler, optimizer, EVM version, license, constructor
   arguments byte-for-byte, a full (not "similar") match, and an ABI identical to the build.
+- **Robinhood Chain (chainId `4663`), added 2026-10-06:** 9 txs, all status 1, in blocks
+  81745726–81745902, from kpk-deployer `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (nonces 164–172).
+  Built from a copy of the frozen clone that only added `script/chains/Deploy_Robinhood.s.sol`, the
+  `robinhood` RPC endpoint and the registry entry, so the addresses and codehashes are the ones above.
+  The timelock mastercopy's initializer was claimed in the same run (one `RoleGranted`, `DEFAULT_ADMIN`
+  to itself). The orchestrator uses router `0x06fC836cf9839B1cd891C440A0a45242DA6Ae1c9` (Router 1.2.0) and
+  LINK `0x492641F648a4986844848E0beFE66D14817bCE34`. `Empty` and the MultiSend unwrapper
+  (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) were already present and were skipped. The Security
+  Council Safe there has the same 8 owners as on mainnet, 5-of-8. Verified on Sourcify (exact match),
+  Etherscan V2 (robin.etherscan.io, own verification), Blockscout (robinhoodchain.blockscout.com), OKLink
+  and Tenderly, 5/5 each; Routescan does not serve 4663. `Empty` is verified on Etherscan and Blockscout
+  there.
+
+  **No CCIP to or from Robinhood yet.** 4663 is not in the constructor-seeded registry:
+  `chainSelectorOf(4663) == 0` on every orchestrator, Robinhood's included. On Robinhood,
+  `deployEverywhere` / `dispatchTo` revert `UnknownChain(4663)` (`onlyWiredChain`), and every other
+  chain's `ccipReceive` rejects Robinhood as a source (`InvalidSourceChain`). Single-chain funds deploy
+  locally via the orchestrator's `deployLocal`. Fan-out needs the Security Council to call
+  `setChainSelector(4663, 6180753054346818345)` on Robinhood **and** on each counterpart chain (the
+  selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Until
+  then `script/ccip-networks.json` marks it `excluded`, so `deploy-all.sh` and `setChainSelectors` never
+  route to it.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a

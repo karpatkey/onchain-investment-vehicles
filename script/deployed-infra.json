@@ -1,5 +1,5 @@
 {
-  "_comment": "Salt v4 OIV infrastructure, deployed 2026-09-29 on 19 chains from main@fe62dd4 (frozen clone, forge 1.7.1). Same address on every chain (CREATE2 via 0x4e59...956C). owner()==finalOwner (Security Council Safe) on factory and orchestrator, read on-chain on all 19. Salt v3 is kept under `superseded` for the funds that still run on it.",
+  "_comment": "Salt v4 OIV infrastructure, deployed 2026-09-29 on 19 chains from main@fe62dd4 (frozen clone, forge 1.7.1), and on 2026-10-06 on robinhood (chainId 4663) as the 20th chain from a copy of the same frozen clone. Same address on every chain (CREATE2 via 0x4e59...956C). owner()==finalOwner (Security Council Safe) on factory and orchestrator, read on-chain on all 20. Salt v3 is kept under `superseded` for the funds that still run on it.",
   "version": "2.1.1",
   "saltVersion": 4,
   "sourceCommit": "fe62dd4bcf3a6ad3870d6e767314827972b949a2",
@@ -22,7 +22,7 @@
     "timelockDeployer": "0xa20d8821acbf67e64e40e113fdc3f2c96e940a02250af7096a6cd11eba876ff2"
   },
   "bakedRegistry": {
-    "_comment": "CCIP selector registry seeded in the orchestrator constructor; no post-deploy seeding.",
+    "_comment": "CCIP selector registry seeded in the orchestrator constructor; no post-deploy seeding. The 19 are the chains of the original 2026-09-29 rollout; robinhood (4663) is deployed but NOT in it (chainSelectorOf(4663) == 0 on every orchestrator) until the Security Council calls setChainSelector(4663, 6180753054346818345) on robinhood and on each counterpart chain.",
     "count": 19
   },
   "excluded": [
@@ -647,17 +647,51 @@
       },
       "owner": "safe",
       "explorerVerified": true
+    },
+    {
+      "name": "robinhood",
+      "chainId": 4663,
+      "deployed": true,
+      "deployedAt": "2026-10-06",
+      "block": 81745726,
+      "txHash": "0xea49f5b3265c93db39ac141885aa52d7375b78dd2ad817eb8166b67b2934ed76",
+      "creations": {
+        "shares_mc": {
+          "tx": "0x4665239df843bc640b6420b1f164a29cc44da662755ece07d6cb1c7d074d199d",
+          "block": 81745726
+        },
+        "tl_mc": {
+          "tx": "0x63689204df2521bcc479a5fe8dd43a2c7d86fbfc2bf805ccf8ecafb821f7f5e4",
+          "block": 81745746
+        },
+        "tl_dep": {
+          "tx": "0x5823cdd7c41990ee2ce077b93b81b210e37525a96d36f61e6d5d76b0832c4a48",
+          "block": 81745786
+        },
+        "factory": {
+          "tx": "0xea49f5b3265c93db39ac141885aa52d7375b78dd2ad817eb8166b67b2934ed76",
+          "block": 81745805
+        },
+        "orch": {
+          "tx": "0x12843ee2446c70eeb1532417900df4ebb61b1ba782456a1e947d33f8c1947ac4",
+          "block": 81745864
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "explorerVerifiedNote": "Read back 2026-10-06: Sourcify 5/5 exact_match, Etherscan V2 (robin.etherscan.io) 5/5 own verification (no similar match), Blockscout (robinhoodchain.blockscout.com) 5/5, OKLink 5/5 (chainShortName ROBINHOOD), Tenderly 5/5 public. Routescan does not serve 4663. Empty is verified on Etherscan + Blockscout there.",
+      "note": "Added 2026-10-06 as the 20th chain: 9 txs (blocks 81745726-81745902, all status 1) from kpk-deployer, nonces 164-172, built from a copy of the frozen clone that only added script/chains/Deploy_Robinhood.s.sol, the robinhood rpc endpoint and the registry entry. TL mastercopy initialize claimed in the same run (0xd6a4662d8dd45002730e2067a7312f3aad115182fefcbda89edb2c2d6008300f; one RoleGranted, DEFAULT_ADMIN to itself). Orchestrator configured with router 0x06fC836cf9839B1cd891C440A0a45242DA6Ae1c9 (Router 1.2.0) and LINK 0x492641F648a4986844848E0beFE66D14817bCE34. Empty and the MultiSend unwrapper were already present and were skipped. The Security Council Safe there has the same 8 owners as mainnet, 5-of-8. CCIP: robinhood is NOT in the constructor-baked registry, so deployEverywhere / dispatchTo revert UnknownChain(4663) on robinhood and every other chain's ccipReceive rejects it as a source (InvalidSourceChain); no fan-out to or from 4663 until the Security Council calls setChainSelector(4663, 6180753054346818345) on robinhood and on each counterpart chain. Single-chain funds deploy locally via the orchestrator's deployLocal."
     }
   ],
   "verification": {
-    "_comment": "Read-back counts on 2026-09-30 (5 contracts per chain): complete, no gaps. A chain a backend does not serve is not counted.",
+    "_comment": "Read-back counts (5 contracts per chain): the 19 original chains on 2026-09-30, robinhood on 2026-10-06. Complete, no gaps. A chain a backend does not serve is not counted.",
     "sourcify": {
-      "chains": 19,
-      "verified": "95/95 exact_match"
+      "chains": 20,
+      "verified": "100/100 exact_match"
     },
     "etherscanV2": {
-      "chains": 17,
-      "verified": "85/85",
+      "chains": 18,
+      "verified": "90/90",
       "note": "arbitrum verified via the Arbiscan web form on 2026-09-29/30 after the API queue stalled"
     },
     "blockscout": {
@@ -669,9 +703,10 @@
         "celo",
         "unichain",
         "ink",
-        "worldchain"
+        "worldchain",
+        "robinhood"
       ],
-      "verified": "40/40"
+      "verified": "45/45"
     },
     "oklink": {
       "chains": [
@@ -684,9 +719,10 @@
         "polygon",
         "avalanche",
         "linea",
-        "scroll"
+        "scroll",
+        "robinhood"
       ],
-      "verified": "50/50"
+      "verified": "55/55"
     },
     "routescan": {
       "chains": [
@@ -695,11 +731,12 @@
         "mantle",
         "plasma"
       ],
-      "verified": "20/20"
+      "verified": "20/20",
+      "note": "does not serve robinhood (4663)"
     },
     "tenderly": {
-      "chains": 18,
-      "verified": "90/90",
+      "chains": 19,
+      "verified": "95/95",
       "note": "hyperevm is not a Tenderly network"
     }
   },
