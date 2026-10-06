@@ -46,8 +46,8 @@ if [ "$verdict" != "READY" ] && [ "$verdict" != "READY-AFTER-EMPTY" ]; then
   echo "REFUSING: '$CHAIN' has verdict '$verdict' (only READY / READY-AFTER-EMPTY are deployable) — $(echo "$entry" | jq -r '.note // "missing prerequisites"')"
   exit 1
 fi
-# `excluded` chains (bob, katana) are deliberately outside the baked 19-chain topology: a stack there
-# is an orphan no orchestrator can reach. deploy-all.sh already skips them; refuse them here too.
+# `excluded` chains are outside the baked 19-chain topology: bob and katana are deliberately not pursued
+# (a stack there is an orphan no orchestrator can reach); robinhood is deployed but not wired for CCIP. deploy-all.sh already skips them; refuse them here too.
 if [ "$(echo "$entry" | jq -r '.excluded // false')" = "true" ]; then
   echo "REFUSING: '$CHAIN' is marked excluded in the registry (not part of the baked topology)"
   exit 1

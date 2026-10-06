@@ -39,7 +39,7 @@ if [ "${DRY_RUN:-0}" != "1" ] && [ -z "${DEPLOY_FINAL_OWNER:-}" ] && [ "${ALLOW_
 fi
 echo "Wired chains (${#CHAINS[@]}): ${CHAINS[*]}"
 EXCLUDED=$(jq -r '[.networks[] | select(.excluded == true) | .name] | join(" ")' "$REG")
-[ -n "$EXCLUDED" ] && echo "Excluded (deliberately not pursued): $EXCLUDED"
+[ -n "$EXCLUDED" ] && echo "Excluded from the baked CCIP topology (bob/katana: not pursued; robinhood: deployed, not wired): $EXCLUDED"
 
 # True if foundry.toml has an [etherscan] alias for the chain (i.e. deploy-chain.sh can --verify it).
 has_etherscan() { awk '/^\[etherscan\]/{f=1;next} /^\[/{f=0} f' "$ROOT/foundry.toml" | grep -qE "^[[:space:]]*${1}[[:space:]]*="; }

@@ -89,7 +89,7 @@ Per-chain notes:
   `chainSelectorOf(4663) == 0` on every orchestrator, Robinhood's included. On Robinhood,
   `deployEverywhere` / `dispatchTo` revert `UnknownChain(4663)` (`onlyWiredChain`), and every other
   chain's `ccipReceive` rejects Robinhood as a source (`InvalidSourceChain`). Single-chain funds deploy
-  locally via the orchestrator's `deployLocal`. Fan-out needs the Security Council to call
+  locally via the orchestrator's `deployLocal` with `sharesChains = [{chainId: 4663, asset}]` and the same asset in `sharesParams.asset`; a topology that does not name 4663 lands only the operational stack there. Fan-out needs the Security Council to call
   `setChainSelector(4663, 6180753054346818345)` on Robinhood **and** on each counterpart chain (the
   selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Until
   then `script/ccip-networks.json` marks it `excluded`, so `deploy-all.sh` and `setChainSelectors` never
