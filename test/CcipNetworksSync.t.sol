@@ -25,6 +25,7 @@ import {Deploy_Ink} from "../script/chains/Deploy_Ink.s.sol";
 import {Deploy_Bob} from "../script/chains/Deploy_Bob.s.sol";
 import {Deploy_Berachain} from "../script/chains/Deploy_Berachain.s.sol";
 import {Deploy_Katana} from "../script/chains/Deploy_Katana.s.sol";
+import {Deploy_Robinhood} from "../script/chains/Deploy_Robinhood.s.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 
 /// @title  CcipNetworksSyncTest
@@ -105,13 +106,14 @@ contract CcipNetworksSyncTest is Test {
         _assertWired("bob", address(new Deploy_Bob()));
         _assertWired("berachain", address(new Deploy_Berachain()));
         _assertWired("katana", address(new Deploy_Katana()));
+        _assertWired("robinhood", address(new Deploy_Robinhood()));
     }
 
     /// @dev Independently count deployable registry entries and assert it equals the number of
-    ///      per-chain scripts this test covers — so adding a wired chain without a script (or vice
+    ///      per-chain scripts this test covers (excluded rows included) — so adding a chain without a script (or vice
     ///      versa) fails here instead of going unnoticed.
-    function test_wiredChainCountMatchesScripts() public {
-        uint256 wired = 0;
+    function test_deployableChainCountMatchesScripts() public {
+        uint256 deployable = 0;
         for (uint256 i = 0; i < 64; i++) {
             string memory verdictKey = string.concat(".networks[", vm.toString(i), "].verdict");
             if (!vm.keyExists(json, verdictKey)) break;
@@ -119,9 +121,13 @@ contract CcipNetworksSyncTest is Test {
             if (
                 keccak256(bytes(v)) == keccak256(bytes("READY"))
                     || keccak256(bytes(v)) == keccak256(bytes("READY-AFTER-EMPTY"))
-            ) wired++;
+            ) deployable++;
         }
-        assertEq(wired, 21, "wired-chain count in registry drifted from per-chain scripts");
+        assertEq(
+            deployable,
+            22,
+            "deployable-chain count (READY verdicts, excluded rows included) drifted from the per-chain scripts"
+        );
     }
 
     /// @dev The registry's `.infra` block is a hand-maintained second copy of the canonical infra

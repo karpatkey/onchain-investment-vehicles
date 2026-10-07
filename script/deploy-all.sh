@@ -20,8 +20,9 @@ command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
 # `excluded` is filtered here, not just in the fan-out list below. `verdict` says a chain COULD host
 # the infra, not that we intend it to: bob and katana are READY-AFTER-EMPTY and deliberately not
-# pursued, so without this the loop deploys infra to two chains the rollout excluded on purpose and
-# quietly turns the 19-chain set into 21. `script/CcipDeployEverywhere.s.sol` has honoured this flag
+# pursued, and robinhood is deployed (2026-10-06) but not in the baked CCIP registry. deploy-chain.sh
+# independently refuses every `excluded` row, so this filter's job is to skip jobs that would be
+# refused anyway, not to be the deployment safety boundary. `script/CcipDeployEverywhere.s.sol` has honoured this flag
 # since the seeding incident recorded in `script/deployed-infra.json`; this script was missed.
 mapfile -t CHAINS < <(jq -r '.networks[] | select((.verdict=="READY" or .verdict=="READY-AFTER-EMPTY") and (.excluded != true)) | .name' "$REG")
 # Ethereum LAST. This does NOT close the fan-out window by itself: every chain's orchestrator has the
@@ -39,7 +40,7 @@ if [ "${DRY_RUN:-0}" != "1" ] && [ -z "${DEPLOY_FINAL_OWNER:-}" ] && [ "${ALLOW_
 fi
 echo "Wired chains (${#CHAINS[@]}): ${CHAINS[*]}"
 EXCLUDED=$(jq -r '[.networks[] | select(.excluded == true) | .name] | join(" ")' "$REG")
-[ -n "$EXCLUDED" ] && echo "Excluded (deliberately not pursued): $EXCLUDED"
+[ -n "$EXCLUDED" ] && echo "Excluded from the baked CCIP topology (bob/katana: not pursued; robinhood: deployed, not wired): $EXCLUDED"
 
 # True if foundry.toml has an [etherscan] alias for the chain (i.e. deploy-chain.sh can --verify it).
 has_etherscan() { awk '/^\[etherscan\]/{f=1;next} /^\[/{f=0} f' "$ROOT/foundry.toml" | grep -qE "^[[:space:]]*${1}[[:space:]]*="; }

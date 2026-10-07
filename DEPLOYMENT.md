@@ -7,7 +7,7 @@ The factory contract is already deployed at the same address on all supported ch
 > **Security + multi-chain update (June 2026).** New deployments use the **patched Zodiac Roles
 > Modifier v2.1.1** mastercopy (`0xF2964CE6…83D5`); v2.1.0 had the June-2026 ERC-1271 authorization
 > bypass. The previously-published `0x0d94…d420` factory is the old, pre-patch build (kUSD still runs
-> on it; never deploy through it). The current salt-v4 infra is live on **19 chains** — see
+> on it; never deploy through it). The current salt-v4 infra is live on **20 chains** (Robinhood, the 20th, is not wired for CCIP yet) — see
 > [Deployed factory addresses](#deployed-factory-addresses), `docs/CCIP_CROSS_CHAIN_DEPLOY.md` and the config-driven runner
 > `script/deploy-chain.sh` / `script/deploy-all.sh` (single source of truth: `script/ccip-networks.json`).
 
@@ -462,7 +462,7 @@ The current **salt-v4** build, deployed at the same address on every chain via t
 | `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` |
 | `Empty` | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` |
 
-Deployed on 19 chains, factory and orchestrator owned by the Security Council Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (`owner() == Safe` verified on-chain on all 19).
+Deployed on 20 chains, factory and orchestrator owned by the Security Council Safe `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (`owner() == Safe` verified on-chain on all 20). Robinhood (4663) is not in the orchestrators' baked CCIP registry yet; see `docs/DEPLOYED_ADDRESSES.md`.
 
 > ### ⚠️ Deploy new funds only through the addresses above
 >
