@@ -200,7 +200,8 @@ external infra, and same-address determinism only holds where that infra is cano
 
 > Fees are paid in **native gas** (not LINK), so a chain no longer needs a LINK CCIP fee token to be
 > wired. The `LINK fee token` column below is retained as on-chain reference only; it is not a
-> requirement. The wired set is unchanged — both excluded chains fail on the Roles v2.1.1 prerequisite.
+> requirement. The wired set is unchanged — Sei and Mode remain unwired for the reasons in the
+> excluded table below.
 
 > **Security note (Roles v2.1.1).** The factory deploys Roles Modifier *proxies* delegating to the
 > patched **v2.1.1** mastercopy. v2.1.0 (`0x9646fDAD…D337`) is vulnerable to the June-2026 ERC-1271
@@ -214,8 +215,8 @@ resolution. Note it is **not** read by the Solidity scripts at runtime: the per-
 the registry (editing the JSON alone does not change what gets deployed). Every `linkToken` was
 resolved **on-chain** from each chain's
 CCIP `onRamp → feeQuoter.getFeeTokens()` and confirmed via `symbol() == "LINK"` (Avalanche: `LINK.e`,
-bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows are
-excluded. Sorted by chain ID:
+bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows and the
+registry-excluded X Layer row are not wired. Sorted by chain ID:
 
 | Chain | Chain ID | CCIP chain selector | LINK fee token (on-chain) | Verdict |
 |---|---|---|---|---|
@@ -226,6 +227,7 @@ excluded. Sorted by chain ID:
 | Unichain | 130 | `1923510103922296319` | `0xEF66…8A1A` | READY-AFTER-EMPTY |
 | Polygon PoS | 137 | `4051577828743386545` | `0xb089…E0F1` | READY-AFTER-EMPTY |
 | Sonic | 146 | `1673871237479749969` | `0x7105…018F` | READY-AFTER-EMPTY |
+| X Layer | 196 | `3016212468291539606` | `0x8aF9…8FA9` | READY-AFTER-EMPTY |
 | World Chain | 480 | `2049429975587534727` | `0x915b…5473` | READY-AFTER-EMPTY |
 | HyperEVM | 999 | `2442541497099098535` | `0x1AC2…De59` | READY-AFTER-EMPTY |
 | Sei | 1329 | `9027416829622342829` | — | **NOT-READY** |
@@ -244,8 +246,10 @@ excluded. Sorted by chain ID:
 | Katana | 747474 | `2459028469735686113` | `0xc2C4…27b6` | READY-AFTER-EMPTY |
 
 **Verdict** meanings: `READY` = every prerequisite incl. `Empty` already present; `READY-AFTER-EMPTY`
-= everything present and `Empty` is onboarded automatically at deploy preflight (absent on these
-chains but reproducible at its canonical address — see below); `NOT-READY` = a hard blocker, not
+= everything present and whatever is missing is onboarded automatically at deploy preflight — `Empty`
+(absent on these chains but reproducible at its canonical address — see below), and/or the patched
+Roles v2.1.1 mastercopy where that is absent but replayable at its canonical address (X Layer);
+`NOT-READY` = a hard blocker, not
 wired. Full router + LINK addresses live in `script/ccip-networks.json`. Callers pass plain **chain
 IDs** to `deployEverywhere` / `dispatchTo`; the orchestrator resolves each to its CCIP chain selector
 via an owner-managed `chainSelectorOf` mapping (see below), so the selector is never hand-passed.
@@ -254,7 +258,7 @@ Excluded / not wired:
 
 | Verdict | Chains | Why |
 |---|---|---|
-| **NOT-READY (no Roles v2.1.1)** | Sei, Mode | Patched Roles v2.1.1 mastercopy absent on-chain. Deploy it via the zodiac singleton factory (`0xce0042B8…`) to promote; Sei additionally exposes no LINK CCIP fee token (native-only). |
+| **NOT-READY** | Sei, Mode | Patched Roles v2.1.1 mastercopy absent on-chain — no longer a hard blocker in itself: it is replayable through the EIP-2470 SingletonFactory (`0xce0042B8…`) via `script/DeployRolesMastercopy.s.sol`, as done for X Layer. Sei's real blocker is that it exposes no LINK CCIP fee token (native-only); Mode stays NOT-READY only because the rest of its stack has not been re-verified on-chain since the salt-v4 rollout. |
 | **NEEDS-ZODIAC** | Metis, Soneium | Full Safe + CCIP, but Zodiac Roles + ModuleProxyFactory absent. |
 | **NO-CCIP** | Blast, Polygon zkEVM, Flare | Safe/Zodiac present but no live CCIP lane from Ethereum. |
 | **EXCLUDED** | zkSync Era | Non-EVM-bytecode-equivalent: different Safe addresses, no canonical CREATE2 deployer. |
@@ -267,6 +271,25 @@ helper factory `0x7cbB62…CFAa4` (present on every wired chain); replaying that
 reproduces the same address regardless of caller (verified caller-independent on a fork). The deploy
 tooling does this automatically as a **preflight** — `script/DeployEmpty.s.sol` standalone, or inlined
 in the per-chain scripts and the runner.
+
+### The Roles v2.1.1 mastercopy replay (READY-AFTER-EMPTY)
+
+Same idea as `Empty`, one level up. Where the patched Roles Modifier v2.1.1 mastercopy
+(`0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5`) is absent — the case on X Layer — it is reproduced by
+replaying its **original creation code** through the EIP-2470 SingletonFactory
+`0xce0042B868300000d44A59004Da54A005ffdcf9f` with **salt 0**, which yields the same CREATE2 address
+regardless of caller. The creation code is pinned in **`script/data/roles-modifier-v2.1.1.json`**
+(25,458 bytes, keccak `0x749042d915cad108a3a7c2cc5e76cf218fc7b0e0cf2a9090aeeee2b9b6998a4d`), taken
+verbatim from the Ethereum mainnet creation transaction
+`0xcd8636654fc597d47666c3753a98e2089cce57b0de135ab2bff600c96eaf0da0`; the deployed runtime codehash
+is `0x471d8b3b419f1eb955230c0326c8812176df49bf3c7b414a563fda5a3c6c10b6`. The CREATE2 reproduction was
+verified arithmetically. Run it standalone with `script/DeployRolesMastercopy.s.sol`, or let the
+`_ensureRolesMastercopy` preflight in the per-chain scripts / runner do it.
+
+**Gotcha — SingletonFactory silently swallows out-of-gas.** The replay costs ~5.6M gas; if the
+factory's inner `create2` runs out of gas the outer call still succeeds and the receipt looks fine
+while no code landed. Never trust the receipt: assert `EXTCODEHASH` at the mastercopy address equals
+the runtime codehash above (the preflight does).
 
 ### Onboarding / deploying a chain (tooling)
 
@@ -297,6 +320,32 @@ factory construction. To onboard a brand-new chain not yet in the registry: conf
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.
+
+#### X Layer (chainId 196)
+
+X Layer is in the registry with `excluded: true`, so the runner refuses it by default; opt in
+explicitly:
+
+```bash
+ALLOW_EXCLUDED=1 source .env && script/deploy-chain.sh xlayer
+```
+
+Nothing is deployed on X Layer yet — this is the path that makes it deployable. Specifics:
+
+- **Preflight onboards two missing prerequisites, in order:** the Roles v2.1.1 mastercopy
+  (`_ensureRolesMastercopy`, the ~5.6M-gas SingletonFactory replay described above — assert
+  `EXTCODEHASH`, never the receipt) → `Empty` (`_ensureEmpty`) → `MultiSendUnwrapper`. Everything
+  else (CREATE2 deployer, Safe v1.4.1 stack, ModuleProxyFactory, MultiSend / MultiSendCallOnly, the
+  `Empty` deployer factory, EIP-2470) is already byte-identical to Ethereum on 196.
+- **Gas token is OKB**, RPC `https://rpc.xlayer.tech`.
+- **No `--verify`.** X Layer is not served by Etherscan V2 (absent from its chainlist API), so there
+  is no `[etherscan]` alias for it; the explorer is **OKLink**
+  (<https://www.oklink.com/xlayer>) and source verification is out-of-band via
+  `script/verify/oklink_verify.py` after the broadcast.
+- **Not wired.** 196 is outside the orchestrator's constructor-baked topology, so `chainSelectorOf(196)`
+  is `0` everywhere. Before any fan-out to or from X Layer, the Security Council must call
+  `setChainSelector(196, 3016212468291539606)` on the X Layer orchestrator **and** on every
+  counterpart chain. CCIP lanes themselves exist in both directions (X Layer ↔ Ethereum).
 
 ## Deploying the orchestrator
 
@@ -345,10 +394,10 @@ from; no Foundry script is required.
    **Read** `getChainIds()`. Calling `setChainSelectors` afterwards is redundant, not dangerous:
    the repo helper `CcipDeployEverywhere.setChainSelectors(address,string)` filters
    `script/ccip-networks.json` through
-   `_seedable`, which rejects rows marked `excluded: true`, so `bob`, `katana` and `robinhood` are never emitted
+   `_seedable`, which rejects rows marked `excluded: true`, so `bob`, `katana`, `robinhood` and `xlayer` are never emitted
    — pinned by `test/SelectorSeedScope.t.sol`. What IS dangerous is supplying an unfiltered array
    by hand: adding `bob` and `katana` makes the no-array `deployEverywhere` spend non-refundable fees on
-   two dead lanes (`robinhood` is excluded for a different reason: deployed but not yet wired). An earlier version of this step attributed that hazard to the helper itself.
+   two dead lanes (`robinhood` and `xlayer` are excluded for different reasons: `robinhood` is deployed but not yet wired; `xlayer` was onboarded after the registry freeze — deployable, but nothing on it yet and not wired, so its selector must first be set by the Security Council). An earlier version of this step attributed that hazard to the helper itself.
 3. **Anyone**: **Read** `quoteDeployEverywhere(config, sharesChains, gasLimit)` to get the total
    native fee.
 4. **Anyone**: **Write** `deployEverywhere(config, sharesChains, gasLimit)` — set the call's payable

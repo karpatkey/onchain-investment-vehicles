@@ -4,7 +4,7 @@
 Usage (from the repo root, with foundry on PATH):
 
     python3 script/verify/oklink_verify.py --prepare   # regenerate the standard-JSON inputs
-    python3 script/verify/oklink_verify.py             # sweep every active target (10 chains x 5)
+    python3 script/verify/oklink_verify.py             # sweep every active target (11 chains x 5)
 
 Safe and idempotent: a target that is already verified is reported as such and left
 alone, and anything genuinely unverified is submitted and polled to a final result.
@@ -166,7 +166,12 @@ CONTRACTS.update({
 })
 
 
-# The 10 of our 19 deployed chains that OKLink serves, in `chainShortName` form.
+# The chains OKLink serves, in `chainShortName` form: 10 of our 19 deployed chains, plus
+# `xlayer` (chainId 196), whose explorer is OKLink and which this script will cover as soon
+# as the salt-v4 infra is deployed there -- nothing is deployed on X Layer yet, so its
+# targets simply report as unverified until then. Short name per OKLink's docs
+# (https://www.oklink.com/docs/en -- "The supported chains include ETH, XLAYER,
+# XLAYER_TESTNET, BSC, ...").
 # `Empty` is deliberately absent from CONTRACTS: it is a no-logic contract and fails
 # every exact-bytecode-match backend (OKLink, Sourcify, Tenderly). That is structural,
 # not a gap -- it is covered on Etherscan V2 + Blockscout instead.
@@ -181,6 +186,7 @@ CHAINS = {
     "avalanche": "AVAXC",
     "linea": "LINEA",
     "scroll": "SCROLL",
+    "xlayer": "XLAYER",
 }
 
 ALREADY_VERIFIED = "50026"

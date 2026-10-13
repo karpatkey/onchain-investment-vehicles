@@ -38,6 +38,28 @@ abstract contract OivChainDeploy is Script {
     ///         never wired into a freshly-deployed orchestrator.
     address internal constant LEGACY_FACTORY = 0x0d94255fdE65D302616b02A2F070CdB21190d420;
 
+    // ── Roles v2.1.1 mastercopy onboarding ─────────────────────────────────────
+    //
+    // The factory bakes ROLES_MODIFIER_MASTERCOPY into its init code and clones it for every fund,
+    // so a chain without it would take the whole infra deploy and only fail when a fund is
+    // deployed (a proxy delegating to an address with no code). It is not Safe-style infra a chain
+    // either has or lacks forever: it was deployed through the EIP-2470 SingletonFactory with salt
+    // 0 (caller-independent CREATE2), so replaying its creation code reproduces it anywhere. That
+    // is the documented promotion path for a NOT-READY chain, now executable instead of manual.
+
+    /// @dev keccak256 of the creation code in `ROLES_MODIFIER_INIT_CODE_PATH`. The blob lives in a
+    ///      data file rather than a `bytes constant` because it is 25,458 bytes — inlining it would
+    ///      push this script's own bytecode past EIP-170. This hash is the integrity pin: a file
+    ///      that does not hash to it is refused before anything is broadcast, and because the
+    ///      address is `CREATE2(SINGLETON_FACTORY, 0, keccak(initCode))`, pinning the hash pins the
+    ///      address.
+    bytes32 internal constant ROLES_MODIFIER_INIT_CODE_HASH =
+        0x749042d915cad108a3a7c2cc5e76cf218fc7b0e0cf2a9090aeeee2b9b6998a4d;
+    /// @dev Runtime codehash of the deployed mastercopy, read back from Ethereum mainnet.
+    bytes32 internal constant ROLES_MODIFIER_CODEHASH =
+        0x471d8b3b419f1eb955230c0326c8812176df49bf3c7b414a563fda5a3c6c10b6;
+    string internal constant ROLES_MODIFIER_INIT_CODE_PATH = "script/data/roles-modifier-v2.1.1.json";
+
     // ── Empty onboarding ───────────────────────────────────────────────────────
     address internal constant EMPTY = 0xA4703438f8cc4fc2C2503a7e43935Da16BA74652;
     address internal constant EMPTY_HELPER_FACTORY = 0x7cbB62EaA69F79e6873cD1ecB2392971036cFAa4;
@@ -238,6 +260,46 @@ abstract contract OivChainDeploy is Script {
         console.log("[OK]   MultiSendUnwrapper deployed at:", MULTISEND_UNWRAPPER);
     }
 
+    /// @dev Reads the pinned Roles v2.1.1 creation code and refuses anything that does not hash to
+    ///      `ROLES_MODIFIER_INIT_CODE_HASH`. Pure read + assert, so it is safe to call before a
+    ///      broadcast (and the standalone script does, to fail on a bad file before spending gas).
+    function _rolesModifierInitCode() internal view returns (bytes memory initCode) {
+        initCode = vm.parseJsonBytes(vm.readFile(ROLES_MODIFIER_INIT_CODE_PATH), ".initCode");
+        require(
+            keccak256(initCode) == ROLES_MODIFIER_INIT_CODE_HASH,
+            "Roles mastercopy init code does not match the pinned hash - do not deploy it"
+        );
+    }
+
+    /// @dev Onboards the patched Roles v2.1.1 mastercopy the factory clones for every fund.
+    ///      Idempotent. MUST be called inside an active `vm.startBroadcast()`.
+    ///
+    ///      Same mechanism and same gotcha as `_ensureMultiSendUnwrapper`: EIP-2470 CREATE2 with
+    ///      salt 0, and the SingletonFactory swallows a failed inner CREATE2 (returns `address(0)`,
+    ///      receipt status 1), so only the post-condition codehash is trustworthy. This blob is an
+    ///      order of magnitude larger than the unwrapper's — ~5.6M gas — so on a chain with a block
+    ///      gas limit below that the deploy fails here instead of leaving a fund-breaking gap.
+    function _ensureRolesMastercopy() internal {
+        if (ROLES_MODIFIER_MASTERCOPY.codehash == ROLES_MODIFIER_CODEHASH) {
+            console.log("[SKIP] Roles v2.1.1 mastercopy at:   ", ROLES_MODIFIER_MASTERCOPY);
+            return;
+        }
+        require(
+            ROLES_MODIFIER_MASTERCOPY.code.length == 0, "Roles mastercopy: unexpected bytecode at canonical address"
+        );
+        require(SINGLETON_FACTORY.code.length > 0, "EIP-2470 SingletonFactory missing on this chain");
+
+        (bool ok,) = SINGLETON_FACTORY.call(
+            abi.encodeWithSignature("deploy(bytes,bytes32)", _rolesModifierInitCode(), bytes32(0))
+        );
+        require(ok, "Roles mastercopy deploy call reverted");
+        require(
+            ROLES_MODIFIER_MASTERCOPY.codehash == ROLES_MODIFIER_CODEHASH,
+            "Roles mastercopy: not deployed (inner CREATE2 likely out of gas - raise the tx gas limit)"
+        );
+        console.log("[OK]   Roles v2.1.1 mastercopy at:   ", ROLES_MODIFIER_MASTERCOPY);
+    }
+
     // ── Full per-chain deploy ────────────────────────────────────────────────────
 
     /// @dev The production deployer EOA. It is baked into the factory's and orchestrator's init code,
@@ -304,7 +366,12 @@ abstract contract OivChainDeploy is Script {
 
         vm.startBroadcast();
 
-        // ── 1. Empty + MultiSend-unwrapping preflight ──
+        // ── 1. Roles mastercopy + Empty + MultiSend-unwrapping preflight ──
+        //
+        // All three are EIP-2470/helper-factory replays at caller-independent addresses, so a chain
+        // that lacks them is onboarded here rather than by a separate manual procedure. Order is
+        // free: nothing below depends on another's result, and each is idempotent.
+        _ensureRolesMastercopy();
         _ensureEmpty();
         _ensureMultiSendUnwrapper();
 

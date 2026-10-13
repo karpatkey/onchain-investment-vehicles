@@ -52,7 +52,8 @@ contract SelectorSeedScopeTest is Test {
 
     /// @dev The mainnet orchestrator's registry must end up with exactly the baked (wired) destinations:
     ///      the 19 wired chains minus mainnet itself (a source, never its own destination). Robinhood has
-    ///      salt-v4 infra (20 chains deployed) but is `excluded`, i.e. not wired, so it is not counted.
+    ///      salt-v4 infra (20 chains deployed) but is `excluded`, i.e. not wired, so it is not counted;
+    ///      xlayer is onboardable but likewise excluded, so adding it does not move this count either.
     function test_seedableCountMatchesDeployedDestinations() public view {
         uint256 count;
         for (uint256 i = 0; i < 256; i++) {
@@ -63,11 +64,13 @@ contract SelectorSeedScopeTest is Test {
         assertEq(count, 18, "seedable destination count drifted from the 18 wired destinations");
     }
 
-    /// @dev Guards the flag itself: if someone drops `excluded` from bob/katana the count test above
-    ///      would fail too, but this names the cause directly.
-    function test_bobAndKatanaAreMarkedExcluded() public view {
+    /// @dev Guards the flag itself: if someone drops `excluded` from bob/katana/xlayer the count test
+    ///      above would fail too, but this names the cause directly. (robinhood is covered by the
+    ///      count: it is already deployed, so dropping its flag would bake a 20th destination.)
+    function test_postFreezeAndUnpursuedChainsAreMarkedExcluded() public view {
         assertTrue(_isExcluded("bob"), "bob must stay excluded until its infra is deployed");
         assertTrue(_isExcluded("katana"), "katana must stay excluded until its infra is deployed");
+        assertTrue(_isExcluded("xlayer"), "xlayer must stay excluded until the Security Council wires 196");
     }
 
     function _isExcluded(string memory name) internal view returns (bool) {
