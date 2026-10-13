@@ -20,8 +20,13 @@
 #                        kpk deployer. Without it a different signer is refused, because it would build a
 #                        self-consistent stack at non-canonical addresses.
 #   VERIFY=1             (optional) pass --verify (needs ETHERSCAN_API_KEY + foundry etherscan cfg).
+#   ALLOW_EXCLUDED=1     (optional) deploy a chain marked `excluded` in the registry — i.e. one outside
+#                        the orchestrator's constructor-baked topology (xlayer, robinhood). The stack is
+#                        canonical and complete, but no CCIP reaches it until the Security Council sets
+#                        its chain selector on it and on every counterpart chain.
 #
-# Refuses any chain whose registry verdict is NOT-READY, and any chain marked `excluded`. The Solidity script additionally guards
+# Refuses any chain whose registry verdict is NOT-READY, and any chain marked `excluded` unless
+# ALLOW_EXCLUDED=1. The Solidity script additionally guards
 # every on-chain prerequisite and reverts if anything is missing.
 set -euo pipefail
 
@@ -47,9 +52,15 @@ if [ "$verdict" != "READY" ] && [ "$verdict" != "READY-AFTER-EMPTY" ]; then
   exit 1
 fi
 # `excluded` chains are outside the baked 19-chain topology: bob and katana are deliberately not pursued
-# (a stack there is an orphan no orchestrator can reach); robinhood is deployed but not wired for CCIP. deploy-all.sh already skips them; refuse them here too.
-if [ "$(echo "$entry" | jq -r '.excluded // false')" = "true" ]; then
+# (a stack there is an orphan no orchestrator can reach); robinhood is deployed but not wired for CCIP, and
+# xlayer is onboarded but not wired. deploy-all.sh already skips them; refuse them here too unless the
+# operator says ALLOW_EXCLUDED=1, which is the deliberate path for a post-freeze chain (robinhood was
+# deployed by invoking forge script directly, which skipped every post-broadcast check below — this flag
+# exists so that is never the cheaper option). It does NOT widen the verdict allowlist above.
+if [ "$(echo "$entry" | jq -r '.excluded // false')" = "true" ] && [ "${ALLOW_EXCLUDED:-0}" != "1" ]; then
   echo "REFUSING: '$CHAIN' is marked excluded in the registry (not part of the baked topology)"
+  echo "  A stack there cannot be reached by CCIP until the Security Council sets its chain selector."
+  echo "  Deploy it deliberately with: ALLOW_EXCLUDED=1 script/deploy-chain.sh $CHAIN"
   exit 1
 fi
 
@@ -129,6 +140,7 @@ if [ "${DRY_RUN:-0}" != "1" ]; then
   check 0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526 0x0e4f7fc66550a322d1e7688e181b75e217e662a4f3f4d6a29b22bc61217c4b77 "MultiSend"
   check 0x9641d764fc13c8B624c04430C7356C1C7C8102e2 0xecd5bd14a08c5d2122379900b2f272bdf107a7e92423c10dd5fe3254386c9939 "MultiSendCallOnly"
   check 0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD 0x1f6e088be5e6ef9d0fbe0547d3fa9a9e40d823433fd8a4449215b5663209a1eb "MultiSendUnwrapper"
+  check 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5 0x471d8b3b419f1eb955230c0326c8812176df49bf3c7b414a563fda5a3c6c10b6 "Roles v2.1.1 mastercopy"
   [ -n "$EMPTY_HASH_CODE" ] && echo "  [..]   Empty codehash: $EMPTY_HASH_CODE"
 
   if [ "$fail" = "1" ]; then

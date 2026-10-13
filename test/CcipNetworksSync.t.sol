@@ -26,6 +26,7 @@ import {Deploy_Bob} from "../script/chains/Deploy_Bob.s.sol";
 import {Deploy_Berachain} from "../script/chains/Deploy_Berachain.s.sol";
 import {Deploy_Katana} from "../script/chains/Deploy_Katana.s.sol";
 import {Deploy_Robinhood} from "../script/chains/Deploy_Robinhood.s.sol";
+import {Deploy_XLayer} from "../script/chains/Deploy_XLayer.s.sol";
 import {CcipOivDeployer} from "src/CcipOivDeployer.sol";
 
 /// @title  CcipNetworksSyncTest
@@ -107,6 +108,7 @@ contract CcipNetworksSyncTest is Test {
         _assertWired("berachain", address(new Deploy_Berachain()));
         _assertWired("katana", address(new Deploy_Katana()));
         _assertWired("robinhood", address(new Deploy_Robinhood()));
+        _assertWired("xlayer", address(new Deploy_XLayer()));
     }
 
     /// @dev Independently count deployable registry entries and assert it equals the number of
@@ -125,7 +127,7 @@ contract CcipNetworksSyncTest is Test {
         }
         assertEq(
             deployable,
-            22,
+            23,
             "deployable-chain count (READY verdicts, excluded rows included) drifted from the per-chain scripts"
         );
     }
