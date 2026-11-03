@@ -14,9 +14,6 @@ lcov.info
 /script/DeployKpkUsdProductionOiv.s.sol
 /script/DeployKpkUsdProductionStack.s.sol
 
-# Docs
-docs/
-
 # Dotenv file
 .env
 

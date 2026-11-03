@@ -1,9 +1,10 @@
 # KpkOivFactory — Production Deployment Addresses
 
-Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Both contracts deploy at identical addresses on every EVM chain by construction (same canonical deployer, same salt, same constructor args).
+Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer`, the shared `KpkShares` mastercopy and the timelock kit), deployed through the canonical CREATE2 deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`). Each contract lands at the same address on every EVM chain by construction (same canonical deployer, same salt, same constructor args). Whether a given address is deployed yet is stated per section and per row below; do not read this line as a deployment claim.
 
 > **This file records only the CURRENT infra, plus the older stack a live fund still runs on.**
-> Deploy new funds exclusively through the **salt v3** addresses in the next section. The
+> Deploy new funds exclusively through the **salt v4** addresses in the next section. The salt-v3
+> stack below it is superseded and listed only because XAUt Carry and WBTC Carry run on it. The
 > `0x0d94…d420` factory further down is the pre-patch **v2.1.0** build (the June-2026 ERC-1271
 > bypass); it is listed **only** because the kUSD fund lives on it, never as a deploy target.
 > The intermediate **salt-v1 and salt-v2** builds are unused by any fund and are therefore not
@@ -11,7 +12,101 @@ Production deployment of `KpkOivFactory` and `KpkSharesDeployer` via the canonic
 
 ---
 
-## Current — salt v3 (LIVE on 19 chains, Safe-owned)
+## Current — salt v4 (LIVE on 20 chains, Security Council-owned)
+
+Deployed **2026-09-29** from `main@fe62dd4` (squash of #50 + #60), built in a fresh clone with forge
+1.7.1 and solc 0.8.34. Salts are `uint256(4)`. Every contract is CREATE2-deployed through
+`0x4e59b44847b379578588920cA78FbF26c0B4956C`, so each address is identical on every chain. Robinhood Chain
+(chainId `4663`) was added as the 20th chain on **2026-10-06**, from a copy of the same frozen clone (see
+its per-chain note below).
+
+| Contract | Salt-v4 address | Runtime codehash (identical on all 20) |
+|---|---|---|
+| `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` | `0x5b14bc7b7882da06e279e67f3e687d09dbe81cb0247c812d69d1ee9224ee72e2` |
+| `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` | `0x15be0ec4f19b6e0ae36ffd5122a6a76aa4bab8baec95001a96a61fe13ab37b02` |
+| `KpkShares` mastercopy (shared by every fund's proxy) | `0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC` | `0x7e4ff4382a936b7918edbc8680c2ebe9feaec86456fe80eb19ec694934cc52d2` |
+| `TimelockControllerUpgradeable` mastercopy | `0x9760280fED9e760668186334f88b6d763A7d976E` | `0x91b5ed730171b39e69001ea25dcd590fd750793e610a6051dfeeb057bff0bb56` |
+| `KpkTimelockDeployer` | `0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f` | `0xa20d8821acbf67e64e40e113fdc3f2c96e940a02250af7096a6cd11eba876ff2` |
+| `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) | — |
+
+`Ownable.owner` of the factory and the orchestrator is the **Security Council Safe
+`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 20 chains, transferred inside each chain's deploy. Read back
+on-chain on 20/20, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
+orchestrator's `factory()` / `router()` / `linkToken()`, every codehash above, and the timelock
+mastercopy's initializer (claimed, inert; exactly one `RoleGranted` on every chain). The factory has no
+infrastructure setters. The orchestrator owner still controls the CCIP wiring
+(`configure`, `setChainSelector(s)` / `removeChainSelector`, withdrawals). The CCIP selector registry
+is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step. Robinhood is
+deployed but is **not** one of those 19; see its note below.
+
+Chains: ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll,
+sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain, robinhood. **Excluded:** bob, katana. Per-chain
+blocks and creation transactions are in [`script/deployed-infra.json`](../script/deployed-infra.json).
+
+**Source verification** (read back 2026-09-30, Robinhood 2026-10-06; 5 contracts per chain): **complete, with no gaps**.
+
+| Backend | Chains served | Verified |
+|---|---|---|
+| Sourcify | 20 | 100/100 exact match |
+| Etherscan V2 | 18 (not scroll, ink) | 90/90 |
+| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain, robinhood | 45/45 |
+| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll, robinhood | 55/55 |
+| Routescan | ethereum, avalanche, mantle, plasma (not robinhood) | 20/20 |
+| Tenderly | 19 (hyperevm is not a Tenderly network) | 95/95 |
+
+Per-chain notes:
+- **Ethereum:** the timelock kit (`TimelockControllerUpgradeable` mastercopy + `KpkTimelockDeployer`)
+  was already live since 2026-09-21 and was skipped; only the other three were deployed (6 txs).
+- **BNB:** the public RPC failed mid-broadcast after the timelock mastercopy's CREATE2 and before its
+  `initialize`. The approved `initialize` was sent by hand
+  (`0xd456b50fa447da2c2efa67f22eabc382b4069256c1200d6134e2224c6f4179dd`), 326 blocks after the CREATE2.
+  It succeeded, which proves nobody initialized it first, and the log shows that single grant. Then the
+  remaining 6 txs.
+- **HyperEVM:** the timelock mastercopy's CREATE2 and `initialize` were sent as **one** Multicall3
+  `aggregate3` transaction in a small block
+  (`0xef677b24ac548511411f40221dc887dd3fa3f15b34cc431f24fd8926989c89dc`), so it was never open. Big
+  blocks were enabled for the other 7 txs and disabled afterwards. Its `RoleGranted` sender is therefore
+  Multicall3.
+- **Arbitrum / Arbiscan:** every Etherscan V2 API verification job on chain 42161 sat "Pending in queue"
+  for 4+ hours on 2026-09-29, while the same key and inputs verified in minutes on the other 16 chains.
+  All five were then verified through Arbiscan's web form (standard-JSON input, the same files), and
+  checked by API read-back on 2026-09-30: name, compiler, optimizer, EVM version, license, constructor
+  arguments byte-for-byte, a full (not "similar") match, and an ABI identical to the build.
+- **Robinhood Chain (chainId `4663`), added 2026-10-06:** 9 txs, all status 1, in blocks
+  81745726–81745902, from kpk-deployer `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (nonces 164–172).
+  Built from a copy of the frozen clone that only added `script/chains/Deploy_Robinhood.s.sol`, the
+  `robinhood` RPC endpoint and the registry entry, so the addresses and codehashes are the ones above.
+  The timelock mastercopy's initializer was claimed in the same run (one `RoleGranted`, `DEFAULT_ADMIN`
+  to itself). The orchestrator uses router `0x06fC836cf9839B1cd891C440A0a45242DA6Ae1c9` (Router 1.2.0) and
+  LINK `0x492641F648a4986844848E0beFE66D14817bCE34`. `Empty` and the MultiSend unwrapper
+  (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) were already present and were skipped. The Security
+  Council Safe there has the same 8 owners as on mainnet, 5-of-8. Verified on Sourcify (exact match),
+  Etherscan V2 (robin.etherscan.io, own verification), Blockscout (robinhoodchain.blockscout.com), OKLink
+  and Tenderly, 5/5 each; Routescan does not serve 4663. `Empty` is verified on Etherscan and Blockscout
+  there.
+
+  **No CCIP to or from Robinhood yet.** 4663 is not in the constructor-seeded registry:
+  `chainSelectorOf(4663) == 0` on every orchestrator, Robinhood's included. On Robinhood,
+  `deployEverywhere` / `dispatchTo` revert `UnknownChain(4663)` (`onlyWiredChain`), and every other
+  chain's `ccipReceive` rejects Robinhood as a source (`InvalidSourceChain`). Single-chain funds deploy
+  locally via the orchestrator's `deployLocal` with `sharesChains = [{chainId: 4663, asset}]` and the same asset in `sharesParams.asset`; a topology that does not name 4663 lands only the operational stack there. Fan-out needs the Security Council to call
+  `setChainSelector(4663, 6180753054346818345)` on Robinhood **and** on each counterpart chain (the
+  selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Until
+  then `script/ccip-networks.json` marks it `excluded`, so `deploy-all.sh` and the repo helper
+  `CcipDeployEverywhere.setChainSelectors` never route to it (the Security Council wires it by calling
+  the orchestrator's on-chain `setChainSelector` directly).
+
+> **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
+> graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a
+> global compiler setting forks it. `test/DeployedKitSync.t.sol` forks mainnet and asserts the source
+> still predicts the live kit; `test/FactoryAddressSync.t.sol` pins the other three predictions.
+
+> **The rollout constraint at the end of the salt-v3 section below applies in full.** No fund may straddle salt v3
+> and salt v4 across chains: the factory's address is inside each Avatar Safe's `setup()` initializer.
+
+---
+
+## Superseded — salt v3 (existing funds only: XAUt Carry, WBTC Carry)
 
 Deployed **2026-07-24**. The MultiSend unwrap-adapter fix changed `KpkOivFactory`'s runtime, so its CREATE2 address moved; `KpkSharesDeployer` takes the factory address as a constructor argument and `CcipOivDeployer` takes it as an immutable, so **all three moved together**. Only `Empty` keeps its address. Salts are `uint256(3)`.
 
@@ -32,7 +127,7 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 
 > **HyperEVM note.** As with salt v2, the deploy needed Hyperliquid "big blocks" enabled for the deployer (`usingBigBlocks` L1 action) — the ~7.6M-gas factory deploy exceeds the ~3M small-block cap. Big blocks were disabled again afterwards.
 
-> **Selector-registry note.** A freshly CREATE2'd orchestrator starts with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
+> **Selector-registry note — HISTORICAL from salt v4 onward.** The orchestrator now seeds its registry in the **constructor**, so none of the below applies to a salt-v4 deployment: there is no seeding step, nothing to do before handover, and `bob`/`katana` are excluded by construction (pinned by `test/CcipNetworksSync.t.sol::test_bakedTopologyMatchesRegistry`). Kept because it explains the salt-v3 rollout and why the change was made. Previously: a freshly CREATE2'd orchestrator started with an **empty** `chainId → CCIP selector` registry; the salt-v2 registry does not carry over. Seeding is owner-only, so it must happen from the EOA **before** handover or it becomes a Safe transaction. The seeding script initially wrote **20** entries — `bob` and `katana` are `READY-AFTER-EMPTY` in `ccip-networks.json` and so read as seedable even though no infra exists there — and both were removed with `removeChainSelector` while the EOA still owned the orchestrator. Left in place they would have made the no-array `deployEverywhere` fan out to two dead chains, spending non-refundable CCIP fees on messages whose delivery reverts. `_seedable` now honours an `excluded` flag, pinned by [`test/SelectorSeedScope.t.sol`](../test/SelectorSeedScope.t.sol).
 
 > ### ⚠️ Build these from a clean clone, not a working tree
 >
@@ -55,13 +150,13 @@ Chains (19): ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche
 >
 > **Any future rollout: clone fresh and run `test/FactoryAddressSync.t.sol` there.** It pins all three addresses, so a green run in a clean clone confirms the table matches what will actually deploy. A red run in a *working tree* usually means the tree has drifted, not that the table is wrong — check against a clean clone before changing any constant. The salt-v3 addresses above were produced this way, from a clone of `main` at `9120f63`.
 
-> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. v3 is now complete on all 19 chains, so deploy new funds only through the v3 factory above.
+> **Rollout constraint — no fund may straddle two factory versions.** `_deployAndWireStack` enables the factory as a setup-time module on the Avatar Safe, so the factory's own address is inside the Safe's `setup()` initializer, and the Safe's address derives from `keccak(initializer)`. The same `(caller, salt)` run through a v2 factory on one chain and a v3 factory on another therefore produces **different Avatar Safe addresses** — silently, with nothing on-chain to detect the mismatch. You would discover it when bridged assets land at an address the other chain's stack does not control. v4 is now live on 20 chains (19 wired for CCIP, plus Robinhood), so deploy new funds only through the salt-v4 factory at the top of this file; a fund born on v3 (XAUt Carry, WBTC Carry) is extended only through the v3 stack above.
 
 ---
 
 ## The kUSD fund's stack — pre-v2.1.1 factory `0x0d94…d420`
 
-> **Not a historical record — this is where a live fund runs.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It is documented because **the kUSD fund below still lives on it** (mainnet + Optimism/Gnosis/Base/Arbitrum), so these are the addresses you need to operate or audit that fund. **Never deploy anything new through it** — use the salt-v3 factory above. `script/base/OivChainDeploy.sol` keeps this factory address as `LEGACY_FACTORY` and `script/DeployCcipOivDeployer.s.sol` refuses to wire it into an orchestrator, pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol).
+> **Not a historical record — this is where a live fund runs.** Everything from here down describes the pre-patch build embedding the vulnerable Roles Modifier **v2.1.0**. It is documented because **the kUSD fund below still lives on it** (mainnet + Optimism/Gnosis/Base/Arbitrum), so these are the addresses you need to operate or audit that fund. **Never deploy anything new through it** — use the salt-v4 factory at the top of this file. `script/base/OivChainDeploy.sol` keeps this factory address as `LEGACY_FACTORY` and `script/DeployCcipOivDeployer.s.sol` refuses to wire it into an orchestrator, pinned by [`test/FactoryAddressSync.t.sol`](../test/FactoryAddressSync.t.sol).
 >
 > Superseded infra that **nothing uses** — the salt-v1 and salt-v2 builds — is deliberately **not** recorded here. This file carries only the current infra plus the stack a live fund depends on. Older generations remain on-chain and are recoverable from git history if ever needed.
 
@@ -85,7 +180,7 @@ The salt scheme: `keccak256(abi.encodePacked("KpkOivFactory", uint256(1)))` and 
 | `Ownable.owner` (final) | `0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` | OIV Safe (5/N threshold, same address on every chain) |
 | Deployer EOA (post-handoff) | `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` | EOA — holds **no** privileged role on any factory after `transferOwnership` lands. |
 
-The deploy flow is per-chain via `script/DeployKpkOivFactory.s.sol` and matches the NAV v2 pattern: factory + deployer deployed via canonical CREATE2 deployer with the EOA as initial owner, then `setKpkSharesDeployer` wires the deployer in, then `transferOwnership` hands the factory to the OIV Safe.
+The deploy flow is per-chain via `script/chains/Deploy_<Chain>.s.sol` (which runs `OivChainDeploy._runChain`): `Empty` and MultiSendUnwrapper preflight, then both mastercopies and `KpkTimelockDeployer`, and only THEN the factory — that order is mandatory, because the factory takes the shares mastercopy and the timelock deployer as constructor arguments. All four go through the canonical CREATE2 deployer with the EOA as initial owner, then `transferOwnership` to the OIV Safe. There are no `setKpkSharesMastercopy` / `setTimelockDeployer` calls any more: those setters were deleted, so onboarding still gets exactly one attempt per chain and a mistake still needs a new factory generation, but the mis-wired-and-live state they made possible no longer exists. **`script/DeployKpkOivFactory.s.sol` cannot onboard a chain, and no longer tries**: it is read-only and broadcasts nothing at all. (It used to run `vm.startBroadcast()` and two CREATE2 deployments while the header called it a verifier, so invoked as documented — without `--broadcast` — it printed `[OK] KpkOivFactory deployed at ...` for state that never reached the chain.) It survives as a **verifier**: run it against an onboarded chain (no `--broadcast`) and it asserts the factory's owner, canonical `timelockDeployer` and expected `kpkSharesMastercopy`. (The per-chain rows below record a `setKpkSharesDeployer` transaction: that was the salt-v3 setter, kept as history.)
 
 ---
 

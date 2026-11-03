@@ -50,8 +50,9 @@ contract SelectorSeedScopeTest is Test {
         }
     }
 
-    /// @dev The mainnet orchestrator's registry must end up with exactly the destinations that have
-    ///      infra deployed: 19 live chains minus mainnet itself (a source, never its own destination).
+    /// @dev The mainnet orchestrator's registry must end up with exactly the baked (wired) destinations:
+    ///      the 19 wired chains minus mainnet itself (a source, never its own destination). Robinhood has
+    ///      salt-v4 infra (20 chains deployed) but is `excluded`, i.e. not wired, so it is not counted.
     function test_seedableCountMatchesDeployedDestinations() public view {
         uint256 count;
         for (uint256 i = 0; i < 256; i++) {
@@ -59,7 +60,7 @@ contract SelectorSeedScopeTest is Test {
             if (!vm.keyExists(json, string.concat(base, ".verdict"))) break;
             if (harness.exposed_seedable(json, base)) count++;
         }
-        assertEq(count, 18, "seedable destination count drifted from the 18 deployed destinations");
+        assertEq(count, 18, "seedable destination count drifted from the 18 wired destinations");
     }
 
     /// @dev Guards the flag itself: if someone drops `excluded` from bob/katana the count test above

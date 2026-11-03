@@ -47,7 +47,20 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
         );
     }
 
-    // ── Documented salt-v3 predictions ─────────────────────────────────────────
+    // ── Documented salt-v4 predictions ─────────────────────────────────────────
+    //
+    // GENERATION NOTE. These are salt-v4 values. TWO OF THEM ARE DEPLOYED: `KpkTimelockDeployer` and
+    // its `TimelockControllerUpgradeable` mastercopy are live on mainnet, and live timelock clones
+    // govern funds against them — so an edit that moves either prediction forks the deployed kit
+    // rather than merely updating a number. `test/DeployedKitSync.t.sol` asserts those two against
+    // CHAIN STATE, which is the check these guards structurally cannot make: both sides here are
+    // computed from the same source, so they stayed green through exactly that drift. The factory and
+    // orchestrator are NOT deployed and are free to move. Adding the
+    // timelock arguments to `deployOiv` changed `KpkOivFactory`'s runtime, which moved its CREATE2
+    // address, which moved `KpkSharesDeployer` (factory address is a constructor argument) and
+    // `CcipOivDeployer` (factory address is an immutable) with it. The salts were bumped 3 -> 4 to
+    // make the generation explicit. Re-derive from a FRESH CLONE before the rollout — a drifted
+    // working tree silently produces different bytecode and therefore different addresses.
     //
     // docs/DEPLOYED_ADDRESSES.md publishes all three predicted addresses, but only the factory was
     // pinned — and all three shipped stale once already, moved by a metadata-hash change from a
@@ -55,15 +68,28 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
     // 19-chain rollout. When they fail, re-derive from a CLEAN CLONE (a drifted working tree
     // produces different values) and update both the constants here and the doc table.
 
-    address internal constant DOCUMENTED_SHARES_DEPLOYER = 0xea084E763F8535CBe28759b990F963BeDf60be9a;
-    address internal constant DOCUMENTED_ORCHESTRATOR = 0x6F2A3D35Ff275d6B76dB47eFB0Da1b2358daf11b;
+    address internal constant DOCUMENTED_SHARES_MASTERCOPY = 0x729Fb58a61a6f8349657fBc9f17BA4D36C9e72fC;
+    address internal constant DOCUMENTED_TIMELOCK_MASTERCOPY = 0x9760280fED9e760668186334f88b6d763A7d976E;
+    address internal constant DOCUMENTED_ORCHESTRATOR = 0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D;
 
-    function test_documentedSharesDeployerAddressMatchesDeployPath() public pure {
-        address factory = _predictFactory(CANONICAL_EOA_OWNER);
+    /// @dev The two mastercopies take no constructor arguments and `KpkTimelockDeployer`'s only
+    ///      argument is one of them, so unlike the factory and orchestrator these three are
+    ///      independent of the deployer EOA — the same on every chain for anyone.
+    address internal constant DOCUMENTED_TIMELOCK_DEPLOYER = 0xdd23Ba8B2c4D3D916605361e29600121DeFC2d9f;
+
+    function test_documentedSharesMastercopyAddressMatchesDeployPath() public pure {
         assertEq(
-            _create2Address(SALT_DEPLOYER, _deployerInitCode(factory)),
-            DOCUMENTED_SHARES_DEPLOYER,
-            "KpkSharesDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+            _create2Address(SALT_SHARES_MASTERCOPY, _sharesMastercopyInitCode()),
+            DOCUMENTED_SHARES_MASTERCOPY,
+            "KpkShares mastercopy prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
+
+    function test_documentedTimelockMastercopyAddressMatchesDeployPath() public pure {
+        assertEq(
+            _create2Address(SALT_TIMELOCK_MASTERCOPY, _timelockMastercopyInitCode()),
+            DOCUMENTED_TIMELOCK_MASTERCOPY,
+            "Timelock mastercopy prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
         );
     }
 
@@ -73,6 +99,17 @@ contract FactoryAddressSyncTest is Test, OivChainDeploy {
             _create2Address(SALT_CCIP, _orchestratorInitCode(CANONICAL_EOA_OWNER, factory)),
             DOCUMENTED_ORCHESTRATOR,
             "CcipOivDeployer prediction drifted from docs/DEPLOYED_ADDRESSES.md - re-derive from a clean clone"
+        );
+    }
+
+    function test_documentedTimelockDeployerAddressMatchesDeployPath() public pure {
+        // Computed first, pinned second — the same order as the three guards above. They used to
+        // disagree, which made `left != right` in a failure message ambiguous about which side was
+        // the prediction and which the published constant.
+        assertEq(
+            _predictTimelockDeployer(),
+            DOCUMENTED_TIMELOCK_DEPLOYER,
+            "KpkTimelockDeployer prediction drifted - re-derive from a clean clone"
         );
     }
 }

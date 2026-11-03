@@ -33,6 +33,18 @@ contract MockCcipRouter {
         return sent[sent.length - 1].data;
     }
 
+    /// @dev Lanes are directional, so a mock has to be able to say "not from here". Default is
+    ///      supported; `setLaneUnsupported` marks one selector unreachable from this chain.
+    mapping(uint64 => bool) public laneUnsupported;
+
+    function setLaneUnsupported(uint64 selector, bool unsupported) external {
+        laneUnsupported[selector] = unsupported;
+    }
+
+    function isChainSupported(uint64 destChainSelector) external view returns (bool) {
+        return !laneUnsupported[destChainSelector];
+    }
+
     function getFee(uint64, Client.EVM2AnyMessage memory) external view returns (uint256) {
         return feePerMessage;
     }

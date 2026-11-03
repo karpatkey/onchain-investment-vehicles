@@ -3,8 +3,11 @@ pragma solidity ^0.8.0;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KpkOivFactory} from "src/KpkOivFactory.sol";
-import {KpkSharesDeployer} from "src/KpkSharesDeployer.sol";
+import {KpkTimelockDeployer} from "src/KpkTimelockDeployer.sol";
 import {KpkShares} from "src/kpkShares.sol";
+import {
+    TimelockControllerUpgradeable
+} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {IRoles} from "src/interfaces/IRoles.sol";
 import {OivTestConstants} from "test/OivTestConstants.sol";
 
@@ -103,9 +106,9 @@ contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
         vm.createSelectFork(vm.envString("MAINNET_URL"));
         _requireInfraDeployed();
 
-        uint256 n = vm.getNonce(address(this));
-        address predicted = vm.computeCreateAddress(address(this), n + 1);
-        KpkSharesDeployer dep = new KpkSharesDeployer(predicted);
+        // Nonce map: n = timelock deployer, n+1 = shares deployer, n+2 = factory.
+        KpkShares sharesMastercopy = new KpkShares();
+        KpkTimelockDeployer tdep = new KpkTimelockDeployer(address(new TimelockControllerUpgradeable()));
         factory = new KpkOivFactory(
             factoryOwner,
             SAFE_PROXY_FACTORY,
@@ -114,9 +117,9 @@ contract MultiSendUnwrapperSurfaceTest is OivTestConstants {
             SAFE_FALLBACK_HANDLER,
             MODULE_PROXY_FACTORY,
             ROLES_MODIFIER_MASTERCOPY,
-            address(dep)
+            address(sharesMastercopy),
+            address(tdep)
         );
-        require(address(factory) == predicted, "factory addr");
 
         address[] memory owners = new address[](1);
         owners[0] = managerSigner;
