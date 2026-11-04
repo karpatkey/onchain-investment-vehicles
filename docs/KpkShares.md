@@ -112,12 +112,12 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
   - Management fees use shared `_managementFeeLastUpdate` timestamp across all assets
   - Performance fees use separate `_performanceFeeLastUpdate` timestamp (prevents gaming)
   - Performance fees only calculated for assets with `isFeeModuleAsset = true`
-  - When updating fee rates, any accrued fees are charged before the rate change
+  - When updating fee rates, any accrued fees are charged before the rate change. Exception: a performance fee module with a crystallization period ignores that call mid-period, and charges the period at the lower of the old and new rates (see [Performance fee modules](#performance-fee-modules))
 
 ### 5. Performance Fee System
 - **Reference price**: The module keeps one reference price (`highWatermark`) per calling fund, keyed by `msg.sender`. Its first call seeds it at the price it is given and charges nothing; that is the first price the module is shown, not the price investors entered at
 - **Profit-Only Charging**: Fees only charged on gains above the reference, which depending on the module is a watermark, a watermark plus a hurdle, or a benchmark-adjusted watermark
-- **Modular Architecture**: Fee calculation logic can be upgraded via module replacement
+- **Modular Architecture**: Fee calculation logic can be upgraded via module replacement. A new module starts from the first price it is shown, not from the old module's watermark (see the caveats below)
 - **Time-Gated, Price-Based Calculation**: Fees are only assessed after `MIN_TIME_ELAPSED` (6 hours) has passed. The modules keep their own clock for the hurdle and the crystallization period; `timeElapsed` is only re-emitted in an event
 - **Reference Updates**: Each charge moves the reference; where it lands depends on the module
 
@@ -131,7 +131,7 @@ All modules share `WatermarkFeeBase` (seeding, per-fund keying, events). None is
 |---|---|---|---|
 | `WatermarkFee` | pre-fee price | gain ÷ pre-fee price, no dilution adjustment | 16.7% / 14.0–15.6% |
 | `PostFeeWatermarkFee` | post-fee price | as `WatermarkFee` | 19.8–20.0% / 15.8–18.2% |
-| `ExactWatermarkFee` | post-fee price | sized so every share gives up exactly `feePct` × its gain | 20.0% / 20.0% |
+| `ExactWatermarkFee` | post-fee price | sized so every share gives up `feePct` × its gain, to within rounding | 20.0% / 20.0% |
 
 \* Off-chain simulation, 2026-11-04: NAV rising 0.03%–5% between charges, price reported as NAV / totalSupply. "Holds" means later mints dilute the receiver's earlier fee shares, which the first two modules do not compensate for.
 
@@ -139,26 +139,31 @@ All modules share `WatermarkFeeBase` (seeding, per-fund keying, events). None is
 
 | Module | Fee is due when the price exceeds | Fee | Constructor |
 |---|---|---|---|
-| `PeriodicWatermarkFee` | the watermark, and the period has run since the last charge | `feePct` of the gain above the watermark | `period` |
-| `HardHurdleFee` | the watermark grown by `hurdleBps` a year (simple interest since the last charge) | `feePct` of the gain above the hurdle only | `hurdleBps, period` |
+| `PeriodicWatermarkFee` | the watermark, and the period has run since the watermark last moved | `feePct` of the gain above the watermark | `period` |
+| `HardHurdleFee` | the watermark grown by `hurdleBps` a year (simple interest since the watermark last moved) | `feePct` of the gain above the hurdle only | `hurdleBps, period` |
 | `SoftHurdleFee` | the hurdle | `feePct` of the whole gain above the watermark | `hurdleBps, period` |
 | `CatchUpHurdleFee` | the hurdle | `catchUpBps` of the gain above the hurdle, up to `feePct` of the whole gain | `hurdleBps, catchUpBps, period` |
 | `BenchmarkFee` | the watermark carried forward at the benchmark's return (and, optionally, the watermark itself) | `feePct` of the outperformance | `feed, maxStaleness, requireAbsoluteGain, period` |
 | `NoWatermarkFee` | the previous reference, which follows the price down after a fall | `feePct` of any gain, including the recovery of a loss | `period` |
 
 Notes on the other structures:
-- With a period, nothing accrues between charges: an investor who redeems mid-period pays none of that period's fee, and one who subscribes mid-period pays it on gains made before they joined.
+- The period is rolling, not calendar-based: it restarts whenever the watermark moves (a charge, the first seed, a fee that rounds to 0, or `NoWatermarkFee`'s reset on a fall). With a period, nothing accrues between charges: an investor who redeems mid-period pays none of that period's fee, and one who subscribes mid-period pays it on gains made before they joined.
+- With a period, a rate raise applies from the next watermark move and a cut applies at once: each charge uses the lower of the rate passed in and the rate in force when the watermark last moved.
 - The soft and catch-up hurdles are cleared by almost any gain over the few hours between settlements, so they only bite with a period such as a year. The hard hurdle works at any period.
-- `BenchmarkFee` reads a Chainlink-style feed. A stale, non-positive or reverting feed makes the call a no-op that defers the fee rather than reverting the settlement. Without `requireAbsoluteGain`, a fund that loses less than a falling benchmark is charged.
+- `BenchmarkFee` reads a Chainlink-style feed, which must be in the same unit as the fund's price. A feed with no code, a reverting or malformed reply, a non-positive answer or a stale update makes the call a no-op that defers the fee rather than reverting the settlement; the constructor rejects a feed address with no code. Without `requireAbsoluteGain`, a fund that loses less than a falling benchmark is charged. `maxStaleness` is one immutable for every chain the module address is used on.
+- `BenchmarkFee` reads the feed when the call executes, while the price may be older: the operator's price is struck when the settlement is prepared, and `setPerformanceFeeRate` passes the last settled price. A benchmark move in between mismeasures the outperformance in either direction by about `feePct` times the move. Settle in the same transaction as any rate change, and strike the price as close to execution as possible. (Accepted limitation; the module receives no price timestamp.)
 - `NoWatermarkFee` is not investor-protective and exists for comparison only.
 
-Every module except `WatermarkFee` reads `totalSupply()` from the calling fund and assumes the reported price is NAV / totalSupply() at call time.
+Every module except `WatermarkFee` reads `totalSupply()` from the calling fund and assumes the reported price is NAV / totalSupply() at call time. `KpkShares` mints the management fee just before calling the module, so a price struck before that mint makes the performance fee measure the gain before the management fee: investors can be charged in a period whose net result, after the management fee, is below the watermark.
+
+Every module skips a call whose price equals the last price it charged a fee at. `KpkShares` stores the operator's pre-fee price and `setPerformanceFeeRate` sends it back, which a module with a post-fee watermark would otherwise charge as a new gain. A genuine later settlement at exactly that price is deferred, not lost. A price of 0 (an asset never settled) is ignored.
 
 The module address is hashed into a fund's shares salt (`KpkOivFactory._deriveSharesSalt`), so a fund whose shares live on several chains needs the module at the same address on each. Constructor arguments are part of a module's creation code, so each parameter set is a different address, and `BenchmarkFee` with a different feed address per chain cannot land at one address everywhere. There is no deterministic deploy script for these modules yet.
 
-`kpkShares` behaviour that applies whichever module is used:
-- Requests approved in the batch that charges the fee are priced at the pre-fee price, so redeemers in that batch pay none of it and the holders who stay pay all of it.
+`kpkShares` behaviour that applies whichever module is used (accepted limitations; fixing them changes the audited contract):
+- Requests approved in the batch that charges the fee are priced at the pre-fee price, so redeemers in that batch pay none of it and the holders who stay pay all of it. Subscribers in that batch overpay, and with any module that leaves its watermark at the post-fee price, the next settlement charges `feePct` of that overpayment as a gain. Workaround: charge the fee in a `processRequests` call with no requests, then approve requests in a second call at the post-fee price.
 - The module is not called while `performanceFeeRate` is 0 or the module is unset, so the watermark freezes; once fees are re-enabled, gains made in the meantime are charged.
+- Replacing the module re-seeds at the first price the new module is shown, so a recovery up to the old module's watermark is charged again. Switching back to a module the fund used before resumes its old watermark and can charge a gain the other module already charged. Never switch back to an earlier module address.
 - Every `isFeeModuleAsset` asset feeds the same watermark, each in its own price unit, and the first settlement in a newly added asset skips the 30% price-deviation check.
 
 ### 6. Request Lifecycle

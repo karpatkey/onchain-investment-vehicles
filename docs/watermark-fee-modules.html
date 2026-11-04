@@ -204,8 +204,12 @@
     <p>The first call seeds the reference at the price it is given and charges nothing. After that each module
       decides whether the price owes a fee, how many fee shares to mint, and where the reference goes next; a
       call that changes nothing leaves no trace. For the three watermark modules, a price at or below the
-      watermark charges nothing and leaves the watermark where it is. The <code>timeElapsed</code> argument is
-      passed through to an event; the hurdle and period modules keep their own clock.</p>
+      watermark charges nothing and leaves the watermark where it is. Two calls are always ignored: a price of 0,
+      which is what <code>KpkShares</code> passes for an asset it has never settled, and a repeat of the price the
+      module last charged at. <code>setPerformanceFeeRate</code> sends that price back, the price before that
+      settlement's fee, and a module whose watermark sits at the post-fee price would otherwise charge it again.
+      The <code>timeElapsed</code> argument is passed through to an event; the hurdle and period modules keep
+      their own clock.</p>
     <p>Nothing here moves money directly. The module returns a number of shares, and
       <code>KpkShares</code> mints them to the fee receiver. Minting dilutes every holder, which is how the
       fee is paid, and it is why the share price drops after a charge.</p>
@@ -266,8 +270,8 @@
         <tbody>
           <tr><td><span class="swatch sw-gross"></span><a href="#sizings">WatermarkFee</a></td><td>the watermark, left at the pre-fee price after a charge</td><td>gain ÷ pre-fee price, no dilution adjustment: about 14–17% of a configured 20%</td></tr>
           <tr><td><span class="swatch sw-post"></span><a href="#sizings">PostFeeWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>sized as <code>WatermarkFee</code>: about 16–20% of a configured 20%</td></tr>
-          <tr><td><span class="swatch sw-exact"></span><a href="#sizings">ExactWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>exactly the configured rate of the gain</td></tr>
-          <tr><td><span class="swatch sw-periodic"></span><a href="#periodic">PeriodicWatermarkFee</a></td><td>the watermark, at most once per crystallization period</td><td>exactly the configured rate of the gain</td></tr>
+          <tr><td><span class="swatch sw-exact"></span><a href="#sizings">ExactWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>the configured rate of the gain, to within rounding</td></tr>
+          <tr><td><span class="swatch sw-periodic"></span><a href="#periodic">PeriodicWatermarkFee</a></td><td>the watermark, at most once per crystallization period</td><td>the configured rate of the gain, to within rounding</td></tr>
           <tr><td><span class="swatch sw-hard"></span><a href="#hurdles">HardHurdleFee</a></td><td>the watermark grown by a yearly hurdle rate</td><td>the configured rate of the gain above the hurdle only</td></tr>
           <tr><td><span class="swatch sw-soft"></span><a href="#hurdles">SoftHurdleFee</a></td><td>the hurdle</td><td>the configured rate of the whole gain</td></tr>
           <tr><td><span class="swatch sw-catch"></span><a href="#hurdles">CatchUpHurdleFee</a></td><td>the hurdle</td><td>a catch-up share of the gain above the hurdle, up to the configured rate of the whole gain</td></tr>
@@ -276,7 +280,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">All but the first two size their fee shares exactly. All nine can be compared on your own
+    <p class="note">All but the first two size their fee shares exactly, to within on-chain rounding. All nine can be compared on your own
       numbers in the <a href="#calculator">calculator</a>.</p>
   </section>
 
@@ -435,15 +439,16 @@ uint256 supply = IERC20(msg.sender).totalSupply();
 fee = Math.mulDiv(scaledFee, supply, sharesPrice * 10_000 - scaledFee);
 newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code></pre>
       <p>Minting <var>a</var> · <var>S</var> / (<var>P</var> − <var>a</var>) shares leaves every share
-        worth <var>P</var> − <var>a</var>. Investors lose exactly <var>a</var> per share. The receiver's
+        worth <var>P</var> − <var>a</var>. Investors lose <var>a</var> per share, to within one price unit of rounding. The receiver's
         existing shares lose <var>a</var> too, but its new shares are worth <var>a</var> · <var>S</var>, so
         it nets <var>a</var> · <var>N</var>: the fee on investor shares and nothing on its own.</p>
       <p>This sizing lives in <code>_sizeExact</code>, and every module in the next section reuses it with its own
         <var>a</var>. Every module except <code>WatermarkFee</code> reads <code>totalSupply()</code> from the
         calling fund and assumes the reported price is NAV ÷ total supply at that moment.
         <code>KpkShares</code> mints the management fee just before calling, so a price struck before that mint
-        leaves the watermark slightly above the true post-fee price, by about the management fee's share of
-        supply, in investors' favour.</p>
+        overstates the price: the performance fee is then measured on the gain before the management fee, which can
+        charge investors in a period whose net result is below the watermark, while the watermark lands above the true
+        post-fee price.</p>
     </div>
   </section>
 
@@ -501,9 +506,12 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
 
       <h3 id="periodic">Crystallization period</h3>
       <p><code>PeriodicWatermarkFee</code> is <code>ExactWatermarkFee</code> that charges at most once per
-        period: a settlement before the period has run since the last charge changes nothing, and the first
-        one after it charges on whatever gain is above the watermark at that moment. ESMA's guidelines make
-        once a year the default for European funds, with an exception for a whole-life watermark like ours.</p>
+        period: a settlement before the period has run since the watermark last moved changes nothing, and the first
+        one after it charges on whatever gain is above the watermark at that moment. The period is rolling, not tied
+        to calendar dates: it restarts at every watermark move, including the first seed and a reset. ESMA's
+        guidelines make once a year the default for European funds, with an exception for a whole-life watermark
+        like ours. A rate raise applies from the next watermark move and a cut at once: each charge uses the lower of
+        the current rate and the rate in force when the watermark last moved.</p>
     </div>
     <figure>
       <svg viewBox="0 0 1000 380" role="img" aria-labelledby="period-title period-desc">
@@ -523,7 +531,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
           <text x="510" y="340" text-anchor="middle">6</text>
           <text x="725" y="340" text-anchor="middle">9</text>
           <text x="940" y="340" text-anchor="middle">12</text>
-          <text x="510" y="364" text-anchor="middle" fill="#12324A">Months since the last charge</text>
+          <text x="510" y="364" text-anchor="middle" fill="#12324A">Months since the watermark last moved</text>
         </g>
         <line x1="80" x2="940" y1="300" y2="300" stroke="#6E9DB2" stroke-width="2" stroke-dasharray="7 5"/>
         <line x1="940" x2="975" y1="125.5" y2="125.5" stroke="#6E9DB2" stroke-width="2" stroke-dasharray="7 5"/>
@@ -558,8 +566,8 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         changes.</p>
 
       <h3 id="benchmark">Benchmark-relative</h3>
-      <p><code>BenchmarkFee</code> charges only for beating a benchmark read from a Chainlink-style feed, for
-        example ETH/USD or a staking-rate index. The watermark is carried forward at the benchmark's return:
+      <p><code>BenchmarkFee</code> charges only for beating a benchmark read from a Chainlink-style feed in the same
+        unit as the fund's price, for example ETH/USD for a USD-priced fund. The watermark is carried forward at the benchmark's return:
         set at $1.00 when the benchmark stood at 2,000, it becomes $1.10 when the benchmark reaches 2,200, and
         the fee is 20% of the price above that.</p>
     </div>
@@ -619,11 +627,15 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         <code>test/FeeStructures.t.sol</code>.</figcaption>
     </figure>
     <div class="prose">
-      <p>A stale, non-positive or reverting feed makes the call a no-op: nothing is seeded or charged, and the
-        watermark and its benchmark level stay put, so the fee is deferred rather than lost and settlements keep
-        working. The feed address is a constructor argument, so it is part of the module's address: a fund whose
-        shares live on several chains cannot use one <code>BenchmarkFee</code> address everywhere if the feed
-        address differs per chain.</p>
+      <p>A feed with no code, a reverting or malformed reply, a non-positive answer or a stale update makes the call
+        a no-op: nothing is seeded or charged, and the watermark and its benchmark level stay put, so the fee is
+        deferred rather than lost and settlements keep working. The feed address is a constructor argument, so it is
+        part of the module's address: a fund whose shares live on several chains cannot use one
+        <code>BenchmarkFee</code> address everywhere if the feed address differs per chain.</p>
+      <p>The feed is read when the call executes, while the fund price can be older: the operator strikes it when
+        preparing the settlement, and a rate change re-sends the last settled price. If the benchmark moved in
+        between, the outperformance is mismeasured in either direction by about the fee rate times that move. Settle
+        in the same transaction as any rate change.</p>
 
       <h3 id="no-watermark">No watermark</h3>
       <p><code>NoWatermarkFee</code> drops the loss carry-forward: each charge is 20% of the gain since the
@@ -695,6 +707,18 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         20%: the next settlement at an unchanged $1.20 mints 33.33 shares for gains made while the
         advertised fee was zero.</p>
 
+      <h3>Subscriptions in the charging settlement overpay</h3>
+      <p>The same pre-fee pricing makes subscribers in that settlement overpay. With any module that leaves the
+        watermark at the post-fee price, the overpayment lifts the next price above the watermark and is charged as a
+        gain: a $500 subscription in the charging settlement adds a $3.33 fee at the next one with
+        <code>ExactWatermarkFee</code>. Charge the fee in a settlement with no requests, then approve requests in a
+        second call.</p>
+
+      <h3>Replacing the module restarts the watermark</h3>
+      <p>A new module seeds at the first price it is shown, so a recovery up to the old module's watermark is
+        charged again. Switching back to a module the fund used before resumes its old watermark and can charge a
+        gain the other module already charged.</p>
+
       <h3>One watermark for every fee asset</h3>
       <p>Each asset flagged <code>isFeeModuleAsset</code> is priced in its own unit but feeds the same
         watermark. With USDT at $0.995, a USDT settlement at a flat USD NAV reads as a 0.5% gain and is
@@ -723,7 +747,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <dd>Use with a crystallization period, typically a year; at every settlement almost any gain clears the
         hurdle. Prefer the catch-up, which avoids the jump in the fee at the hurdle.</dd>
       <dt><span class="swatch sw-periodic"></span>PeriodicWatermarkFee</dt>
-      <dd>Use when fees should crystallize on a calendar, as ESMA's once-a-year default expects. Investors who
+      <dd>Use when fees should crystallize at most once per period, as ESMA's once-a-year default expects; the period is rolling, not tied to calendar dates. Investors who
         redeem mid-period escape that period's fee; those who subscribe mid-period pay for gains made before
         they joined.</dd>
       <dt><span class="swatch sw-bench"></span>BenchmarkFee</dt>
@@ -880,7 +904,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       post: `The watermark follows the price down to ${usd(w1, 4)}, so charge 2 is collected in full on the rise: ` +
             `<strong>${pct(s[1].collected)}</strong> of it. Fee shares are still sized at the pre-mint price, so each ` +
             `charge falls a little short of 20%. `,
-      exact: `Fee shares are sized so every share gives up exactly 20% of its gain, and the watermark moves to the ` +
+      exact: `Fee shares are sized so every share gives up 20% of its gain, and the watermark moves to the ` +
              `post-fee price. Both charges collect <strong>${pct(s[0].collected)}</strong>. `,
     }[id];
     readout.innerHTML = `<strong>${m.name}.</strong> ${msg}${gained}`;
