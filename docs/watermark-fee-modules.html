@@ -187,7 +187,7 @@
       <desc id="tide-desc">The share price starts at 1.00 dollars, rises to 1.20 at the first charge and drops when fee
         shares are minted. The shaded water level is the watermark. The chart redraws for the selected module.</desc>
     </svg>
-    <figcaption>One fund, 1,000 investor shares at $1.00, a 20% fee, NAV rising to $1,200 and then $1,240.
+    <figcaption>One fund, 1,000 investor shares at $1.00, a 20% fee, NAV rising to $1,200 and then $1,239.
       The line is the share price; the water is the watermark. Magenta drops are fee shares being minted.
       Faint lines are the other two modules on the same path.</figcaption>
   </figure>
@@ -196,7 +196,7 @@
 
 <main class="wrap">
 
-  <section class="prose">
+  <section class="prose" id="shared">
     <h2>What every module does the same</h2>
     <p>Every module shares <code>WatermarkFeeBase</code>. It keeps one reference price per fund (the
       <code>highWatermark</code> mapping), keyed by the calling <code>KpkShares</code> proxy, so one deployment
@@ -206,8 +206,10 @@
       call that changes nothing leaves no trace. For the three watermark modules, a price at or below the
       watermark charges nothing and leaves the watermark where it is. Two calls are always ignored: a price of 0,
       which is what <code>KpkShares</code> passes for an asset it has never settled, and a repeat of the price the
-      module last charged at. <code>setPerformanceFeeRate</code> sends that price back, the price before that
-      settlement's fee, and a module whose watermark sits at the post-fee price would otherwise charge it again.
+      module last charged at while that charge's watermark stands. <code>setPerformanceFeeRate</code> sends that
+      price back, the price before that settlement's fee, and a module whose watermark sits at the post-fee price
+      would otherwise charge it again. A genuine settlement at exactly that price is skipped too, which defers its
+      fee, or forgives it if a <code>NoWatermarkFee</code> reset or a benchmark recovery comes first.
       The <code>timeElapsed</code> argument is passed through to an event; the hurdle and period modules keep
       their own clock.</p>
     <p>Nothing here moves money directly. The module returns a number of shares, and
@@ -314,8 +316,11 @@
         34.48 shares, chosen so the price lands at $1.16 and Alice gives up exactly $40.</p>
       <p>The bigger difference is the watermark. <code>WatermarkFee</code> leaves it at the pre-fee $1.20
         while the price is now $1.1613. The other two move it down to the price the fund is actually at.</p>
-      <h3>Charge 2: NAV rises to $1,240</h3>
-      <p>NAV grows another 3.3%. Under every module Alice's position gains about $38.70.</p>
+      <h3>Charge 2: NAV rises to $1,239</h3>
+      <p>NAV grows another 3.25%. Under every module Alice's position gains about $37.70. (At exactly $1,240 the
+        first two modules' price would return to exactly $1.20, the price they last charged at, and they would skip
+        that settlement as a repeat and charge the gain at the next one; see
+        <a href="#shared">what every module does the same</a>.)</p>
     </div>
     <div class="scroll">
       <table>
@@ -323,18 +328,19 @@
           <tr><th></th><th><span class="swatch sw-gross"></span>WatermarkFee</th><th><span class="swatch sw-post"></span>PostFeeWatermarkFee</th><th><span class="swatch sw-exact"></span>ExactWatermarkFee</th></tr>
         </thead>
         <tbody>
-          <tr><th scope="row">Price before the fee</th><td>$1.2000</td><td>$1.2000</td><td>$1.1987</td></tr>
-          <tr><th scope="row">Fee shares minted</th><td class="hot">0</td><td>6.45</td><td>6.72</td></tr>
-          <tr><th scope="row">Price and watermark after</th><td>$1.2000</td><td>$1.1926</td><td>$1.1909</td></tr>
-          <tr><th scope="row">Alice's value</th><td>$1,200.00</td><td>$1,192.55</td><td>$1,190.93</td></tr>
-          <tr><th scope="row">Fee receiver's value</th><td>$40.00</td><td>$47.45</td><td>$49.07</td></tr>
+          <tr><th scope="row">Price before the fee</th><td>$1.1990</td><td>$1.1990</td><td>$1.1977</td></tr>
+          <tr><th scope="row">Fee shares minted</th><td class="hot">0</td><td>6.30</td><td>6.55</td></tr>
+          <tr><th scope="row">Price after</th><td>$1.1990</td><td>$1.1918</td><td>$1.1902</td></tr>
+          <tr><th scope="row">Watermark after</th><td class="hot">$1.2000</td><td>$1.1918</td><td>$1.1902</td></tr>
+          <tr><th scope="row">Alice's value</th><td>$1,199.03</td><td>$1,191.77</td><td>$1,190.16</td></tr>
+          <tr><th scope="row">Fee receiver's value</th><td>$39.97</td><td>$47.23</td><td>$48.84</td></tr>
           <tr><th scope="row">Share of this gain collected</th><td class="hot">0%</td><td>19.2%</td><td>20.0%</td></tr>
         </tbody>
       </table>
     </div>
     <div class="prose">
-      <p>Under <code>WatermarkFee</code> the price climbs from $1.1613 back to exactly the $1.20 watermark,
-        so nothing is above it and no fee is charged on a real $38.71 gain. That fee-free band, the gap
+      <p>Under <code>WatermarkFee</code> the price climbs from $1.1613 to $1.1990, still below the $1.20 watermark,
+        so no fee is charged on a real $37.74 gain. That fee-free band, the gap
         between the price after a fee and the watermark left above it, reopens after every charge. The
         other two modules have no band and collect on the whole rise.</p>
     </div>
@@ -510,8 +516,8 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         one after it charges on whatever gain is above the watermark at that moment. The period is rolling, not tied
         to calendar dates: it restarts at every watermark move, including the first seed and a reset. ESMA's
         guidelines make once a year the default for European funds, with an exception for a whole-life watermark
-        like ours. A rate raise applies from the next watermark move and a cut at once: each charge uses the lower of
-        the current rate and the rate in force when the watermark last moved.</p>
+        like ours. Each charge uses the lowest rate in force during the period: a raise never reaches back over gains
+        made under a lower rate, and a cut applies to the period it lands in.</p>
     </div>
     <figure>
       <svg viewBox="0 0 1000 380" role="img" aria-labelledby="period-title period-desc">
@@ -822,7 +828,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
   const X = [110, 450, 800, 966];
   const TOP = 24, BOT = 384, PMAX = 1.25, PMIN = 0.95;
   const y = p => TOP + (PMAX - p) / (PMAX - PMIN) * (BOT - TOP);
-  const sims = Object.fromEntries(MODULES.map(m => [m.id, run(m.id, 1000, 0, [1200, 1240], 0.2)]));
+  const sims = Object.fromEntries(MODULES.map(m => [m.id, run(m.id, 1000, 0, [1200, 1239], 0.2)]));
 
   const el = (tag, attrs, parent = svg) => {
     const n = document.createElementNS(NS, tag);
@@ -842,7 +848,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     const t = el('text', { x: 56, y: y(p) + 5, 'text-anchor': 'end' }, grid);
     t.textContent = usd(p);
   }
-  [['Seed', 'NAV $1,000'], ['Charge 1', 'NAV $1,200'], ['Charge 2', 'NAV $1,240']].forEach(([a, b], i) => {
+  [['Seed', 'NAV $1,000'], ['Charge 1', 'NAV $1,200'], ['Charge 2', 'NAV $1,239']].forEach(([a, b], i) => {
     el('line', { x1: X[i], x2: X[i], y1: TOP, y2: BOT, stroke: '#C9DCE4' }, grid);
     const t1 = el('text', { x: X[i], y: BOT + 26, 'text-anchor': 'middle', fill: '#12324A', 'font-weight': 600 }, grid);
     t1.textContent = a;
@@ -900,7 +906,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     const gained = 'Alice ends with ' + usd(s[1].investor) + ' and the fee receiver with ' + usd(s[1].receiver) + '.';
     const msg = {
       gross: `After charge 1 the price is ${usd(s[0].post, 4)}, but the watermark stays at the pre-fee ${usd(w1, 4)}. ` +
-             `The next rise back up to it is charged nothing, so charge 2 collects <strong>0%</strong> of a real gain. `,
+             `The next rise stays below it and is charged nothing, so charge 2 collects <strong>0%</strong> of a real gain. `,
       post: `The watermark follows the price down to ${usd(w1, 4)}, so charge 2 is collected in full on the rise: ` +
             `<strong>${pct(s[1].collected)}</strong> of it. Fee shares are still sized at the pre-mint price, so each ` +
             `charge falls a little short of 20%. `,
