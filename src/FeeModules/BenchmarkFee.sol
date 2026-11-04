@@ -27,9 +27,9 @@ import {PeriodicWatermarkFee} from "./PeriodicWatermarkFee.sol";
 ///         direction by about `feePct` times that move.
 ///
 ///         A feed with no code, a reverting, short or malformed reply, a reply that needs more than
-///         `FEED_GAS_LIMIT` gas, an answer of 0 or less, or no update within `maxStaleness` makes the call a no-op:
-///         no seeding, no charge, no state change. The fee is deferred, not lost, since the watermark and its
-///         benchmark level stay put (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting,
+///         `FEED_GAS_LIMIT` gas, an answer of 0 or less, or no update within `maxStaleness` defers the fee: nothing is
+///         seeded or charged, and the watermark and its benchmark level stay put, so the fee is not lost. (With a
+///         period, the rate passed in is still recorded for the lowest-rate rule.) (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting,
 ///         test/FeeStructures.t.sol::test_benchmark_codelessOrMalformedFeedDefers,
 ///         test/FeeStructures.t.sol::test_benchmark_gasBurningFeedDefers).
 ///

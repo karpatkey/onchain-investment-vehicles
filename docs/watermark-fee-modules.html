@@ -633,9 +633,9 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         <code>test/FeeStructures.t.sol</code>.</figcaption>
     </figure>
     <div class="prose">
-      <p>A feed with no code, a reverting or malformed reply, a non-positive answer or a stale update makes the call
-        a no-op: nothing is seeded or charged, and the watermark and its benchmark level stay put, so the fee is
-        deferred rather than lost and settlements keep working. The feed address is a constructor argument, so it is
+      <p>A feed with no code, a reverting, short or malformed reply, a read needing more than 100,000 gas, a
+        non-positive answer or a stale update defers the fee: nothing is seeded or charged, and the watermark and its
+        benchmark level stay put, so the fee is deferred rather than lost and settlements keep working. The feed address is a constructor argument, so it is
         part of the module's address: a fund whose shares live on several chains cannot use one
         <code>BenchmarkFee</code> address everywhere if the feed address differs per chain.</p>
       <p>The feed is read when the call executes, while the fund price can be older: the operator strikes it when
