@@ -10,6 +10,10 @@ import {WatermarkFee} from "src/FeeModules/WatermarkFee.sol";
 import {PostFeeWatermarkFee} from "src/FeeModules/PostFeeWatermarkFee.sol";
 import {ExactWatermarkFee} from "src/FeeModules/ExactWatermarkFee.sol";
 import {HardHurdleFee} from "src/FeeModules/HardHurdleFee.sol";
+import {SoftHurdleFee} from "src/FeeModules/SoftHurdleFee.sol";
+import {CatchUpHurdleFee} from "src/FeeModules/CatchUpHurdleFee.sol";
+import {PeriodicWatermarkFee} from "src/FeeModules/PeriodicWatermarkFee.sol";
+import {NoWatermarkFee} from "src/FeeModules/NoWatermarkFee.sol";
 
 /// @notice The watermark fee variants, driven through KpkShares with honest pricing: every settlement
 ///         reports NAV / totalSupply(), so a fee minted at one settlement shows up as a lower price at
@@ -68,6 +72,54 @@ contract WatermarkFeeVariantsTest is kpkSharesTestBase {
 
         // 10% kept fee-free, then 80% of the other 10%.
         assertApproxEqRel(_value(k, alice, nav), aliceBefore * 118 / 100, 1e10, "hurdle plus 80% of the excess");
+    }
+
+    // ── setPerformanceFeeRate re-sends the pre-fee price of the last settlement ──────────────────────
+
+    function test_rateChangeAfterACharge_mintsNothing() public {
+        IPerfFeeModule[8] memory modules = [
+            IPerfFeeModule(new WatermarkFee()),
+            IPerfFeeModule(new PostFeeWatermarkFee()),
+            IPerfFeeModule(new ExactWatermarkFee()),
+            IPerfFeeModule(new PeriodicWatermarkFee(0)),
+            IPerfFeeModule(new HardHurdleFee(1000, 0)),
+            IPerfFeeModule(new SoftHurdleFee(1000, 0)),
+            IPerfFeeModule(new CatchUpHurdleFee(1000, 10_000, 0)),
+            IPerfFeeModule(new NoWatermarkFee(0))
+        ];
+        for (uint256 i; i < modules.length; i++) {
+            KpkShares k = _fund(modules[i]);
+            uint256 nav = k.totalSupply();
+            _settle(k, nav);
+            nav = nav * 12 / 10;
+            _settle(k, nav);
+            uint256 charged = k.balanceOf(feeRecipient);
+            assertGt(charged, 0, "the +20% settlement charges a fee");
+
+            vm.prank(admin);
+            k.setPerformanceFeeRate(1500, address(usdc)); // NAV unchanged since that settlement
+            assertEq(k.balanceOf(feeRecipient), charged, "a rate change after a charge mints nothing");
+        }
+    }
+
+    function test_periodic_rateRaisedMidPeriod_chargesTheOldRate() public {
+        perfFeeModule = new PeriodicWatermarkFee(365 days);
+        KpkShares k = _deployKpkSharesWithFees(0, 0, 500); // 5%
+        _createSharesForTestingWithContract(k, alice, _sharesAmount(1000));
+        uint256 nav = k.totalSupply();
+        _settle(k, nav); // seed at 1.00 under 5%
+        skip(330 days);
+        nav = nav * 11 / 10;
+        _settle(k, nav); // +10%, mid-period: nothing charged
+        vm.prank(admin);
+        k.setPerformanceFeeRate(2000, address(usdc)); // KpkShares' charge at 5% is a no-op mid-period
+
+        skip(40 days);
+        uint256 price = _priceAt(k, nav);
+        uint256 supply = k.totalSupply();
+        _settle(k, nav); // period over
+        uint256 scaledFee = (price - 1e8) * 500;
+        assertEq(k.balanceOf(feeRecipient), scaledFee * supply / (price * 10_000 - scaledFee), "charged at 5%, not 20%");
     }
 
     function testFuzz_exact_eachShareGivesUpFeePctOfGain(

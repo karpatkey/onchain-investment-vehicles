@@ -11,16 +11,25 @@ import {PeriodicWatermarkFee} from "./PeriodicWatermarkFee.sol";
 /// @notice Fee on outperformance of a benchmark read from a Chainlink-style feed. The watermark is carried
 ///         forward at the benchmark's return: a fund whose watermark was set when the benchmark stood at B0
 ///         owes a fee only above `watermark * B / B0`, and `feePct` of the excess. A shortfall against the
-///         benchmark carries forward, because the watermark and B0 only move together, when a call charges a
-///         fee or finds no investor shares (pinned: test/FeeStructures.t.sol::test_benchmark_underperformanceIsMadeUpBeforeTheNextFee).
+///         benchmark carries forward: the watermark and B0 move together, only when a call charges a fee, finds no
+///         investor shares, or charges a fee that rounds to 0 shares
+///         (pinned: test/FeeStructures.t.sol::test_benchmark_underperformanceIsMadeUpBeforeTheNextFee).
 /// @dev    With `requireAbsoluteGain` false, a fund that loses less than a falling benchmark is charged even
 ///         though its investors lost money. Setting it true also requires the price to be above the watermark
 ///         itself.
 ///
-///         A feed that reverts, answers 0 or less, or has not updated within `maxStaleness` makes the call a
-///         no-op: no seeding, no charge, no state change. The fee is deferred, not lost, since the watermark
-///         and its benchmark level stay put. Reverting instead would block the fund's settlements until the
-///         feed recovered.
+///         The benchmark must be in the same unit as the fund's price: a WETH-priced fund measured against an
+///         ETH/USD feed is charged when ETH falls and its own price does not.
+///
+///         The feed is read when the call executes, while `sharesPrice` is whatever price the caller passes:
+///         the operator's price, struck when the settlement was prepared, or on `setPerformanceFeeRate` the last
+///         settled price. If the benchmark moves in between, the outperformance is mismeasured in either
+///         direction by about `feePct` times that move.
+///
+///         A feed with no code, a reverting or malformed reply, an answer of 0 or less, or no update within
+///         `maxStaleness` makes the call a no-op: no seeding, no charge, no state change. The fee is deferred,
+///         not lost, since the watermark and its benchmark level stay put
+///         (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting).
 ///
 ///         Only the ratio of two readings is used, so the feed's decimals do not matter.
 contract BenchmarkFee is PeriodicWatermarkFee {
@@ -48,7 +57,7 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         bool requireAbsoluteGain_,
         uint256 crystallizationPeriod_
     ) PeriodicWatermarkFee(crystallizationPeriod_) {
-        if (address(benchmark_) == address(0) || maxStaleness_ == 0) {
+        if (address(benchmark_).code.length == 0 || maxStaleness_ == 0) {
             revert InvalidBenchmark();
         }
         benchmark = benchmark_;
@@ -56,10 +65,10 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         requireAbsoluteGain = requireAbsoluteGain_;
     }
 
-    /// @dev Charges `feePct` of the gain above the benchmark-adjusted watermark.
+    /// @dev Charges `feePct` of the gain above the benchmark-adjusted watermark, and records the level it measured
+    ///      against whenever the watermark moves.
     function _crystallizeDue(uint256 sharesPrice, uint256 watermark, uint256 feePct, uint256 netSupply, uint256)
         internal
-        view
         override
         returns (uint256 fee, uint256 newWatermark)
     {
@@ -69,29 +78,27 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         uint256 threshold = Math.mulDiv(watermark, level, benchmarkAtWatermark[msg.sender], Math.Rounding.Ceil);
         if (requireAbsoluteGain && threshold < watermark) threshold = watermark;
         if (sharesPrice <= threshold) return (0, watermark);
-        return _sizeExact(sharesPrice, (sharesPrice - threshold) * feePct, netSupply);
+        (fee, newWatermark) = _sizeExact(sharesPrice, (sharesPrice - threshold) * feePct, netSupply);
+        // Mirrors the base's no-op test, so B0 moves exactly when the base stores the new watermark.
+        if (fee != 0 || newWatermark != watermark) benchmarkAtWatermark[msg.sender] = level;
     }
 
-    /// @dev Seeding needs a benchmark level to measure from.
-    function _canSeed() internal view override returns (bool) {
-        return _benchmarkLevel() != 0;
+    /// @dev Seeding needs a benchmark level to measure from; records it.
+    function _canSeed() internal override returns (bool) {
+        uint256 level = _benchmarkLevel();
+        if (level == 0) return false;
+        benchmarkAtWatermark[msg.sender] = level;
+        return true;
     }
 
-    /// @dev Records the benchmark level alongside every new watermark. Only reached after `_canSeed` or
-    ///      `_crystallizeDue` read a usable level in this same call, so the level stored is non-zero provided
-    ///      the feed answers alike twice in one transaction. A feed is trusted regardless: it sets the fee.
-    function _afterWatermarkSet() internal override {
-        super._afterWatermarkSet();
-        benchmarkAtWatermark[msg.sender] = _benchmarkLevel();
-    }
-
-    /// @dev The feed's latest answer, or 0 if it is unusable.
+    /// @dev The feed's latest answer, or 0 if it is unusable. A low-level call, because `try`/`catch` does not
+    ///      catch a reply that fails to decode, which is what an address with no code returns.
     function _benchmarkLevel() internal view returns (uint256) {
-        try benchmark.latestRoundData() returns (uint80, int256 answer, uint256, uint256 updatedAt, uint80) {
-            if (answer <= 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) return 0;
-            return uint256(answer);
-        } catch {
-            return 0;
-        }
+        (bool ok, bytes memory data) =
+            address(benchmark).staticcall(abi.encodeCall(AggregatorV3Interface.latestRoundData, ()));
+        if (!ok || data.length < 160) return 0;
+        (, int256 answer,, uint256 updatedAt,) = abi.decode(data, (uint80, int256, uint256, uint256, uint80));
+        if (answer <= 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) return 0;
+        return uint256(answer);
     }
 }

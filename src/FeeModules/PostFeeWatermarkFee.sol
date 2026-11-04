@@ -6,17 +6,17 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {WatermarkFee} from "./WatermarkFee.sol";
 
 /// @title PostFeeWatermarkFee
-/// @notice High-watermark performance fee that moves the watermark to the post-fee share price, so no part
-///         of a later gain is fee-free. Fee shares are sized exactly as in `WatermarkFee`.
+/// @notice High-watermark performance fee that moves the watermark to the post-fee share price, so a later gain is
+///         charged from there rather than from the pre-fee price. Fee shares are sized as in `WatermarkFee`.
 /// @dev    That sizing still dilutes the fee receiver's existing shares, so collection falls short of
 ///         `feePct` in proportion to the receiver's holding. Simulated with a 20% rate, gains of 0.03%-5%
 ///         per crystallization: effective 19.8-20.0% if the receiver redeems its fee shares each time,
 ///         15.8-18.2% if it holds them (2026-11-04).
 ///
 ///         Reads `totalSupply()` from the caller, so the caller must be an ERC-20 (KpkShares is).
-///         Assumes `sharesPrice` is NAV / totalSupply() at call time. KpkShares mints the management fee
-///         before calling, so a price struck before that mint leaves the watermark above the true post-fee
-///         price by about the management fee's share of supply, in investors' favour.
+///         Assumes `sharesPrice` is NAV / totalSupply() at call time. KpkShares mints the management fee just
+///         before calling, so an operator price struck before that mint overstates the price: the fee is then
+///         measured on the gain before the management fee, and the watermark lands above the true post-fee price.
 contract PostFeeWatermarkFee is WatermarkFee {
     /// @inheritdoc WatermarkFee
     function _crystallize(uint256 sharesPrice, uint256 watermark, uint256 feePct, uint256 netSupply)

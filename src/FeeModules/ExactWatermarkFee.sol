@@ -12,17 +12,18 @@ import {WatermarkFeeBase} from "./WatermarkFeeBase.sol";
 ///         Minting f = a * S / (P - a) shares leaves every share worth P - a: each investor share gives up
 ///         `a`, and the receiver's existing shares give up `a` too, so the receiver nets a * netSupply and
 ///         pays no fee on its own holding (pinned: test/WatermarkFeeVariants.t.sol::test_exact_investorsPayConfiguredRate_whileReceiverHoldsShares).
-///         The watermark moves to P - a, the post-fee price, so no part of a later gain is fee-free.
+///         The watermark moves to P - a, the post-fee price, so a later gain is charged from there. (When the fee
+///         rounds to 0 shares on a dust supply, the watermark moves to P and that gain goes uncharged.)
 ///
 ///         Reads `totalSupply()` from the caller, so the caller must be an ERC-20 (KpkShares is).
-///         Assumes `sharesPrice` is NAV / totalSupply() at call time. KpkShares mints the management fee
-///         before calling, so a price struck before that mint leaves the watermark above the true post-fee
-///         price by about the management fee's share of supply, in investors' favour.
+///         Assumes `sharesPrice` is NAV / totalSupply() at call time. KpkShares mints the management fee just
+///         before calling, so an operator price struck before that mint overstates the price: the fee is then
+///         measured on the gain before the management fee, which can charge investors whose value after the
+///         management fee is below the watermark, and the watermark lands above the true post-fee price.
 contract ExactWatermarkFee is WatermarkFeeBase {
     /// @inheritdoc WatermarkFeeBase
     function _crystallize(uint256 sharesPrice, uint256 watermark, uint256 feePct, uint256 netSupply)
         internal
-        view
         virtual
         override
         returns (uint256 fee, uint256 newWatermark)

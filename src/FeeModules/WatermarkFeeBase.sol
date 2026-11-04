@@ -22,6 +22,9 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
     ///         it records, and whether it can move down, depends on the concrete module.
     mapping(address => uint256) public highWatermark;
 
+    /// @notice Price each calling fund was last charged a fee at, as passed in (before the fee's dilution).
+    mapping(address => uint256) public lastChargedPrice;
+
     /// @notice Emitted when a fund's watermark is seeded or changes.
     /// @param fund         The calling fund (msg.sender).
     /// @param oldWatermark The previous watermark value.
@@ -41,23 +44,32 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
         external
         returns (uint256 fee)
     {
+        // 0 is the "not seeded" marker, and is what KpkShares passes for a fee asset it has never settled.
+        if (sharesPrice == 0) return 0;
         uint256 watermark = highWatermark[msg.sender];
         uint256 newWatermark;
         if (watermark == 0) {
             if (!_canSeed()) return 0;
             newWatermark = sharesPrice;
         } else {
+            // KpkShares records the operator's pre-fee price and `setPerformanceFeeRate` sends it back. A module that
+            // leaves its watermark at the post-fee price would read that price as a new gain and charge its own fee's
+            // dilution. An exact repeat of the last charged price is skipped, which at worst defers a fee: the
+            // watermark does not move (pinned: test/WatermarkFeeVariants.t.sol::test_rateChangeAfterACharge_mintsNothing).
+            if (sharesPrice == lastChargedPrice[msg.sender]) return 0;
             (fee, newWatermark) = _crystallize(sharesPrice, watermark, feePct, netSupply);
             if (fee == 0 && newWatermark == watermark) return 0;
         }
         highWatermark[msg.sender] = newWatermark;
-        _afterWatermarkSet();
+        if (fee != 0) lastChargedPrice[msg.sender] = sharesPrice;
+        _afterWatermarkSet(feePct);
         emit WatermarkUpdated(msg.sender, watermark, newWatermark);
         emit PerformanceFeeCalculated(msg.sender, fee, sharesPrice, timeElapsed);
     }
 
-    /// @dev Called on every call once the fund is seeded, whatever the price. Returning `(0, watermark)`
-    ///      leaves the fund untouched: no state change, no events.
+    /// @dev Called once the fund is seeded, for every non-zero price other than the last charged one. Returning
+    ///      `(0, watermark)` leaves the fund untouched: no state change, no events. Not `view`, so a module may
+    ///      record what it read alongside the watermark it returns.
     /// @param sharesPrice  The current price per share (8 decimals).
     /// @param watermark    The fund's current watermark, never 0.
     /// @param feePct       The performance fee rate in basis points.
@@ -66,15 +78,16 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
     /// @return newWatermark The watermark to store for the caller.
     function _crystallize(uint256 sharesPrice, uint256 watermark, uint256 feePct, uint256 netSupply)
         internal
-        view
         virtual
         returns (uint256 fee, uint256 newWatermark);
 
-    /// @dev Whether a first call may seed the fund now; a `false` leaves it unseeded until a later call.
-    function _canSeed() internal view virtual returns (bool) {
+    /// @dev Whether a first call may seed the fund now; a `false` leaves it unseeded until a later call. Not
+    ///      `view`, so a module may record what it read for the seed.
+    function _canSeed() internal virtual returns (bool) {
         return true;
     }
 
     /// @dev Runs after a new watermark is stored for `msg.sender`, on seeding and on every change.
-    function _afterWatermarkSet() internal virtual {}
+    /// @param feePct The fee rate passed in on the call that set the watermark.
+    function _afterWatermarkSet(uint256 feePct) internal virtual {}
 }

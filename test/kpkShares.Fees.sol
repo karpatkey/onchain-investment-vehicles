@@ -518,7 +518,7 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         kpkSharesWithFees.processRequests(new uint256[](0), new uint256[](0), address(usdc), SHARES_PRICE * 12 / 10);
 
         // With the module still set, this +20% settlement is charged (testChargePerformanceFeesWithMinimumRate).
-        assertEq(kpkSharesWithFees.balanceOf(feeRecipient), initialBalance, "gain above watermark not charged");
+        assertEq(kpkSharesWithFees.balanceOf(feeRecipient), initialBalance, "an unset module must charge no fee");
     }
 
     function testNoPerformanceFeesWhenAssetNotFeeModuleAsset() public {

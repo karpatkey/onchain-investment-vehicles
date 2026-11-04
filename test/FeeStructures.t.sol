@@ -35,6 +35,16 @@ contract MockFeed {
     }
 }
 
+/// Answers `latestRoundData` with one word instead of five, which a `try`/`catch` cannot absorb.
+contract ShortReplyFeed {
+    fallback() external {
+        assembly {
+            mstore(0, 1)
+            return(0, 32)
+        }
+    }
+}
+
 /// @notice The non-watermark fee structures, called directly as a fund whose 1,000 shares all belong to
 ///         investors. Every module here sizes fees exactly, so a per-share fee `a` at price P mints
 ///         a * S / (P - a) shares and leaves the watermark at P - a; the tests state `a` by hand.
@@ -62,6 +72,27 @@ contract FeeStructuresTest is Test {
     function _assertUntouched(WatermarkFeeBase module, uint256 fee, uint256 watermark) internal view {
         assertEq(fee, 0, "no fee");
         assertEq(module.highWatermark(fund), watermark, "watermark unchanged");
+    }
+
+    // ── Shared guards ──────────────────────────────────────────────────────────────────────────────
+
+    function test_zeroPrice_neitherSeedsNorResets() public {
+        NoWatermarkFee m = new NoWatermarkFee(0);
+        vm.recordLogs();
+        assertEq(_call(m, 0), 0);
+        assertEq(vm.getRecordedLogs().length, 0, "no seeding event at price 0");
+        assertEq(m.watermarkSetAt(fund), 0, "period clock not started");
+
+        _call(m, 1e8);
+        _assertUntouched(m, _call(m, 0), 1e8); // a seeded reference does not fall to the 'unseeded' 0
+    }
+
+    function test_repeatOfTheLastChargedPriceIsSkipped() public {
+        ExactWatermarkFee m = new ExactWatermarkFee();
+        _call(m, 1e8);
+        _assertCharged(m, 1.2e8, 0.04e8, _call(m, 1.2e8));
+        _assertUntouched(m, _call(m, 1.2e8), 1.16e8); // the pre-fee price again, as setPerformanceFeeRate sends it
+        _assertCharged(m, 1.21e8, 0.01e8, _call(m, 1.21e8)); // any other price is charged as usual
     }
 
     // ── Hard hurdle ─────────────────────────────────────────────────────────────────────────────────
@@ -117,6 +148,14 @@ contract FeeStructuresTest is Test {
         new CatchUpHurdleFee(HURDLE, 0, 0);
         vm.expectRevert(CatchUpHurdleFee.InvalidCatchUp.selector);
         new CatchUpHurdleFee(HURDLE, 10_001, 0);
+    }
+
+    function test_catchUp_partialShareTakesThatShareOfTheExcess() public {
+        CatchUpHurdleFee m = new CatchUpHurdleFee(HURDLE, 5000, 0);
+        _call(m, 1e8);
+        skip(365 days);
+        // 1.12: half of the 0.02 above the hurdle, which is below 20% of the 0.12 gain.
+        _assertCharged(m, 1.12e8, 0.01e8, _call(m, 1.12e8));
     }
 
     // ── Crystallization period ─────────────────────────────────────────────────────────────────────
@@ -205,10 +244,38 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.5e8, 0.1e8, _call(m, 1.5e8)); // the deferred gain is still charged
     }
 
-    function test_benchmark_rejectsMissingFeedOrZeroStaleness() public {
+    function test_benchmark_negativeOrFutureAnswerDefers() public {
+        MockFeed feed = new MockFeed();
+        BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 0);
+        feed.set(-1, block.timestamp);
+        assertEq(_call(m, 1e8), 0);
+        assertEq(m.highWatermark(fund), 0, "negative answer: not seeded");
+        feed.set(2000e8, block.timestamp + 1);
+        assertEq(_call(m, 1e8), 0);
+        assertEq(m.highWatermark(fund), 0, "future update: not seeded");
+
+        feed.set(2000e8, block.timestamp);
+        _call(m, 1e8);
+        feed.set(2000e8, block.timestamp + 1);
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+        feed.set(-1, block.timestamp);
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+    }
+
+    function test_benchmark_codelessOrMalformedFeedDefers() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        vm.etch(address(feed), hex""); // the feed loses its code after deployment
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+        vm.etch(address(feed), address(new ShortReplyFeed()).code);
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+    }
+
+    function test_benchmark_rejectsCodelessFeedOrZeroStaleness() public {
         AggregatorV3Interface feed = AggregatorV3Interface(address(new MockFeed()));
         vm.expectRevert(BenchmarkFee.InvalidBenchmark.selector);
         new BenchmarkFee(AggregatorV3Interface(address(0)), 1 days, false, 0);
+        vm.expectRevert(BenchmarkFee.InvalidBenchmark.selector);
+        new BenchmarkFee(AggregatorV3Interface(makeAddr("noCode")), 1 days, false, 0);
         vm.expectRevert(BenchmarkFee.InvalidBenchmark.selector);
         new BenchmarkFee(feed, 0, false, 0);
     }
