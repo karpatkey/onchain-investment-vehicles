@@ -6,11 +6,14 @@ import {stdJson} from "forge-std/StdJson.sol";
 
 /// @title  CcipWiringBatchesTest
 /// @notice Guards the committed Security Council wiring batches (script/safe-txs/ccip-wire-<chain>/,
-///         written by script/wire-chain.sh) against the registry. `setChainSelector` accepts any
-///         non-zero selector, so a wrong one is not refused on-chain: it maps the chain to a lane that
-///         does not exist, and the mistake surfaces only when a fan-out pays a fee for it. Every entry
-///         must call `setChainSelector` on the canonical orchestrator, from the recorded owner, with
-///         the selector script/ccip-networks.json holds for that chain id, on a chain the registry knows.
+///         written by script/wire-chain.sh) against the registry. `setChainSelector` refuses only a
+///         zero selector or one another chain id already holds, so a wrong value lands on-chain. A
+///         selector the local router does not support silently drops the chain from fan-outs (an
+///         explicit destination reverts `LaneNotSupported` before any fee). A supported one that
+///         belongs to another chain sends a paid stack there. Either way, the chain's own messages stay
+///         refused (`InvalidSourceChain`). Every entry must call `setChainSelector(uint256,uint64)` on
+///         the canonical orchestrator, from the recorded owner, with the selector
+///         script/ccip-networks.json holds for that chain id.
 contract CcipWiringBatchesTest is Test {
     using stdJson for string;
 
@@ -53,12 +56,34 @@ contract CcipWiringBatchesTest is Test {
                 "setChainSelector",
                 string.concat(path, ": not setChainSelector")
             );
+            // The Transaction Builder encodes from these inputs: any other type is another selector.
+            _assertInput(batch, path, t, 0, "chainId", "uint256");
+            _assertInput(batch, path, t, 1, "ccipChainSelector", "uint64");
+            assertFalse(
+                vm.keyExists(batch, string.concat(t, ".contractMethod.inputs[2]")), string.concat(path, ": extra input")
+            );
             uint256 chainId = vm.parseUint(batch.readString(string.concat(t, ".contractInputsValues.chainId")));
             uint256 selector =
                 vm.parseUint(batch.readString(string.concat(t, ".contractInputsValues.ccipChainSelector")));
-            assertEq(selector, _selectorOf(chainId), string.concat(path, ": selector differs from the registry"));
+            uint256 expected = _selectorOf(chainId);
+            assertTrue(expected != 0, string.concat(path, ": chain id not in the registry"));
+            assertEq(selector, expected, string.concat(path, ": selector differs from the registry"));
         }
         assertGt(txs, 0, string.concat(path, ": empty batch"));
+    }
+
+    function _assertInput(
+        string memory batch,
+        string memory path,
+        string memory t,
+        uint256 i,
+        string memory name,
+        string memory solType
+    ) internal pure {
+        string memory input = string.concat(t, ".contractMethod.inputs[", vm.toString(i), "]");
+        assertEq(batch.readString(string.concat(input, ".name")), name, string.concat(path, ": input name"));
+        assertEq(batch.readString(string.concat(input, ".type")), solType, string.concat(path, ": input type"));
+        assertEq(batch.readString(string.concat(input, ".internalType")), solType, string.concat(path, ": input type"));
     }
 
     function _isWiringDir(string memory path) internal pure returns (bool) {
