@@ -91,10 +91,12 @@ Per-chain notes:
   chain's `ccipReceive` rejects Robinhood as a source (`InvalidSourceChain`). Single-chain funds deploy
   locally via the orchestrator's `deployLocal` with `sharesChains = [{chainId: 4663, asset}]` and the same asset in `sharesParams.asset`; a topology that does not name 4663 lands only the operational stack there. Fan-out needs the Security Council to call
   `setChainSelector(4663, 6180753054346818345)` on Robinhood **and** on each counterpart chain (the
-  selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Until
-  then `script/ccip-networks.json` marks it `excluded`, so `deploy-all.sh` and the repo helper
-  `CcipDeployEverywhere.setChainSelectors` never route to it (the Security Council wires it by calling
-  the orchestrator's on-chain `setChainSelector` directly).
+  selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Those
+  calls are prepared as Safe batches in `script/safe-txs/ccip-wire-robinhood/`: Robinhood plus the
+  seven chains with a lane to or from it (Ethereum, Base, Arbitrum, BNB, Polygon, Avalanche, HyperEVM);
+  see "Wiring a chain deployed after the baked registry" in `docs/CCIP_CROSS_CHAIN_DEPLOY.md`.
+  `script/ccip-networks.json` marks it `excluded` (outside the baked registry), so `deploy-all.sh` and
+  the repo helper `CcipDeployEverywhere.setChainSelectors` never route to it.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a

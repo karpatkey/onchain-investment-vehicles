@@ -333,6 +333,42 @@ The set defines the "selected chains" the no-array `deployEverywhere(config, gas
 An unmapped chain id reverts `UnknownChain(chainId)`, so a fund can never be dispatched to a chain the
 owner hasn't approved.
 
+### Wiring a chain deployed after the baked registry (Security Council)
+
+A chain deployed later at the canonical addresses (`robinhood`, and any chain added since) is in no
+orchestrator's constructor-seeded registry, its own included. It needs two kinds of entry, each an
+owner call on a different chain:
+
+- On the chain itself, `setChainSelector(<id>, <selector>)`: `deployEverywhere` / `dispatchTo` are
+  `onlyWiredChain`, so without its own id it cannot originate. It also needs every counterpart its
+  seeded registry lacks; the 19 baked chains are already there.
+- On each counterpart, `setChainSelector(<id>, <selector>)`: `ccipReceive` accepts a source only by
+  known selector, and `supportedChainIds()` lists only registry chains, so without it the counterpart
+  neither accepts stacks from the chain nor fans out to it.
+
+`script/wire-chain.sh` writes those calls as Safe Transaction Builder batches, one file per chain:
+
+```bash
+source .env && script/wire-chain.sh <chain>          # writes script/safe-txs/ccip-wire-<chain>/<chain>.json, <counterpart>.json …
+source .env && script/wire-chain.sh <chain> --check  # read back; exits 1 while any entry is missing
+```
+
+Counterparts are the deployed orchestrators (`script/deployed-infra.json`) with a CCIP lane to or
+from the chain, asked live of both configured routers; a pair with no lane in either direction gets
+no entry. The script refuses a chain whose orchestrator is missing or whose router differs from the
+registry, so nothing points at a chain that cannot receive yet. Entries already in place are
+skipped, so a re-run after partial execution writes only what is left.
+`test/CcipWiringBatches.t.sol` pins every committed entry to the registry's selector for its chain id,
+because `setChainSelector` takes any non-zero selector and a wrong one fails only when a fan-out pays
+for it.
+
+Execute `<chain>.json` first, then the counterparts in any order. Once every batch has landed and
+`--check` exits 0, record it in `script/deployed-infra.json` and `docs/DEPLOYED_ADDRESSES.md`. The
+registry row keeps `excluded: true`: the flag means "outside the constructor-baked registry", which
+`test/CcipNetworksSync.t.sol` pins, so `deploy-all.sh`'s fan-out list and
+`CcipDeployEverywhere.setChainSelectors` keep skipping the chain. Fan out to it by passing its id in
+`destChainIds`.
+
 ## Usage — from a block explorer (no script needed)
 
 Everything is a direct contract call on the orchestrator of whichever wired chain you originate
