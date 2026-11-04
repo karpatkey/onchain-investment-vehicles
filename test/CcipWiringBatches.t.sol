@@ -35,16 +35,28 @@ contract CcipWiringBatchesTest is Test {
             if (!dirs[d].isDir || !_isWiringDir(dirs[d].path)) continue;
             Vm.DirEntry[] memory files = vm.readDir(dirs[d].path);
             for (uint256 f = 0; f < files.length; f++) {
-                checked += _checkBatch(files[f].path);
+                checked += this.checkBatch(files[f].path, vm.readFile(files[f].path));
             }
         }
         assertGt(checked, 0, "no wiring batch found under script/safe-txs/ccip-wire-*");
     }
 
-    function _checkBatch(string memory path) internal view returns (uint256 txs) {
-        string memory batch = vm.readFile(path);
+    /// @dev The Transaction Builder executes a batch on its top-level `chainId`, so a batch named for
+    ///      Base but carrying Ethereum's id would land on Ethereum and leave Base unwired.
+    function test_rejectsABatchForAnotherRegisteredChain() public {
+        string memory path = "script/safe-txs/ccip-wire-robinhood/base.json";
+        string memory onEthereum = vm.replace(vm.readFile(path), '"chainId": "8453"', '"chainId": "1"');
+        vm.expectRevert(bytes(string.concat(path, ": chainId is not the chain its file names")));
+        this.checkBatch(path, onEthereum);
+    }
+
+    /// @dev External so a negative control can expect its revert; the assertions revert on failure.
+    function checkBatch(string memory path, string memory batch) external view returns (uint256 txs) {
         uint256 batchChain = vm.parseUint(batch.readString(".chainId"));
-        assertTrue(_selectorOf(batchChain) != 0, string.concat(path, ": chain not in the registry"));
+        assertTrue(
+            batchChain == _chainIdNamed(_fileStem(path)),
+            string.concat(path, ": chainId is not the chain its file names")
+        );
         assertEq(batch.readAddress(".meta.createdFromSafeAddress"), owner, string.concat(path, ": not the owner"));
 
         for (; vm.keyExists(batch, string.concat(".transactions[", vm.toString(txs), "]")); txs++) {
@@ -88,6 +100,26 @@ contract CcipWiringBatchesTest is Test {
 
     function _isWiringDir(string memory path) internal pure returns (bool) {
         return vm.contains(path, "/ccip-wire-");
+    }
+
+    /// @dev "script/safe-txs/ccip-wire-robinhood/base.json" -> "base": wire-chain.sh names each file
+    ///      after the registry chain that executes it.
+    function _fileStem(string memory path) internal pure returns (string memory) {
+        string[] memory parts = vm.split(path, "/");
+        return vm.replace(parts[parts.length - 1], ".json", "");
+    }
+
+    /// @dev The registry's chain id for `name`, or 0 when the registry has no such chain.
+    function _chainIdNamed(string memory name) internal view returns (uint256) {
+        for (uint256 i = 0; i < 64; i++) {
+            string memory base = string.concat(".networks[", vm.toString(i), "]");
+            if (!vm.keyExists(registry, string.concat(base, ".name"))) break;
+            if (keccak256(bytes(registry.readString(string.concat(base, ".name")))) != keccak256(bytes(name))) {
+                continue;
+            }
+            return registry.readUint(string.concat(base, ".chainId"));
+        }
+        return 0;
     }
 
     /// @dev The registry's selector for `chainId`, or 0 when the registry has no such chain.
