@@ -45,6 +45,34 @@ contract ShortReplyFeed {
     }
 }
 
+/// Answers with five well-formed words except round ids too wide for `uint80`, which `abi.decode` would reject.
+contract WideRoundIdFeed {
+    fallback() external {
+        bytes memory reply =
+            abi.encode(uint256(1) << 100, int256(2000e8), block.timestamp, block.timestamp, uint256(1) << 100);
+        assembly {
+            return(add(reply, 32), mload(reply))
+        }
+    }
+}
+
+/// Never returns: spends whatever gas it is given.
+contract GasBurnerFeed {
+    fallback() external {
+        while (true) {}
+    }
+}
+
+/// Answers with only the first four of the five words, all well-formed.
+contract FourWordFeed {
+    fallback() external {
+        bytes memory reply = abi.encode(uint256(1), int256(2000e8), block.timestamp, block.timestamp);
+        assembly {
+            return(add(reply, 32), mload(reply))
+        }
+    }
+}
+
 /// @notice The non-watermark fee structures, called directly as a fund whose 1,000 shares all belong to
 ///         investors. Every module here sizes fees exactly, so a per-share fee `a` at price P mints
 ///         a * S / (P - a) shares and leaves the watermark at P - a; the tests state `a` by hand.
@@ -61,6 +89,11 @@ contract FeeStructuresTest is Test {
     function _call(WatermarkFeeBase module, uint256 price) internal returns (uint256) {
         vm.prank(fund);
         return module.calculatePerformanceFee(price, 0, RATE, S);
+    }
+
+    function _callAt(WatermarkFeeBase module, uint256 price, uint256 rate) internal returns (uint256) {
+        vm.prank(fund);
+        return module.calculatePerformanceFee(price, 0, rate, S);
     }
 
     /// Asserts a charge of `a` per share at `price`.
@@ -171,7 +204,47 @@ contract FeeStructuresTest is Test {
         _assertUntouched(m, _call(m, 1.3e8), 1.16e8); // next period has only just started
     }
 
+    function test_periodic_cutThenRaiseChargesTheLowestRate() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
+        _callAt(m, 1e8, 500); // seed under 5%
+        skip(10 days);
+        _callAt(m, 1e8, 500);
+        skip(10 days);
+        _callAt(m, 1.05e8, 200); // cut to 2%
+        skip(100 days);
+        _callAt(m, 1.1e8, 2000); // raised to 20%
+        skip(250 days);
+        _assertCharged(m, 1.2e8, 0.004e8, _callAt(m, 1.2e8, 2000)); // 2% of the 0.20 gain
+    }
+
+    function test_periodic_raiseWhenTheRateChangeCallChargesAppliesNextPeriod() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
+        _callAt(m, 1e8, 500);
+        skip(366 days);
+        // KpkShares' rate-change call: outgoing 5%, period due, so it charges and moves the watermark.
+        _assertCharged(m, 1.1e8, 0.005e8, _callAt(m, 1.1e8, 500));
+        skip(1 hours);
+        _callAt(m, 1.095e8, 2000); // the first settlement under the new 20%
+        skip(366 days);
+        _assertCharged(m, 1.3e8, 0.041e8, _callAt(m, 1.3e8, 2000)); // 20% of 1.30 - 1.095
+    }
+
+    function test_periodic_zeroPeriodUsesTheRatePassedIn() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(0);
+        _callAt(m, 1e8, 500);
+        _callAt(m, 0.9e8, 500); // below the watermark: nothing to charge
+        _assertCharged(m, 1.2e8, 0.04e8, _callAt(m, 1.2e8, 2000)); // 20%, as ExactWatermarkFee would
+    }
+
     // ── No watermark ───────────────────────────────────────────────────────────────────────────────
+
+    function test_noWatermark_repeatAfterAResetIsCharged() public {
+        NoWatermarkFee m = new NoWatermarkFee(0);
+        _call(m, 1e8);
+        _assertCharged(m, 1.2e8, 0.04e8, _call(m, 1.2e8));
+        _call(m, 1e8); // a fall resets the reference to 1.00
+        _assertCharged(m, 1.2e8, 0.04e8, _call(m, 1.2e8)); // the same price is now a real 0.20 gain
+    }
 
     function test_noWatermark_chargesTheRecoveryOfALoss() public {
         NoWatermarkFee m = new NoWatermarkFee(0);
@@ -278,5 +351,36 @@ contract FeeStructuresTest is Test {
         new BenchmarkFee(AggregatorV3Interface(makeAddr("noCode")), 1 days, false, 0);
         vm.expectRevert(BenchmarkFee.InvalidBenchmark.selector);
         new BenchmarkFee(feed, 0, false, 0);
+    }
+
+    function test_benchmark_fourWordReplyDefers() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        vm.etch(address(feed), address(new FourWordFeed()).code);
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+    }
+
+    function test_benchmark_wideRoundIdIsReadNotReverted() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        vm.etch(address(feed), address(new WideRoundIdFeed()).code); // level unchanged at 2000
+        _assertCharged(m, 1.5e8, 0.1e8, _call(m, 1.5e8));
+    }
+
+    function test_benchmark_gasBurningFeedDefers() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        vm.etch(address(feed), address(new GasBurnerFeed()).code);
+        uint256 before = gasleft();
+        vm.prank(fund);
+        uint256 fee = m.calculatePerformanceFee{gas: 1_000_000}(1.5e8, 0, RATE, S);
+        assertLt(before - gasleft(), 200_000, "the feed spends at most its gas limit");
+        _assertUntouched(m, fee, 1e8);
+    }
+
+    function test_benchmark_moveWithoutAChargeRecordsTheLevel() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        feed.set(2200e8, block.timestamp);
+        vm.prank(fund);
+        assertEq(m.calculatePerformanceFee(1.2e8, 0, RATE, 0), 0); // no investor shares: moves, charges nothing
+        assertEq(m.highWatermark(fund), 1.2e8);
+        assertEq(m.benchmarkAtWatermark(fund), 2200e8, "B0 moves with the watermark");
     }
 }

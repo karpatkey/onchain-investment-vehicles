@@ -26,13 +26,19 @@ import {PeriodicWatermarkFee} from "./PeriodicWatermarkFee.sol";
 ///         settled price. If the benchmark moves in between, the outperformance is mismeasured in either
 ///         direction by about `feePct` times that move.
 ///
-///         A feed with no code, a reverting or malformed reply, an answer of 0 or less, or no update within
-///         `maxStaleness` makes the call a no-op: no seeding, no charge, no state change. The fee is deferred,
-///         not lost, since the watermark and its benchmark level stay put
-///         (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting).
+///         A feed with no code, a reverting, short or malformed reply, a reply that needs more than
+///         `FEED_GAS_LIMIT` gas, an answer of 0 or less, or no update within `maxStaleness` makes the call a no-op:
+///         no seeding, no charge, no state change. The fee is deferred, not lost, since the watermark and its
+///         benchmark level stay put (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting,
+///         test/FeeStructures.t.sol::test_benchmark_codelessOrMalformedFeedDefers,
+///         test/FeeStructures.t.sol::test_benchmark_gasBurningFeedDefers).
 ///
 ///         Only the ratio of two readings is used, so the feed's decimals do not matter.
 contract BenchmarkFee is PeriodicWatermarkFee {
+    /// @notice Gas the feed may use per read. A read that needs more counts as unusable, so a misbehaving feed
+    ///         cannot consume the settlement's gas.
+    uint256 public constant FEED_GAS_LIMIT = 100_000;
+
     /// @notice The benchmark feed.
     AggregatorV3Interface public immutable benchmark;
 
@@ -91,14 +97,27 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         return true;
     }
 
-    /// @dev The feed's latest answer, or 0 if it is unusable. A low-level call, because `try`/`catch` does not
-    ///      catch a reply that fails to decode, which is what an address with no code returns.
+    /// @dev The feed's latest answer, or 0 if it is unusable. Raw `staticcall` with a fixed gas limit and a
+    ///      five-word output buffer: `try`/`catch` cannot catch a reply that fails to decode (an address with no
+    ///      code replies with nothing), and `abi.decode` range-checks the two `uint80` round ids, which are unused.
     function _benchmarkLevel() internal view returns (uint256) {
-        (bool ok, bytes memory data) =
-            address(benchmark).staticcall(abi.encodeCall(AggregatorV3Interface.latestRoundData, ()));
-        if (!ok || data.length < 160) return 0;
-        (, int256 answer,, uint256 updatedAt,) = abi.decode(data, (uint80, int256, uint256, uint256, uint80));
-        if (answer <= 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) return 0;
+        address feed = address(benchmark);
+        bytes4 selector = AggregatorV3Interface.latestRoundData.selector;
+        uint256 gasLimit = FEED_GAS_LIMIT;
+        bool ok;
+        int256 answer;
+        uint256 updatedAt;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            ok := staticcall(gasLimit, feed, ptr, 4, ptr, 160)
+            // A separate statement: Yul evaluates arguments right to left, so `returndatasize()` inside the same
+            // expression would be read before the call.
+            if lt(returndatasize(), 160) { ok := 0 }
+            answer := mload(add(ptr, 32))
+            updatedAt := mload(add(ptr, 96))
+        }
+        if (!ok || answer <= 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) return 0;
         return uint256(answer);
     }
 }

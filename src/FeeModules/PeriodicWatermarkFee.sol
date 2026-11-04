@@ -18,11 +18,15 @@ import {ExactWatermarkFee} from "./ExactWatermarkFee.sol";
 ///         The period is rolling: it restarts whenever the watermark moves (a charge, the first seed, a fee that
 ///         rounds to 0, or `NoWatermarkFee`'s reset on a fall), so charges do not fall on fixed calendar dates.
 ///
-///         A rate change takes effect at the next watermark move if it raises the fee, and at once if it lowers
-///         it: each charge uses the lower of the rate passed in and the rate in force when the watermark last
-///         moved. KpkShares charges at the old rate just before a change, but mid-period that call is a no-op
-///         here, so without this a raise would reach back over the whole period's gain
-///         (pinned: test/WatermarkFeeVariants.t.sol::test_periodic_rateRaisedMidPeriod_chargesTheOldRate).
+///         With a period, a charge uses the lowest rate passed in since the period began, counting from the first
+///         call after the watermark last moved. So a raise reaches no gain made under a lower rate in the same
+///         period, and a cut applies to the period it lands in. The call that moves the watermark is left out
+///         because KpkShares' rate-change call passes the outgoing rate: when it charges a due period, the next
+///         period still runs at the new rate. KpkShares charges at the old rate just before a change, but
+///         mid-period that call is a no-op here (pinned: test/WatermarkFeeVariants.t.sol::test_periodic_rateRaisedMidPeriod_chargesTheOldRate,
+///         test/FeeStructures.t.sol::test_periodic_cutThenRaiseChargesTheLowestRate,
+///         test/FeeStructures.t.sol::test_periodic_raiseWhenTheRateChangeCallChargesAppliesNextPeriod).
+///         With a period of 0 every charge uses the rate passed in, as in `ExactWatermarkFee`.
 contract PeriodicWatermarkFee is ExactWatermarkFee {
     /// @notice Minimum time between two charges for the same fund, in seconds.
     uint256 public immutable crystallizationPeriod;
@@ -30,8 +34,9 @@ contract PeriodicWatermarkFee is ExactWatermarkFee {
     /// @notice When each fund's watermark was last seeded or moved.
     mapping(address => uint256) public watermarkSetAt;
 
-    /// @notice Fee rate passed in when each fund's watermark was last seeded or moved, in basis points.
-    mapping(address => uint256) public rateAtWatermark;
+    /// @notice Lowest fee rate passed in since each fund's period began, in basis points; 0 until the first call
+    ///         after the watermark moves.
+    mapping(address => uint256) public periodRate;
 
     /// @param crystallizationPeriod_ Minimum time between two charges, in seconds; 0 for every call.
     constructor(uint256 crystallizationPeriod_) {
@@ -45,8 +50,13 @@ contract PeriodicWatermarkFee is ExactWatermarkFee {
         returns (uint256 fee, uint256 newWatermark)
     {
         uint256 elapsed = block.timestamp - watermarkSetAt[msg.sender];
-        if (elapsed < crystallizationPeriod) return (0, watermark);
-        uint256 rate = Math.min(feePct, rateAtWatermark[msg.sender]);
+        uint256 rate = feePct;
+        if (crystallizationPeriod != 0) {
+            uint256 lowest = periodRate[msg.sender];
+            if (lowest != 0 && lowest < rate) rate = lowest;
+            if (rate != lowest) periodRate[msg.sender] = rate;
+            if (elapsed < crystallizationPeriod) return (0, watermark);
+        }
         return _crystallizeDue(sharesPrice, watermark, rate, netSupply, elapsed);
     }
 
@@ -60,9 +70,9 @@ contract PeriodicWatermarkFee is ExactWatermarkFee {
         return ExactWatermarkFee._crystallize(sharesPrice, watermark, feePct, netSupply);
     }
 
-    /// @dev Starts the period, and the hurdle clock, from every new watermark, and records the rate in force.
-    function _afterWatermarkSet(uint256 feePct) internal virtual override {
+    /// @dev Starts the period, and the hurdle clock, from every new watermark, and restarts the rate record.
+    function _afterWatermarkSet(uint256) internal virtual override {
         watermarkSetAt[msg.sender] = block.timestamp;
-        rateAtWatermark[msg.sender] = feePct;
+        delete periodRate[msg.sender];
     }
 }

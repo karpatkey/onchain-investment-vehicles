@@ -54,22 +54,25 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
         } else {
             // KpkShares records the operator's pre-fee price and `setPerformanceFeeRate` sends it back. A module that
             // leaves its watermark at the post-fee price would read that price as a new gain and charge its own fee's
-            // dilution. An exact repeat of the last charged price is skipped, which at worst defers a fee: the
-            // watermark does not move (pinned: test/WatermarkFeeVariants.t.sol::test_rateChangeAfterACharge_mintsNothing).
+            // dilution, so an exact repeat of the last charged price is skipped while that charge's watermark stands
+            // (pinned: test/WatermarkFeeVariants.t.sol::test_rateChangeAfterACharge_mintsNothing). A genuine settlement
+            // at that exact price is skipped too: deferred where the watermark only rises, but forgiven if
+            // `NoWatermarkFee` resets or `BenchmarkFee`'s benchmark recovers before the next charge.
             if (sharesPrice == lastChargedPrice[msg.sender]) return 0;
             (fee, newWatermark) = _crystallize(sharesPrice, watermark, feePct, netSupply);
             if (fee == 0 && newWatermark == watermark) return 0;
         }
         highWatermark[msg.sender] = newWatermark;
-        if (fee != 0) lastChargedPrice[msg.sender] = sharesPrice;
+        // Any later move without a charge retires the evidence (pinned: test/FeeStructures.t.sol::test_noWatermark_repeatAfterAResetIsCharged).
+        lastChargedPrice[msg.sender] = fee != 0 ? sharesPrice : 0;
         _afterWatermarkSet(feePct);
         emit WatermarkUpdated(msg.sender, watermark, newWatermark);
         emit PerformanceFeeCalculated(msg.sender, fee, sharesPrice, timeElapsed);
     }
 
     /// @dev Called once the fund is seeded, for every non-zero price other than the last charged one. Returning
-    ///      `(0, watermark)` leaves the fund untouched: no state change, no events. Not `view`, so a module may
-    ///      record what it read alongside the watermark it returns.
+    ///      `(0, watermark)` makes the base store nothing and emit nothing. Not `view`, so a module may keep its
+    ///      own records of what it read.
     /// @param sharesPrice  The current price per share (8 decimals).
     /// @param watermark    The fund's current watermark, never 0.
     /// @param feePct       The performance fee rate in basis points.
