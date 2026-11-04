@@ -48,7 +48,9 @@ SEL=$(echo "$entry" | jq -r .ccipChainSelector)
 
 # The chain's own orchestrator must exist and be configured before anything can point at it: a
 # counterpart that lists a chain with no receiver at the canonical address pays CCIP to deliver nothing.
-[ "$(cast code "$ORCH" --rpc-url "$CHAIN")" != "0x" ] || { echo "no CcipOivDeployer on $CHAIN: deploy it first (script/chains/Deploy_<Chain>.s.sol)"; exit 1; }
+# Every read below is its own assignment, so a failed RPC aborts (set -e) instead of reading as "absent".
+code=$(cast code "$ORCH" --rpc-url "$CHAIN")
+[ "$code" != "0x" ] || { echo "no CcipOivDeployer on $CHAIN: deploy it first (script/chains/Deploy_<Chain>.s.sol)"; exit 1; }
 ROUTER=$(call "$ORCH" 'router()(address)' "$CHAIN")
 [ "$(echo "$ROUTER" | lower)" = "$(echo "$entry" | jq -r .ccipRouter | lower)" ] \
   || { echo "$CHAIN orchestrator router $ROUTER differs from the registry's: configure() it first"; exit 1; }
@@ -79,8 +81,10 @@ pending=0
 # batch <name> <chainId> <description> <tx-json>... : one Builder file executed by that chain's owner.
 batch() {
   local name=$1 cid=$2 desc=$3; shift 3
-  local owner; owner=$(call "$ORCH" 'owner()(address)' "$name")
-  [ "$(cast code "$owner" --rpc-url "$name")" != "0x" ] \
+  local owner owner_code
+  owner=$(call "$ORCH" 'owner()(address)' "$name")
+  owner_code=$(cast code "$owner" --rpc-url "$name")
+  [ "$owner_code" != "0x" ] \
     || { echo "$name: orchestrator owner $owner is not a contract, so this is no Safe batch; refusing"; exit 1; }
   pending=$((pending + $#))
   echo "  $name: $# transaction(s) for owner $owner"
@@ -99,7 +103,8 @@ batch() {
 
 echo "=== CCIP wiring of $CHAIN (chainId $ID, selector $SEL); orchestrator $ORCH ==="
 self_txs=()
-[ "$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$ID")" = "$SEL" ] || self_txs+=("$(tx "$ID" "$SEL")")
+own=$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$ID")
+[ "$own" = "$SEL" ] || self_txs+=("$(tx "$ID" "$SEL")")
 
 for name in $(jq -r '.chains[] | select(.deployed == true) | .name' "$INFRA"); do
   [ "$name" != "$CHAIN" ] || continue
@@ -118,7 +123,8 @@ for name in $(jq -r '.chains[] | select(.deployed == true) | .name' "$INFRA"); d
     batch "$name" "$pid" "setChainSelector($ID, $SEL) on the CcipOivDeployer $ORCH, so this orchestrator accepts stacks from $CHAIN and lists it as a destination. Lanes read live by script/wire-chain.sh: $CHAIN->$name $out, $name->$CHAIN $in. If $CHAIN.json sits beside this file, execute it first." "$(tx "$ID" "$SEL")"
   fi
   # The chain's own registry must know the counterpart too; constructor-seeded peers already do.
-  [ "$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$pid")" = "$psel" ] || self_txs+=("$(tx "$pid" "$psel")")
+  known=$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$pid")
+  [ "$known" = "$psel" ] || self_txs+=("$(tx "$pid" "$psel")")
 done
 
 if [ ${#self_txs[@]} -gt 0 ]; then

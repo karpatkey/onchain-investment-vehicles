@@ -358,9 +358,12 @@ from the chain, asked live of both configured routers; a pair with no lane in ei
 no entry. The script refuses a chain whose orchestrator is missing or whose router differs from the
 registry, so nothing points at a chain that cannot receive yet. Entries already in place are
 skipped, so a re-run after partial execution writes only what is left.
-`test/CcipWiringBatches.t.sol` pins every committed entry to the registry's selector for its chain id,
-because `setChainSelector` takes any non-zero selector and a wrong one fails only when a fan-out pays
-for it.
+`test/CcipWiringBatches.t.sol` pins every committed entry to `setChainSelector(uint256,uint64)` and
+to the registry's selector for its chain id. On-chain, `setChainSelector` refuses only zero or a
+selector another chain id already holds. A wrong selector the local router does not support drops
+the chain from fan-outs without a word (an explicit `destChainIds` entry reverts `LaneNotSupported`
+before any fee). A supported one that belongs to another chain sends a paid stack there. Either way
+the chain's own messages stay refused (`InvalidSourceChain`).
 
 Execute `<chain>.json` first, then the counterparts in any order. Once every batch has landed and
 `--check` exits 0, record it in `script/deployed-infra.json` and `docs/DEPLOYED_ADDRESSES.md`. The
