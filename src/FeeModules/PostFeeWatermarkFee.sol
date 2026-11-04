@@ -26,7 +26,7 @@ contract PostFeeWatermarkFee is WatermarkFee {
         returns (uint256 fee, uint256 newWatermark)
     {
         (fee, newWatermark) = super._crystallize(sharesPrice, watermark, feePct, netSupply);
-        // Nothing minted, so the price is unchanged and `newWatermark` is already `sharesPrice`.
+        // Nothing minted, so the price is unchanged: keep what `WatermarkFee` returned.
         if (fee == 0) return (fee, newWatermark);
         uint256 supply = IERC20(msg.sender).totalSupply();
         // Rounded up, in investors' favour: a unit high defers a fee, a unit low charges a phantom gain.

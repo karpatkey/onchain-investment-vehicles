@@ -6,13 +6,13 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {WatermarkFeeBase} from "./WatermarkFeeBase.sol";
 
 /// @title ExactWatermarkFee
-/// @notice High-watermark performance fee that charges investors exactly `feePct` of their gain above the
-///         watermark.
+/// @notice High-watermark performance fee that charges investors `feePct` of their gain above the watermark,
+///         to within one price unit of rounding (pinned: test/WatermarkFeeVariants.t.sol::testFuzz_exact_eachShareGivesUpFeePctOfGain).
 /// @dev    With price P, watermark W and total supply S, the per-share fee is a = feePct * (P - W) / 10_000.
 ///         Minting f = a * S / (P - a) shares leaves every share worth P - a: each investor share gives up
-///         exactly `a`, and the receiver's existing shares give up `a` too, so the receiver nets
-///         a * netSupply and pays nothing on its own holding. The watermark moves to P - a, the post-fee
-///         price, so no part of a later gain is fee-free.
+///         `a`, and the receiver's existing shares give up `a` too, so the receiver nets a * netSupply and
+///         pays no fee on its own holding (pinned: test/WatermarkFeeVariants.t.sol::test_exact_investorsPayConfiguredRate_whileReceiverHoldsShares).
+///         The watermark moves to P - a, the post-fee price, so no part of a later gain is fee-free.
 ///
 ///         Reads `totalSupply()` from the caller, so the caller must be an ERC-20 (KpkShares is).
 ///         Assumes `sharesPrice` is NAV / totalSupply() at call time. KpkShares mints the management fee
