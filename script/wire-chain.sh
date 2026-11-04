@@ -48,7 +48,7 @@ SEL=$(echo "$entry" | jq -r .ccipChainSelector)
 
 # The chain's own orchestrator must exist and be configured before anything can point at it: a
 # counterpart that lists a chain with no receiver at the canonical address pays CCIP to deliver nothing.
-[ "$(cast code "$ORCH" --rpc-url "$CHAIN")" != "0x" ] || { echo "no CcipOivDeployer on $CHAIN: deploy it first (script/deploy-chain.sh)"; exit 1; }
+[ "$(cast code "$ORCH" --rpc-url "$CHAIN")" != "0x" ] || { echo "no CcipOivDeployer on $CHAIN: deploy it first (script/chains/Deploy_<Chain>.s.sol)"; exit 1; }
 ROUTER=$(call "$ORCH" 'router()(address)' "$CHAIN")
 [ "$(echo "$ROUTER" | lower)" = "$(echo "$entry" | jq -r .ccipRouter | lower)" ] \
   || { echo "$CHAIN orchestrator router $ROUTER differs from the registry's: configure() it first"; exit 1; }
