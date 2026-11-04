@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Watermark fee modules: where the watermark lands</title>
+<title>Performance fee modules: where the watermark lands</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,600;1,400&family=Spectral:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
@@ -121,7 +121,8 @@
 
   /* Calculator */
   .calc { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 18px; margin: 1.2rem 0; }
-  .calc label { display: block; font-size: 0.9rem; color: var(--muted); }
+  /* Labels wrap to different heights; pinning inputs to the bottom keeps each row of inputs level. */
+  .calc label { display: flex; flex-direction: column; justify-content: space-between; font-size: 0.9rem; color: var(--muted); }
   .calc input {
     width: 100%; margin-top: 4px;
     font: 400 1rem "Public Sans", system-ui, sans-serif;
@@ -146,6 +147,15 @@
   .slider output { color: var(--ink); font-weight: 600; }
   .slider input { width: 100%; margin-top: 6px; accent-color: var(--ink); }
   table.compact { min-width: 520px; max-width: 760px; }
+  table.glance { min-width: 760px; max-width: 1000px; }
+  table.glance th, table.glance td { text-align: left; vertical-align: top; }
+  table.glance td:first-child { white-space: nowrap; }
+  table.glance td:first-child a { color: var(--ink); font-weight: 600; text-decoration-color: var(--sound); }
+  #glance .note { margin-top: 0.8rem; }
+  #calc-out th[scope="row"] { white-space: nowrap; }
+  #calc-out { min-width: 940px; }
+  .calc .check { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.5rem; align-self: end; padding-bottom: 0.6rem; color: var(--ink); }
+  .calc .check input { width: auto; margin: 0; accent-color: var(--ink); }
 
   .choice { display: grid; grid-template-columns: 220px 1fr; gap: 0.4rem 1.6rem; max-width: 900px; }
   .choice dt { font-weight: 600; padding-top: 1rem; border-top: 1px solid var(--rule); }
@@ -244,7 +254,33 @@
       matters later, in <a href="#limits">what no module fixes</a>.</figcaption>
   </figure>
 
-  <section>
+  <section id="glance">
+    <div class="prose">
+      <h2>The nine modules</h2>
+      <p>Three size a plain high-watermark fee in different ways. The other six change what counts as a gain,
+        or how often it is charged. None is deployed yet.</p>
+    </div>
+    <div class="scroll">
+      <table class="glance">
+        <thead><tr><th>Module</th><th>Fee is due when the price is above</th><th>Fee</th></tr></thead>
+        <tbody>
+          <tr><td><span class="swatch sw-gross"></span><a href="#sizings">WatermarkFee</a></td><td>the watermark, left at the pre-fee price after a charge</td><td>gain ÷ pre-fee price, no dilution adjustment: about 14–17% of a configured 20%</td></tr>
+          <tr><td><span class="swatch sw-post"></span><a href="#sizings">PostFeeWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>sized as <code>WatermarkFee</code>: about 16–20% of a configured 20%</td></tr>
+          <tr><td><span class="swatch sw-exact"></span><a href="#sizings">ExactWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>exactly the configured rate of the gain</td></tr>
+          <tr><td><span class="swatch sw-periodic"></span><a href="#periodic">PeriodicWatermarkFee</a></td><td>the watermark, at most once per crystallization period</td><td>exactly the configured rate of the gain</td></tr>
+          <tr><td><span class="swatch sw-hard"></span><a href="#hurdles">HardHurdleFee</a></td><td>the watermark grown by a yearly hurdle rate</td><td>the configured rate of the gain above the hurdle only</td></tr>
+          <tr><td><span class="swatch sw-soft"></span><a href="#hurdles">SoftHurdleFee</a></td><td>the hurdle</td><td>the configured rate of the whole gain</td></tr>
+          <tr><td><span class="swatch sw-catch"></span><a href="#hurdles">CatchUpHurdleFee</a></td><td>the hurdle</td><td>a catch-up share of the gain above the hurdle, up to the configured rate of the whole gain</td></tr>
+          <tr><td><span class="swatch sw-bench"></span><a href="#benchmark">BenchmarkFee</a></td><td>the watermark moved by a benchmark's return, and optionally the watermark itself</td><td>the configured rate of the outperformance</td></tr>
+          <tr><td><span class="swatch sw-nowm"></span><a href="#no-watermark">NoWatermarkFee</a></td><td>the previous price, which drops after a fall</td><td>the configured rate of any gain, including the recovery of a loss</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">All but the first two size their fee shares exactly. All nine can be compared on your own
+      numbers in the <a href="#calculator">calculator</a>.</p>
+  </section>
+
+  <section id="sizings">
     <div class="prose">
       <h2>One fund, three modules</h2>
       <p>Alice holds all 1,000 investor shares at $1.00, so NAV is $1,000. The performance fee is 20%, the
@@ -371,30 +407,6 @@
 
   <section>
     <div class="prose">
-      <h2>Try your own numbers</h2>
-      <p>One charge, from a watermark to a new price. The fee rate is a percentage here; the contracts take
-        basis points. Management fees and on-chain rounding are left out.</p>
-    </div>
-    <form class="calc" id="calc" onsubmit="return false">
-      <label>Watermark ($ per share)<input name="w" type="number" step="0.0001" min="0" value="1.00" inputmode="decimal"></label>
-      <label>Price now ($ per share)<input name="p" type="number" step="0.0001" min="0" value="1.20" inputmode="decimal"></label>
-      <label>Fee rate (%)<input name="r" type="number" step="0.1" min="0" max="100" value="20" inputmode="decimal"></label>
-      <label>Investor shares<input name="n" type="number" step="1" min="0" value="1000" inputmode="decimal"></label>
-      <label>Receiver's shares<input name="rc" type="number" step="1" min="0" value="0" inputmode="decimal"></label>
-    </form>
-    <p class="warn" id="calc-warn" aria-live="polite"></p>
-    <div class="scroll">
-      <table id="calc-out">
-        <thead>
-          <tr><th></th><th><span class="swatch sw-gross"></span>WatermarkFee</th><th><span class="swatch sw-post"></span>PostFeeWatermarkFee</th><th><span class="swatch sw-exact"></span>ExactWatermarkFee</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section>
-    <div class="prose">
       <h2>The formulas</h2>
       <p>With price <var>P</var>, watermark <var>W</var>, rate <var>r</var>, investor shares
         <var>N</var> (<code>netSupply</code>) and total supply <var>S</var>. Each block is the fee step of the
@@ -444,7 +456,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         from the rule, not from dilution arithmetic. Each takes a <code>crystallizationPeriod</code> in its
         constructor; 0 means every settlement.</p>
 
-      <h3>Hurdles</h3>
+      <h3 id="hurdles">Hurdles</h3>
       <p>A hurdle is a minimum return investors keep before a fee is due. Here it is the watermark grown by
         <code>hurdleBps</code> a year, as simple interest from the moment the watermark last moved: at 10% a
         year, a year after the watermark was set at $1.00 the hurdle is $1.10, and two years under water it is
@@ -487,7 +499,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         leaves investors the hurdle return over time, but the soft and catch-up hurdles are cleared by almost
         any gain over so short a window, so they only bite with a crystallization period such as a year.</p>
 
-      <h3>Crystallization period</h3>
+      <h3 id="periodic">Crystallization period</h3>
       <p><code>PeriodicWatermarkFee</code> is <code>ExactWatermarkFee</code> that charges at most once per
         period: a settlement before the period has run since the last charge changes nothing, and the first
         one after it charges on whatever gain is above the watermark at that moment. ESMA's guidelines make
@@ -545,7 +557,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         avoid this by accruing the fee inside the published NAV, which would need <code>kpkShares</code>
         changes.</p>
 
-      <h3>Benchmark-relative</h3>
+      <h3 id="benchmark">Benchmark-relative</h3>
       <p><code>BenchmarkFee</code> charges only for beating a benchmark read from a Chainlink-style feed, for
         example ETH/USD or a staking-rate index. The watermark is carried forward at the benchmark's return:
         set at $1.00 when the benchmark stood at 2,000, it becomes $1.10 when the benchmark reaches 2,200, and
@@ -613,7 +625,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         shares live on several chains cannot use one <code>BenchmarkFee</code> address everywhere if the feed
         address differs per chain.</p>
 
-      <h3>No watermark</h3>
+      <h3 id="no-watermark">No watermark</h3>
       <p><code>NoWatermarkFee</code> drops the loss carry-forward: each charge is 20% of the gain since the
         previous reference, and a fall moves the reference down. Investors then pay again for recovering their
         own losses. It is here for comparison, not as a candidate.</p>
@@ -628,6 +640,39 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         <code>NoWatermarkFee</code> Alice's 1,000 shares are worth $960.40: $39.60 in fees on no gain.
         <code>ExactWatermarkFee</code> charges nothing.</figcaption>
     </figure>
+  </section>
+
+  <section id="calculator">
+    <div class="prose">
+      <h2>Try your own numbers</h2>
+      <p>One charge, from a watermark to a new price, for all nine modules. The rates are percentages here;
+        the contracts take basis points. The hurdle, benchmark and period settings only affect the modules that
+        use them, and the period applies to the six modules after the first three. Management fees and on-chain
+        rounding are left out.</p>
+    </div>
+    <form class="calc" id="calc" onsubmit="return false">
+      <label>Watermark ($ per share)<input name="w" type="number" step="0.0001" min="0" value="1.00" inputmode="decimal"></label>
+      <label>Price now ($ per share)<input name="p" type="number" step="0.0001" min="0" value="1.20" inputmode="decimal"></label>
+      <label>Fee rate (%)<input name="r" type="number" step="0.1" min="0" max="100" value="20" inputmode="decimal"></label>
+      <label>Investor shares<input name="n" type="number" step="1" min="0" value="1000" inputmode="decimal"></label>
+      <label>Receiver's shares<input name="rc" type="number" step="1" min="0" value="0" inputmode="decimal"></label>
+      <label>Years since the watermark was set<input name="t" type="number" step="0.05" min="0" value="1" inputmode="decimal"></label>
+      <label>Hurdle (% a year)<input name="h" type="number" step="0.1" min="0" value="10" inputmode="decimal"></label>
+      <label>Catch-up (%)<input name="c" type="number" step="1" min="1" max="100" value="100" inputmode="decimal"></label>
+      <label>Benchmark return since then (%)<input name="b" type="number" step="0.1" min="-99" value="10" inputmode="decimal"></label>
+      <label>Crystallization period (years)<input name="period" type="number" step="0.05" min="0" value="0" inputmode="decimal"></label>
+      <label class="check"><input name="abs" type="checkbox">Benchmark requires an absolute gain</label>
+    </form>
+    <p class="warn" id="calc-warn" aria-live="polite"></p>
+    <div class="scroll">
+      <table id="calc-out">
+        <thead>
+          <tr><th>Module</th><th>Fee due above</th><th>Fee shares</th><th>Price after</th><th>Watermark after</th>
+            <th>Investors pay</th><th>Share of investors’ gain</th><th>Receiver’s net gain</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <section id="limits">
@@ -698,8 +743,9 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
 
 <footer class="wrap">
   <p>Sources: <code>src/FeeModules/</code> (<code>WatermarkFeeBase.sol</code> and the nine modules built on it);
-    tests in <code>test/WatermarkFeeVariants.t.sol</code> and <code>test/FeeStructures.t.sol</code>. Worked
-    examples use each module's formula without on-chain rounding. Written 2026-11-04.</p>
+    tests in <code>test/WatermarkFeeVariants.t.sol</code> and <code>test/FeeStructures.t.sol</code>; pull request
+    <a href="https://github.com/karpatkey/onchain-investment-vehicles/pull/66">#66</a>. Worked examples use each
+    module's formula without on-chain rounding. Written 2026-11-04.</p>
 </footer>
 
 <script>
@@ -879,48 +925,73 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
   });
 
   // ── Calculator ────────────────────────────────────────────────────────────
+  const CALC_MODULES = [
+    ...MODULES,
+    { id: 'periodic', name: 'PeriodicWatermarkFee', color: '#4F7A8C' },
+    { id: 'hard', name: 'HardHurdleFee', color: '#3E7D5A' },
+    { id: 'soft', name: 'SoftHurdleFee', color: '#7556A0' },
+    { id: 'catch', name: 'CatchUpHurdleFee', color: '#7C8A1E' },
+    { id: 'bench', name: 'BenchmarkFee', color: '#8C5A2B' },
+    { id: 'nowm', name: 'NoWatermarkFee', color: '#B3261E' },
+  ];
+
+  // One charge for the six modules built on PeriodicWatermarkFee, mirroring their _crystallizeDue and
+  // the exact sizing. `due` is the price the fee is measured from, or null while the period runs.
+  function chargeStructure(id, P, W, N, S, r, o) {
+    if (o.t < o.period) return { fee: 0, wm: W, due: null };
+    const H = W * (1 + o.h * o.t);
+    let due, a;
+    if (id === 'hard') { due = H; a = r * (P - H); }
+    else if (id === 'soft') { due = H; a = r * (P - W); }
+    else if (id === 'catch') { due = H; a = Math.min(o.c * (P - H), r * (P - W)); }
+    else if (id === 'bench') { due = W * (1 + o.b); if (o.abs) due = Math.max(due, W); a = r * (P - due); }
+    else { due = W; a = r * (P - W); } // periodic, nowm
+    if (P <= due * (1 + 1e-12)) return { fee: 0, wm: id === 'nowm' ? P : W, due };
+    if (N === 0) return { fee: 0, wm: P, due };
+    const fee = a * S / (P - a);
+    return { fee, wm: fee > 0 ? P - a : P, due };
+  }
+
   const form = document.getElementById('calc');
   const out = document.querySelector('#calc-out tbody');
   const warn = document.getElementById('calc-warn');
   function calc() {
     const v = k => Number(form.elements[k].value);
     const W = v('w'), P = v('p'), r = v('r') / 100, N = v('n'), R = v('rc');
+    const o = { t: v('t'), h: v('h') / 100, c: v('c') / 100, b: v('b') / 100, period: v('period'),
+                abs: form.elements.abs.checked };
     out.replaceChildren();
-    if (![W, P, r, N, R].every(Number.isFinite) || W <= 0 || P <= 0 || r < 0 || r > 1 || N < 0 || R < 0) {
-      warn.textContent = 'Enter positive prices, a fee rate from 0 to 100%, and share counts of 0 or more.';
-      return;
-    }
-    if (P <= W) {
-      warn.textContent = 'No fee: the price is at or below the watermark, so every module charges nothing.';
+    const nums = [W, P, r, N, R, o.t, o.h, o.c, o.b, o.period];
+    if (!nums.every(Number.isFinite) || W <= 0 || P <= 0 || r < 0 || r > 1 || N < 0 || R < 0 || o.t < 0
+        || o.h < 0 || o.c <= 0 || o.c > 1 || o.b <= -1 || o.period < 0) {
+      warn.textContent = 'Enter positive prices, rates from 0 to 100% (catch-up above 0), a benchmark return above '
+        + '-100%, and share counts and years of 0 or more.';
       return;
     }
     warn.textContent = '';
     const S = N + R;
-    const cols = MODULES.map(m => {
-      const { fee, wm } = charge(m.id, P, W, N, S, r);
-      const post = S + fee > 0 ? P * S / (S + fee) : P;
+    for (const m of CALC_MODULES) {
+      const res = MODULES.includes(m) ? { ...charge(m.id, P, W, N, S, r), due: W } : chargeStructure(m.id, P, W, N, S, r, o);
+      const post = S + res.fee > 0 ? P * S / (S + res.fee) : P;
       const pays = N * (P - post), gain = N * (P - W);
-      return { fee, post, wm, pays, share: gain > 0 ? pays / gain : 0,
-               net: (R + fee) * post - R * P, band: Math.max(0, wm - post) };
-    });
-    const rows = [
-      ['Fee shares minted', c => fmt(c.fee, 2)],
-      ['Price after the fee', c => usd(c.post, 4)],
-      ['Watermark after', c => usd(c.wm, 4)],
-      ['Investors pay', c => usd(c.pays)],
-      ['Share of investors\u2019 gain', c => pct(c.share)],
-      ['Receiver\u2019s net gain from the fee', c => usd(c.net)],
-      ['Fee-free band left above the price', c => c.band > 5e-9 ? usd(c.band, 4) + ' per share' : 'none'],
-    ];
-    for (const [label, f] of rows) {
+      const share = pays <= 0 ? '\u2014' : gain > 0 ? pct(pays / gain) : 'charged on a loss';
+      const cells = [res.due === null ? 'period not over' : usd(res.due, 4), fmt(res.fee, 2), usd(post, 4),
+                     usd(res.wm, 4), usd(pays), share, usd((R + res.fee) * post - R * P)];
       const tr = document.createElement('tr');
       const th = document.createElement('th');
-      th.scope = 'row'; th.textContent = label; tr.appendChild(th);
-      cols.forEach(c => { const td = document.createElement('td'); td.textContent = f(c); tr.appendChild(td); });
+      th.scope = 'row';
+      th.innerHTML = `<span class="swatch" style="background:${m.color}"></span>${m.name}`;
+      tr.appendChild(th);
+      for (const c of cells) {
+        const td = document.createElement('td');
+        td.textContent = c;
+        tr.appendChild(td);
+      }
       out.appendChild(tr);
     }
   }
   form.addEventListener('input', calc);
+  form.addEventListener('change', calc);
   calc();
 
   // ── Hurdle chart ──────────────────────────────────────────────────────────
