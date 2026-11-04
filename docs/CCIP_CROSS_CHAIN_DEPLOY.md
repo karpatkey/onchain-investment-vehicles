@@ -214,8 +214,10 @@ resolution. Note it is **not** read by the Solidity scripts at runtime: the per-
 the registry (editing the JSON alone does not change what gets deployed). Every `linkToken` was
 resolved **on-chain** from each chain's
 CCIP `onRamp → feeQuoter.getFeeTokens()` and confirmed via `symbol() == "LINK"` (Avalanche: `LINK.e`,
-bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows are
-excluded. Sorted by chain ID:
+bridged). The **23 deployable chains** below are the verified target set; the two `NOT-READY` rows
+are excluded. Robinhood and Arc came after the constructor-baked registry: they are `excluded` in it
+and wired by Security Council batches instead (see "Wiring a chain deployed after the baked
+registry"). Sorted by chain ID:
 
 | Chain | Chain ID | CCIP chain selector | LINK fee token (on-chain) | Verdict |
 |---|---|---|---|---|
@@ -229,7 +231,9 @@ excluded. Sorted by chain ID:
 | World Chain | 480 | `2049429975587534727` | `0x915b…5473` | READY-AFTER-EMPTY |
 | HyperEVM | 999 | `2442541497099098535` | `0x1AC2…De59` | READY-AFTER-EMPTY |
 | Sei | 1329 | `9027416829622342829` | — | **NOT-READY** |
+| Robinhood | 4663 | `6180753054346818345` | `0x4926…bCE34` | READY |
 | Mantle | 5000 | `1556008542357238666` | `0xfe36…E043` | READY-AFTER-EMPTY |
+| Arc | 5042 | `6370580034781731079` | `0x76a4…eb40` | READY-AFTER-EMPTY |
 | Base | 8453 | `15971525489660198786` | `0x88Fb…e196` | READY |
 | Plasma | 9745 | `9335212494177455608` | `0x76a4…eb40` | READY-AFTER-EMPTY |
 | Mode | 34443 | `7264351850409363825` | `0x183E…1F54` | **NOT-READY** |
@@ -297,6 +301,20 @@ factory construction. To onboard a brand-new chain not yet in the registry: conf
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.
+
+`deploy-chain.sh` refuses `excluded` rows, so a chain added after the baked registry runs its
+per-chain script directly, as Robinhood did. Arc's gas token is native USDC; the run is about 28M
+gas, 1.1 USDC at forge's 40 gwei estimate:
+
+```bash
+source .env && forge script script/chains/Deploy_Arc.s.sol:Deploy_Arc --rpc-url arc \
+  --account $DEPLOYER_NAME --broadcast --slow \
+  --sig "run(address,address)" 0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72 $DEPLOY_FINAL_OWNER
+source .env && script/wire-chain.sh arc   # then the Security Council batches
+```
+
+Without `--broadcast` the same command simulates against live Arc and prints the predicted addresses,
+which must be the canonical ones in `script/deployed-infra.json`.
 
 ## Deploying the orchestrator
 
