@@ -1,0 +1,17 @@
+{
+  "chain": "robinhood",
+  "chainId": 4663,
+  "ccipChainSelector": "6180753054346818345",
+  "orchestrator": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+  "order": "Execute in file order: 1-robinhood.json (if present), then every 2-<counterpart>.json in any order, then 3-robinhood.json LAST.",
+  "files": [
+    "2-ethereum.json",
+    "2-base.json",
+    "2-arbitrum.json",
+    "2-bnb.json",
+    "2-polygon.json",
+    "2-avalanche.json",
+    "2-hyperevm.json",
+    "3-robinhood.json"
+  ]
+}
