@@ -316,6 +316,24 @@ source .env && script/wire-chain.sh arc   # then the Security Council batches
 Without `--broadcast` the same command simulates against live Arc and prints the predicted addresses,
 which must be the canonical ones in `script/deployed-infra.json`.
 
+Before broadcasting on Arc (or any chain added later):
+
+1. **Claim the timelock mastercopy atomically first.** Multicall3 (`0xcA11bde05977b3631167028862bE2a173976CA11`)
+   is on Arc, so send one `aggregate3` transaction from the deployer with two calls: the CREATE2
+   deployer `0x4e59b44847b379578588920cA78FbF26c0B4956C` with `SALT_TIMELOCK_MASTERCOPY` (`script/base/OivChainDeploy.sol`) followed by
+   the mastercopy init code, then `initialize(0, [], [], address(0))` on `0x9760280fED9e760668186334f88b6d763A7d976E`.
+   The script then takes its `[SKIP]` branch, so the initializer is never open between two
+   transactions. This is how HyperEVM was done (see `docs/DEPLOYED_ADDRESSES.md`). Prove it with
+   `cast logs --address 0x9760280fED9e760668186334f88b6d763A7d976E "RoleGranted(bytes32,address,address)"`:
+   exactly one grant.
+2. **Make sure nothing else broadcasts from the deployer** during the run: other workflows use the same
+   EOA on Arc, and a nonce clash leaves a partial deploy.
+3. After the broadcast, **verify all six contracts** (including `Empty`) on every explorer that serves
+   5042: Etherscan V2 (no `[etherscan]` alias in `foundry.toml`, so verify manually), Sourcify, and the
+   chain's Blockscout at explorer.arc.io. Routescan and Tenderly do not serve Arc.
+4. Wire it: `script/wire-chain.sh arc` writes the batches for Arc and its three lanes (Ethereum, Base,
+   Polygon). The Council executes them in file order, `3-arc.json` last.
+
 ## Deploying the orchestrator
 
 Deploy at the same address on every chain via `script/DeployCcipOivDeployer.s.sol`, then wire each
@@ -364,30 +382,54 @@ owner call on a different chain:
   known selector, and `supportedChainIds()` lists only registry chains, so without it the counterpart
   neither accepts stacks from the chain nor fans out to it.
 
-`script/wire-chain.sh` writes those calls as Safe Transaction Builder batches, one file per chain:
+`script/wire-chain.sh` writes those calls as Safe Transaction Builder batches, one file per chain,
+numbered in the order they must be executed:
 
 ```bash
-source .env && script/wire-chain.sh <chain>          # writes script/safe-txs/ccip-wire-<chain>/<chain>.json, <counterpart>.json …
-source .env && script/wire-chain.sh <chain> --check  # read back; exits 1 while any entry is missing
+source .env && script/wire-chain.sh <chain>          # writes script/safe-txs/ccip-wire-<chain>/
+source .env && script/wire-chain.sh <chain> --check  # read back: 0 wired, 1 pending, 2 error
 ```
+
+| File | Executed on | Entries |
+|---|---|---|
+| `1-<chain>.json` (only if needed) | the chain | every counterpart its constructor-seeded registry lacks |
+| `2-<counterpart>.json` | each counterpart | `setChainSelector(<id>, <selector>)` |
+| `3-<chain>.json` | the chain | its own `setChainSelector(<id>, <selector>)`, alone |
+| `manifest.json` | — | the list of the files above |
+
+**Execute 1, then every 2 (any order), then 3 last.** `ccipReceive` only checks that the source
+selector is known, while originating is gated by the chain's own entry (`onlyWiredChain`) and
+`deployEverywhere` / `dispatchTo` are permissionless. Once step 3 lands, anyone can fan out from the
+chain to every lane it knows, and a counterpart whose step 2 has not landed yet reverts
+`InvalidSourceChain` after the source fee is paid. In the other direction, a counterpart wired in
+step 2 may start sending to the chain at once, which is safe because the chain already knows it
+(constructor seed or step 1). `--check` warns if the chain can already originate while entries are
+still pending.
 
 Counterparts are the deployed orchestrators (`script/deployed-infra.json`) with a CCIP lane to or
 from the chain, asked live of both configured routers; a pair with no lane in either direction gets
 no entry. The script refuses a chain whose orchestrator is missing or whose router differs from the
-registry, so nothing points at a chain that cannot receive yet. Entries already in place are
-skipped, so a re-run after partial execution writes only what is left.
-`test/CcipWiringBatches.t.sol` pins every committed entry to `setChainSelector(uint256,uint64)` and
-to the registry's selector for its chain id. On-chain, `setChainSelector` refuses only zero or a
-selector another chain id already holds. A wrong selector the local router does not support drops
-the chain from fan-outs without a word (an explicit `destChainIds` entry reverts `LaneNotSupported`
-before any fee). A supported one that belongs to another chain sends a paid stack there. Either way
-the chain's own messages stay refused (`InvalidSourceChain`).
+registry, so nothing points at a chain that cannot receive yet, and it checks that every rpc alias
+answers the chain id the registry names. Entries already in place are skipped. Committed batches are
+the reviewed record of what the Security Council signs, so write mode refuses an existing directory:
+track execution with `--check`, and delete the directory by hand only to regenerate before anything
+was executed.
 
-Execute `<chain>.json` first, then the counterparts in any order. Once every batch has landed and
-`--check` exits 0, record it in `script/deployed-infra.json` and `docs/DEPLOYED_ADDRESSES.md`. The
-registry row keeps `excluded: true`: the flag means "outside the constructor-baked registry", which
-`test/CcipNetworksSync.t.sol` pins, so `deploy-all.sh`'s fan-out list and
-`CcipDeployEverywhere.setChainSelectors` keep skipping the chain. Fan out to it by passing its id in
+`test/CcipWiringBatches.t.sol` pins every committed entry to `setChainSelector(uint256,uint64)` on
+the canonical orchestrator, from the recorded owner, with the registry's selector for its chain id;
+each step to its role (step 2 wires only the directory's chain, step 3 holds only the chain's own
+id); and the files to `manifest.json`. On-chain, `setChainSelector` refuses only zero or a selector
+another chain id already holds. A wrong selector the local router does not support drops the chain
+from fan-outs without a word (an explicit `destChainIds` entry reverts `LaneNotSupported` before any
+fee). A supported one that belongs to another chain sends a paid stack there. Either way the chain's
+own messages stay refused (`InvalidSourceChain`).
+
+Once `--check` exits 0, record it in `script/deployed-infra.json` and `docs/DEPLOYED_ADDRESSES.md`.
+The registry row keeps `excluded: true`: the flag means "outside the constructor-baked registry",
+which `test/CcipNetworksSync.t.sol` pins, so the repo helpers (`deploy-all.sh`'s fan-out list and
+`CcipDeployEverywhere.setChainSelectors`) keep skipping the chain. On-chain it is a normal
+destination once wired: the default `deployEverywhere` on every counterpart (and from the chain
+itself) includes it and pays its CCIP fee. To leave it out of a fund, pass an explicit
 `destChainIds`.
 
 ## Usage — from a block explorer (no script needed)

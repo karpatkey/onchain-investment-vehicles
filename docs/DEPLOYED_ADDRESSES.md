@@ -94,9 +94,11 @@ Per-chain notes:
   selector is Chainlink's `robinhood-mainnet`, also the source selector in Robinhood's onRamp). Those
   calls are prepared as Safe batches in `script/safe-txs/ccip-wire-robinhood/`: Robinhood plus the
   seven chains with a lane to or from it (Ethereum, Base, Arbitrum, BNB, Polygon, Avalanche, HyperEVM);
-  see "Wiring a chain deployed after the baked registry" in `docs/CCIP_CROSS_CHAIN_DEPLOY.md`.
+  execute the seven `2-<counterpart>.json` batches first and `3-robinhood.json` last (see "Wiring a
+  chain deployed after the baked registry" in `docs/CCIP_CROSS_CHAIN_DEPLOY.md`).
   `script/ccip-networks.json` marks it `excluded` (outside the baked registry), so `deploy-all.sh` and
-  the repo helper `CcipDeployEverywhere.setChainSelectors` never route to it.
+  the repo helper `CcipDeployEverywhere.setChainSelectors` never route to it. Once wired, the default
+  on-chain `deployEverywhere` on those seven chains includes it; pass `destChainIds` to leave it out.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a

@@ -1,0 +1,2 @@
+# Shell scripts must keep LF endings: with core.autocrlf=true, a CRLF checkout does not run under bash.
+*.sh text eol=lf
