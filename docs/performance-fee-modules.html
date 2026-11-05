@@ -203,18 +203,29 @@
     <p>Every module shares <code>WatermarkFeeBase</code>. It keeps one reference price per fund (the
       <code>highWatermark</code> mapping), keyed by the calling <code>KpkShares</code> proxy, so one deployment
       can serve many funds and a stranger calling the module directly only moves their own entry.</p>
-    <p id="seed">The watermark starts at the price of the module's first call: that call seeds the fund's entry at
-      the price it is given and charges nothing, so the first watermark is not the price investors entered at.
-      <code>KpkShares</code> only calls the module when the performance fee rate is above 0, a module is set, the
-      settlement is in an asset marked <code>isFeeModuleAsset</code>, and more than 6 hours
-      (<code>MIN_TIME_ELAPSED</code>) have passed since the last performance-fee update, a clock that deployment
-      starts. A settlement in the first 6 hours therefore records the fund's price without calling the module, and
-      the first qualifying settlement after that seeds it at the operator's price. A rate change can also be the
-      first call: it passes the asset's last settled price, which is 0, and ignored, if the asset has never
-      settled. <code>BenchmarkFee</code> also waits for a usable feed reading. Gains before the seed are never
-      charged, and if the fund is below its entry price at that moment, the climb back up to entry is charged. A
-      new module seeds again at the first price it sees, since each module keeps its own storage. The worked
-      examples on this page seed at $1.00.</p>
+    <p id="seed">Throughout this page, a <strong>call</strong> means <code>KpkShares</code> calling the module's
+      <code>calculatePerformanceFee</code>. A call is never a subscription or a redemption: an investor's
+      <code>requestSubscription</code> or <code>requestRedemption</code> only queues a request and never reaches the
+      module. Only two functions call it:</p>
+    <ul>
+      <li><strong>The operator's settlement</strong>, <code>processRequests(approve, reject, asset, price)</code>. One
+        settlement handles one asset at one price that the operator supplies, and calls the module before it
+        approves any request. Whether the batch approves subscriptions, redemptions, both or nothing makes no
+        difference: the module only sees the price. The module is called only if the performance fee rate is above
+        0, a module is set, the asset is marked <code>isFeeModuleAsset</code>, and more than 6 hours
+        (<code>MIN_TIME_ELAPSED</code>) have passed since the last performance-fee update, a clock that deployment
+        starts.</li>
+      <li><strong>The admin's rate change</strong>, <code>setPerformanceFeeRate</code>. It passes the asset's last
+        settled price, or 0, which is ignored, if that asset has never settled.</li>
+    </ul>
+    <p>The first call with a non-zero price seeds the watermark at that price and charges nothing
+      (<code>BenchmarkFee</code> also waits for a usable feed reading). In practice the watermark starts at the
+      price of the operator's first settlement in a fee asset held more than 6 hours after deployment: a settlement
+      within those 6 hours records the fund's price but does not call the module. So the first watermark is the
+      price that settlement reports, which matches an investor's entry price only if the fund's price has not moved
+      since they subscribed. Gains before the seed are never charged, and if the fund is below its entry price at
+      that moment, the climb back up to entry is charged. A new module seeds again at the first price it
+      sees, since each module keeps its own storage. The worked examples on this page seed at $1.00.</p>
     <p>After the seed, each module decides whether the price owes a fee, how many fee shares to mint, and where the
       reference goes next; a call that changes nothing leaves no trace. For the three watermark modules, a price at
       or below the watermark charges nothing and leaves the watermark where it is. Two calls never charge: a price of 0,
@@ -497,8 +508,10 @@
 
       <h3>The watermark \(W\)</h3>
       <p>\(W\) is the fund's entry in <code>highWatermark</code>: one price per share for each fund, in the units of
-        the price the operator reports for the settled asset, with 8 decimals; 0 means not yet seeded. The first
-        call with a non-zero price \(P_1\) sets it and charges nothing (<a href="#seed">when that call happens</a>):</p>
+        the price the operator reports for the settled asset, with 8 decimals; 0 means not yet seeded. The first time
+        <code>KpkShares</code> calls the module with a non-zero price \(P_1\), it sets \(W\) and charges nothing. That
+        call is normally the operator's first qualifying settlement, never a subscription or redemption request
+        (<a href="#seed">which calls count</a>):</p>
       \[ W_0 = P_1, \qquad f = 0 \]
       <p>After that each module moves it as its block below shows. The three watermark modules never lower it:
         \(W' \ge W\).</p>
