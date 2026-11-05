@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Performance fee modules: where the watermark lands</title>
+<title>Performance fee modules</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,600;1,400&family=Spectral:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
@@ -43,6 +43,8 @@
   h3 { font-size: 1.05rem; font-weight: 600; margin: 2rem 0 0.4rem; }
   p { margin: 0 0 1rem; }
   .lede { font-size: 1.2rem; line-height: 1.55; max-width: 60ch; }
+  .toc { font-size: 0.95rem; color: var(--muted); max-width: 66ch; margin: 1.6rem 0 0; }
+  .toc a { color: var(--ink); text-decoration-color: var(--sound); }
   a { color: var(--post); text-underline-offset: 2px; }
   a:focus-visible, button:focus-visible, input:focus-visible {
     outline: 3px solid var(--post); outline-offset: 2px;
@@ -154,6 +156,9 @@
   #glance .note { margin-top: 0.8rem; }
   table.rates { min-width: 620px; max-width: 900px; }
   table.rates th, table.rates td { text-align: left; vertical-align: top; }
+  table.settings { min-width: 760px; max-width: 1000px; }
+  table.settings th, table.settings td { text-align: left; vertical-align: top; }
+  table.settings td:first-child { white-space: nowrap; }
   #calc-out th[scope="row"] { white-space: nowrap; }
   #calc-out { min-width: 940px; }
   .calc .check { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.5rem; align-self: end; padding-bottom: 0.6rem; color: var(--ink); }
@@ -172,28 +177,17 @@
 <body>
 
 <header class="wrap">
-  <h1>Where the watermark lands</h1>
-  <p class="lede">A kpk fund with a performance fee charges it only on gains above a reference price. The first
-    three modules in <code>src/FeeModules/</code> are plain high watermarks that differ on one detail: where
-    the watermark sits after a fee has been paid, which decides how much of the configured rate is actually
-    collected. The other six change what counts as a gain, or when it is charged.</p>
-
-  <div class="switch" role="group" aria-label="Fee module shown in the chart">
-    <button type="button" data-v="gross" aria-pressed="false"><span class="swatch sw-gross"></span>WatermarkFee</button>
-    <button type="button" data-v="post" aria-pressed="false"><span class="swatch sw-post"></span>PostFeeWatermarkFee</button>
-    <button type="button" data-v="exact" aria-pressed="true"><span class="swatch sw-exact"></span>ExactWatermarkFee</button>
-  </div>
-  <figure>
-    <svg id="tide" viewBox="0 0 1000 440" role="img" aria-labelledby="tide-title tide-desc">
-      <title id="tide-title">Share price and watermark over two fee charges</title>
-      <desc id="tide-desc">The share price starts at 1.00 dollars, rises to 1.20 at the first charge and drops when fee
-        shares are minted. The shaded water level is the watermark. The chart redraws for the selected module.</desc>
-    </svg>
-    <figcaption>One fund, 1,000 investor shares at $1.00, a 20% fee, NAV rising to $1,200 and then $1,239.
-      The line is the share price; the water is the watermark. Magenta drops are fee shares being minted.
-      Faint lines are the other two modules on the same path.</figcaption>
-  </figure>
-  <p class="readout" id="readout" aria-live="polite"></p>
+  <h1>Performance fee modules</h1>
+  <p class="lede">A kpk fund's performance fee is worked out by a module that <code>KpkShares</code> calls when
+    it settles. <code>src/FeeModules/</code> has nine, all built on one base. They differ in four choices: what a
+    gain is measured from, how much of it is charged, how the fee becomes shares, and how often it is charged.
+    This page sets out every option for each choice, every module and every setting, with worked examples and a
+    calculator.</p>
+  <p class="toc">On this page: <a href="#shared">what every module does</a> · <a href="#glance">the choices,
+    the nine modules and their settings</a> · <a href="#sizings">sizing the fee</a> · <a href="#hurdles">hurdles</a>
+    · <a href="#periodic">crystallization period and rate changes</a> · <a href="#benchmark">benchmark</a> ·
+    <a href="#no-watermark">no watermark</a> · <a href="#calculator">calculator</a> · <a href="#limits">what no
+    module fixes</a> · <a href="#choosing">choosing a module</a></p>
 </header>
 
 <main class="wrap">
@@ -265,36 +259,94 @@
 
   <section id="glance">
     <div class="prose">
-      <h2>The nine modules</h2>
-      <p>Three size a plain high-watermark fee in different ways. The other six change what counts as a gain,
-        or how often it is charged. None is deployed yet.</p>
+      <h2>Four choices, nine modules</h2>
+      <p>Every module answers the same four questions. These are the options the nine modules offer for each.</p>
     </div>
+    <dl class="choice">
+      <dt>What a gain is measured from</dt>
+      <dd>The high watermark, which never falls; the watermark grown by a yearly hurdle; the watermark carried
+        forward at a benchmark's return; or the last reference price, which falls with the fund.</dd>
+      <dt>How much of it is charged</dt>
+      <dd>The fee rate of the whole gain above the watermark; the fee rate of only the part above the hurdle or
+        the benchmark; or, above a hurdle, a catch-up share of the gain until the fee reaches the fee rate of the
+        whole gain.</dd>
+      <dt>How the fee becomes shares</dt>
+      <dd>Gain ÷ pre-fee price with the watermark left at the pre-fee price; the same with the watermark moved
+        to the post-fee price; or exact sizing, where every share gives up the fee rate of its gain.</dd>
+      <dt>How often, and at which rate</dt>
+      <dd>At every settlement, or at most once per rolling crystallization period. The first three modules
+        charge at the rate in force at the charge; the other six charge at the lowest rate in force since the
+        fund last owed nothing.</dd>
+    </dl>
     <div class="scroll">
       <table class="glance">
-        <thead><tr><th>Module</th><th>Fee is due when the price is above</th><th>Fee</th></tr></thead>
+        <thead><tr><th>Module</th><th>Fee is due above</th><th>Fee</th><th>Charged</th><th>Settings</th></tr></thead>
         <tbody>
-          <tr><td><span class="swatch sw-gross"></span><a href="#sizings">WatermarkFee</a></td><td>the watermark, left at the pre-fee price after a charge</td><td>gain ÷ pre-fee price, no dilution adjustment: about 14–17% of a configured 20%</td></tr>
-          <tr><td><span class="swatch sw-post"></span><a href="#sizings">PostFeeWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>sized as <code>WatermarkFee</code>: about 16–20% of a configured 20%</td></tr>
-          <tr><td><span class="swatch sw-exact"></span><a href="#sizings">ExactWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>the configured rate of the gain, to within rounding</td></tr>
-          <tr><td><span class="swatch sw-periodic"></span><a href="#periodic">PeriodicWatermarkFee</a></td><td>the watermark, at most once per crystallization period</td><td>the configured rate of the gain, to within rounding</td></tr>
-          <tr><td><span class="swatch sw-hard"></span><a href="#hurdles">HardHurdleFee</a></td><td>the watermark grown by a yearly hurdle rate</td><td>the configured rate of the gain above the hurdle only</td></tr>
-          <tr><td><span class="swatch sw-soft"></span><a href="#hurdles">SoftHurdleFee</a></td><td>the hurdle</td><td>the configured rate of the whole gain</td></tr>
-          <tr><td><span class="swatch sw-catch"></span><a href="#hurdles">CatchUpHurdleFee</a></td><td>the hurdle</td><td>a catch-up share of the gain above the hurdle, up to the configured rate of the whole gain</td></tr>
-          <tr><td><span class="swatch sw-bench"></span><a href="#benchmark">BenchmarkFee</a></td><td>the watermark moved by a benchmark's return, and optionally the watermark itself</td><td>the configured rate of the outperformance</td></tr>
-          <tr><td><span class="swatch sw-nowm"></span><a href="#no-watermark">NoWatermarkFee</a></td><td>the previous price, which drops after a fall</td><td>the configured rate of any gain, including the recovery of a loss</td></tr>
+          <tr><td><span class="swatch sw-gross"></span><a href="#sizings">WatermarkFee</a></td><td>the watermark, left at the pre-fee price after a charge</td><td>the fee rate of the gain, sized as gain ÷ pre-fee price: collects about 14–17% of a configured 20%</td><td>each settlement</td><td>none</td></tr>
+          <tr><td><span class="swatch sw-post"></span><a href="#sizings">PostFeeWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>sized as <code>WatermarkFee</code>: about 16–20% of a configured 20%</td><td>each settlement</td><td>none</td></tr>
+          <tr><td><span class="swatch sw-exact"></span><a href="#sizings">ExactWatermarkFee</a></td><td>the watermark, moved to the post-fee price after a charge</td><td>the fee rate of the gain, sized exactly</td><td>each settlement</td><td>none</td></tr>
+          <tr><td><span class="swatch sw-periodic"></span><a href="#periodic">PeriodicWatermarkFee</a></td><td>the watermark</td><td>the fee rate of the gain</td><td>once per period</td><td>period</td></tr>
+          <tr><td><span class="swatch sw-hard"></span><a href="#hurdles">HardHurdleFee</a></td><td>the watermark grown by a yearly hurdle</td><td>the fee rate of the gain above the hurdle only</td><td>once per period</td><td>hurdle, period</td></tr>
+          <tr><td><span class="swatch sw-soft"></span><a href="#hurdles">SoftHurdleFee</a></td><td>the hurdle</td><td>the fee rate of the whole gain</td><td>once per period</td><td>hurdle, period</td></tr>
+          <tr><td><span class="swatch sw-catch"></span><a href="#hurdles">CatchUpHurdleFee</a></td><td>the hurdle</td><td>a catch-up share of the gain above the hurdle, up to the fee rate of the whole gain</td><td>once per period</td><td>hurdle, catch-up share, period</td></tr>
+          <tr><td><span class="swatch sw-bench"></span><a href="#benchmark">BenchmarkFee</a></td><td>the watermark carried at a benchmark's return, and optionally the watermark itself</td><td>the fee rate of the outperformance</td><td>once per period</td><td>feed, staleness limit, absolute-gain switch, period</td></tr>
+          <tr><td><span class="swatch sw-nowm"></span><a href="#no-watermark">NoWatermarkFee</a></td><td>the previous reference price, which drops after a fall</td><td>the fee rate of any gain, including the recovery of a loss</td><td>once per period</td><td>period</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">All but the first two size their fee shares exactly, to within on-chain rounding. All nine can be compared on your own
-      numbers in the <a href="#calculator">calculator</a>.</p>
+    <p class="note">All but the first two size their fee shares exactly, to within on-chain rounding. “Once per
+      period” means each settlement when the period is 0. Not every combination exists: only the plain watermark
+      comes with the first two sizings, and a hurdle cannot be combined with a benchmark. None of the nine is deployed
+      yet. All nine can be compared on your own numbers in the <a href="#calculator">calculator</a>.</p>
+
+    <div class="prose">
+      <h3 id="settings">Every setting</h3>
+      <p>Except the fee rate, each setting is a constructor argument, so each combination of settings is a separate
+        deployment at its own address.</p>
+    </div>
+    <div class="scroll">
+      <table class="settings">
+        <thead><tr><th>Setting</th><th>Modules</th><th>Values</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td>Fee rate</td><td>all nine</td><td>0 to 20% (<code>performanceFeeRate</code> on <code>KpkShares</code>, in basis points)</td><td>The share of the gain charged. At 0, <code>KpkShares</code> does not call the module at all. A change is charged at the old rate first; see <a href="#periodic">rate changes</a> for the six modules where that can wait.</td></tr>
+          <tr><td><code>crystallizationPeriod</code></td><td>the last six</td><td>seconds; 0 for every settlement</td><td>The minimum time between charges, rolling from each watermark move. With 0, <code>PeriodicWatermarkFee</code> charges like <code>ExactWatermarkFee</code>, apart from the rate rule.</td></tr>
+          <tr><td><code>hurdleBps</code></td><td>the three hurdles</td><td>basis points a year; 0 for no hurdle</td><td>Grows the watermark by simple interest since it last moved. <code>HardHurdleFee</code> with 0 is <code>PeriodicWatermarkFee</code>.</td></tr>
+          <tr><td><code>catchUpBps</code></td><td><code>CatchUpHurdleFee</code></td><td>1 to 10,000 (0.01% to 100%)</td><td>The share of the gain above the hurdle taken until the fee reaches the fee rate of the whole gain. Equal to the fee rate, it charges exactly as <code>HardHurdleFee</code>; below it, less. At 100% the catch-up ends soonest.</td></tr>
+          <tr><td><code>benchmark</code></td><td><code>BenchmarkFee</code></td><td>a Chainlink-style feed with code, in the fund's price unit</td><td>Its <code>decimals()</code> are read at deployment; a reading at any other scale defers the fee.</td></tr>
+          <tr><td><code>maxStaleness</code></td><td><code>BenchmarkFee</code></td><td>seconds, more than 0</td><td>A reading older than this defers the fee.</td></tr>
+          <tr><td><code>requireAbsoluteGain</code></td><td><code>BenchmarkFee</code></td><td>true or false</td><td>True also requires the price to be above the watermark itself, so no fee is charged in a period when investors lost money.</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section id="sizings">
     <div class="prose">
-      <h2>One fund, three modules</h2>
+      <h2>Sizing the fee: where the watermark lands</h2>
+      <p>The first three modules are plain high watermarks that differ only in how a fee becomes shares and where
+        the watermark sits after it is paid. That decides how much of the configured rate is actually collected.
+        The other six all use the third, exact, sizing.</p>
       <p>Alice holds all 1,000 investor shares at $1.00, so NAV is $1,000. The performance fee is 20%, the
         fee receiver starts with no shares, and the operator always reports price as NAV divided by
         total supply. The first settlement seeds every module's watermark at $1.00.</p>
+    </div>
+    <div class="switch" role="group" aria-label="Fee module shown in the chart">
+      <button type="button" data-v="gross" aria-pressed="false"><span class="swatch sw-gross"></span>WatermarkFee</button>
+      <button type="button" data-v="post" aria-pressed="false"><span class="swatch sw-post"></span>PostFeeWatermarkFee</button>
+      <button type="button" data-v="exact" aria-pressed="true"><span class="swatch sw-exact"></span>ExactWatermarkFee</button>
+    </div>
+    <figure>
+      <svg id="tide" viewBox="0 0 1000 440" role="img" aria-labelledby="tide-title tide-desc">
+        <title id="tide-title">Share price and watermark over two fee charges</title>
+        <desc id="tide-desc">The share price starts at 1.00 dollars, rises to 1.20 at the first charge and drops when fee
+          shares are minted. The shaded water level is the watermark. The chart redraws for the selected module.</desc>
+      </svg>
+      <figcaption>The same fund, with NAV rising to $1,200 and then $1,239. The line is the share price; the water is
+        the watermark. Magenta drops are fee shares being minted. Faint lines are the other two modules on the same
+        path.</figcaption>
+    </figure>
+    <p class="readout" id="readout" aria-live="polite"></p>
+    <div class="prose">
       <h3>Charge 1: NAV rises to $1,200</h3>
       <p>The price reaches $1.20. Alice has gained $200, so a 20% fee is worth $40.</p>
     </div>
@@ -463,12 +515,12 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
 
   <section id="structures">
     <div class="prose">
-      <h2>Other ways to decide what counts as a gain</h2>
-      <p>The three modules above charge any gain above the watermark at every settlement. The standard
-        alternatives change one of two things: what the gain is measured against, or how often it is charged.
-        All six size their fee exactly like <code>ExactWatermarkFee</code>, so every difference below comes
-        from the rule, not from dilution arithmetic. Each takes a <code>crystallizationPeriod</code> in its
-        constructor; 0 means every settlement.</p>
+      <h2>What counts as a gain, and when it is charged</h2>
+      <p>The three modules above charge any gain above the watermark at every settlement. The other six change
+        what the gain is measured against, or how often it is charged. All six size their fee exactly like
+        <code>ExactWatermarkFee</code>, so every difference below comes from the rule, not from dilution
+        arithmetic. Each takes a <code>crystallizationPeriod</code> in its constructor; 0 means every
+        settlement.</p>
 
       <h3 id="hurdles">Hurdles</h3>
       <p>A hurdle is a minimum return investors keep before a fee is due. Here it is the watermark grown by
@@ -512,6 +564,11 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         the few hours since the previous charge: 10% a year over 6 hours is about 0.007%. The hard hurdle still
         leaves investors the hurdle return over time, but the soft and catch-up hurdles are cleared by almost
         any gain over so short a window, so they only bite with a crystallization period such as a year.</p>
+      <p>The two hurdle settings span the space between the modules: a hurdle of 0 removes it, so
+        <code>HardHurdleFee</code> becomes <code>PeriodicWatermarkFee</code>, and a catch-up share equal to the fee
+        rate makes <code>CatchUpHurdleFee</code> charge exactly as <code>HardHurdleFee</code>. Above the fee rate, the
+        higher the share, the sooner the catch-up reaches the full rate; the soft hurdle is what an instant catch-up
+        would be.</p>
 
       <h3 id="periodic">Crystallization period</h3>
       <p><code>PeriodicWatermarkFee</code> is <code>ExactWatermarkFee</code> that charges at most once per
@@ -671,11 +728,16 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         preparing the settlement, and a rate change re-sends the last settled price. If the benchmark moved in
         between, the outperformance is mismeasured in either direction by about the fee rate times that move. Settle
         in the same transaction as any rate change.</p>
+      <p>With a feed that never moves, the threshold is the watermark itself, as in
+        <code>PeriodicWatermarkFee</code>. With <code>requireAbsoluteGain</code> set, the fee is due only above
+        whichever is higher, the benchmark-carried watermark or the watermark itself.</p>
 
       <h3 id="no-watermark">No watermark</h3>
       <p><code>NoWatermarkFee</code> drops the loss carry-forward: each charge is 20% of the gain since the
         previous reference, and a fall moves the reference down. Investors then pay again for recovering their
-        own losses. It is here for comparison, not as a candidate.</p>
+        own losses. With a period, only the price when the period is due counts: the charge is the gain since the
+        reference at that point, and a dip within the period resets nothing. It is here for comparison, not as a
+        candidate.</p>
     </div>
     <figure>
       <svg id="swing" viewBox="0 0 1000 340" role="img" aria-labelledby="swing-title swing-desc">
@@ -762,7 +824,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     </div>
   </section>
 
-  <section>
+  <section id="choosing">
     <div class="prose">
       <h2>Choosing a module</h2>
     </div>
