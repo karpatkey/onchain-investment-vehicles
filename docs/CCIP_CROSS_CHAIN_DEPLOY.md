@@ -323,9 +323,11 @@ Before broadcasting on Arc (or any chain added later):
    deployer `0x4e59b44847b379578588920cA78FbF26c0B4956C` with `SALT_TIMELOCK_MASTERCOPY` (`script/base/OivChainDeploy.sol`) followed by
    the mastercopy init code, then `initialize(0, [], [], address(0))` on `0x9760280fED9e760668186334f88b6d763A7d976E`.
    The script then takes its `[SKIP]` branch, so the initializer is never open between two
-   transactions. This is how HyperEVM was done (see `docs/DEPLOYED_ADDRESSES.md`). Prove it with
-   `cast logs --address 0x9760280fED9e760668186334f88b6d763A7d976E "RoleGranted(bytes32,address,address)"`:
-   exactly one grant.
+   transactions. This is how HyperEVM was done (see `docs/DEPLOYED_ADDRESSES.md`). Prove it on Arc,
+   with `CLAIM_BLOCK` set to the claim transaction's block: `cast logs --rpc-url arc --from-block
+   $CLAIM_BLOCK --to-block latest --address 0x9760280fED9e760668186334f88b6d763A7d976E
+   "RoleGranted(bytes32,address,address)"` must show exactly one grant, in that transaction (the same
+   address exists on every chain, so a query without `--rpc-url arc` proves nothing).
 2. **Make sure nothing else broadcasts from the deployer** during the run: other workflows use the same
    EOA on Arc, and a nonce clash leaves a partial deploy.
 3. After the broadcast, **verify all six contracts** (including `Empty`) on every explorer that serves
