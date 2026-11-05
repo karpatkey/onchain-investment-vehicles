@@ -27,13 +27,19 @@ import {PeriodicWatermarkFee} from "./PeriodicWatermarkFee.sol";
 ///         direction by about `feePct` times that move.
 ///
 ///         A feed with no code, a reverting, short or malformed reply, a reply that needs more than
-///         `FEED_GAS_LIMIT` gas, an answer of 0 or less, or no update within `maxStaleness` defers the fee: nothing is
-///         seeded or charged, and the watermark and its benchmark level stay put, so the fee is not lost. (With a
-///         period, the rate passed in is still recorded for the lowest-rate rule.) (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting,
+///         `FEED_GAS_LIMIT` gas, an answer of 0 or less or above `type(int128).max`, a `decimals()` other than the
+///         one read at deployment, or no update within `maxStaleness` defers the fee: nothing is charged, and the
+///         watermark and its benchmark level stay put, so a seeded fund's fee is deferred rather than lost. The
+///         rate passed in still counts toward the lowest-rate rule, so a rate raised during the outage does not
+///         reach the deferred gain. An unseeded fund is seeded at the first usable reading, and gains before it are
+///         not charged (pinned: test/FeeStructures.t.sol::test_benchmark_unusableFeedDefersInsteadOfReverting,
 ///         test/FeeStructures.t.sol::test_benchmark_codelessOrMalformedFeedDefers,
-///         test/FeeStructures.t.sol::test_benchmark_gasBurningFeedDefers).
+///         test/FeeStructures.t.sol::test_benchmark_gasBurningFeedDefers,
+///         test/FeeStructures.t.sol::test_benchmark_rateRaisedDuringAnOutageDoesNotReachTheDeferredGain,
+///         test/FeeStructures.t.sol::test_benchmark_decimalsChangeDefers, test/FeeStructures.t.sol::test_benchmark_absurdAnswerDefers).
 ///
-///         Only the ratio of two readings is used, so the feed's decimals do not matter.
+///         Only the ratio of two readings is used, so the feed's decimals do not matter as long as they do not
+///         change; a feed whose `decimals()` changes defers every fee until the module is replaced.
 contract BenchmarkFee is PeriodicWatermarkFee {
     /// @notice Gas the feed may use per read. A read that needs more counts as unusable, so a misbehaving feed
     ///         cannot consume the settlement's gas.
@@ -47,6 +53,9 @@ contract BenchmarkFee is PeriodicWatermarkFee {
 
     /// @notice Whether a fee also requires the price to be above the watermark, not only above the benchmark.
     bool public immutable requireAbsoluteGain;
+
+    /// @notice The feed's `decimals()` at deployment; a reading taken at any other scale is unusable.
+    uint8 public immutable feedDecimals;
 
     /// @notice Benchmark level when each fund's watermark was last seeded or moved.
     mapping(address => uint256) public benchmarkAtWatermark;
@@ -67,6 +76,7 @@ contract BenchmarkFee is PeriodicWatermarkFee {
             revert InvalidBenchmark();
         }
         benchmark = benchmark_;
+        feedDecimals = benchmark_.decimals();
         maxStaleness = maxStaleness_;
         requireAbsoluteGain = requireAbsoluteGain_;
     }
@@ -82,11 +92,22 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         if (level == 0) return (0, watermark);
         // Rounded up, in investors' favour.
         uint256 threshold = Math.mulDiv(watermark, level, benchmarkAtWatermark[msg.sender], Math.Rounding.Ceil);
+        if (sharesPrice <= threshold) {
+            // No outperformance: a later fee can only be on outperformance from here on.
+            delete periodRate[msg.sender];
+            return (0, watermark);
+        }
         if (requireAbsoluteGain && threshold < watermark) threshold = watermark;
         if (sharesPrice <= threshold) return (0, watermark);
         (fee, newWatermark) = _sizeExact(sharesPrice, (sharesPrice - threshold) * feePct, netSupply);
         // Mirrors the base's no-op test, so B0 moves exactly when the base stores the new watermark.
         if (fee != 0 || newWatermark != watermark) benchmarkAtWatermark[msg.sender] = level;
+    }
+
+    /// @dev Only a due call reads the feed, and outperformance can be owed at a price below the watermark, so a
+    ///      call that moves nothing never restarts the rate record here; `_crystallizeDue` does when it finds none.
+    function _owesNothing(uint256, uint256) internal pure override returns (bool) {
+        return false;
     }
 
     /// @dev Seeding needs a benchmark level to measure from; records it.
@@ -97,27 +118,40 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         return true;
     }
 
-    /// @dev The feed's latest answer, or 0 if it is unusable. Raw `staticcall` with a fixed gas limit and a
+    /// @dev The feed's latest answer, or 0 if it is unusable. Raw `staticcall`s with a fixed gas limit and a
     ///      five-word output buffer: `try`/`catch` cannot catch a reply that fails to decode (an address with no
     ///      code replies with nothing), and `abi.decode` range-checks the two `uint80` round ids, which are unused.
+    ///      Capping the answer at `type(int128).max` keeps `watermark * level` inside 256 bits for any watermark
+    ///      below 2^128.
     function _benchmarkLevel() internal view returns (uint256) {
         address feed = address(benchmark);
-        bytes4 selector = AggregatorV3Interface.latestRoundData.selector;
+        bytes4 roundSelector = AggregatorV3Interface.latestRoundData.selector;
+        bytes4 decimalsSelector = AggregatorV3Interface.decimals.selector;
         uint256 gasLimit = FEED_GAS_LIMIT;
         bool ok;
         int256 answer;
         uint256 updatedAt;
+        uint256 decimals;
         assembly ("memory-safe") {
             let ptr := mload(0x40)
-            mstore(ptr, selector)
+            mstore(ptr, roundSelector)
             ok := staticcall(gasLimit, feed, ptr, 4, ptr, 160)
             // A separate statement: Yul evaluates arguments right to left, so `returndatasize()` inside the same
             // expression would be read before the call.
             if lt(returndatasize(), 160) { ok := 0 }
             answer := mload(add(ptr, 32))
             updatedAt := mload(add(ptr, 96))
+            if ok {
+                mstore(ptr, decimalsSelector)
+                ok := staticcall(gasLimit, feed, ptr, 4, ptr, 32)
+                if lt(returndatasize(), 32) { ok := 0 }
+                decimals := mload(ptr)
+            }
         }
-        if (!ok || answer <= 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) return 0;
+        if (
+            !ok || decimals != feedDecimals || answer <= 0 || answer > type(int128).max || updatedAt > block.timestamp
+                || block.timestamp - updatedAt > maxStaleness
+        ) return 0;
         return uint256(answer);
     }
 }

@@ -19,6 +19,7 @@ contract MockFeed {
     int256 public answer;
     uint256 public updatedAt;
     bool public down;
+    uint8 public decimals = 8;
 
     function set(int256 answer_, uint256 updatedAt_) external {
         answer = answer_;
@@ -27,6 +28,10 @@ contract MockFeed {
 
     function setDown(bool down_) external {
         down = down_;
+    }
+
+    function setDecimals(uint8 decimals_) external {
+        decimals = decimals_;
     }
 
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
@@ -47,6 +52,10 @@ contract ShortReplyFeed {
 
 /// Answers with five well-formed words except round ids too wide for `uint80`, which `abi.decode` would reject.
 contract WideRoundIdFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
     fallback() external {
         bytes memory reply =
             abi.encode(uint256(1) << 100, int256(2000e8), block.timestamp, block.timestamp, uint256(1) << 100);
@@ -217,6 +226,17 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.2e8, 0.004e8, _callAt(m, 1.2e8, 2000)); // 2% of the 0.20 gain
     }
 
+    function test_periodic_rateRecordRestartsOnceNothingIsOwed() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(90 days);
+        _callAt(m, 1e8, 2000);
+        skip(20 days);
+        _callAt(m, 0.95e8, 100); // cut to 1% while below the watermark
+        skip(10 days);
+        _callAt(m, 0.95e8, 2000); // raised back, still below it: nothing owed under either rate
+        skip(300 days);
+        _assertCharged(m, 1.3e8, 0.06e8, _callAt(m, 1.3e8, 2000)); // 20% of a gain made entirely under 20%
+    }
+
     function test_periodic_raiseWhenTheRateChangeCallChargesAppliesNextPeriod() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
         _callAt(m, 1e8, 500);
@@ -382,5 +402,54 @@ contract FeeStructuresTest is Test {
         assertEq(m.calculatePerformanceFee(1.2e8, 0, RATE, 0), 0); // no investor shares: moves, charges nothing
         assertEq(m.highWatermark(fund), 1.2e8);
         assertEq(m.benchmarkAtWatermark(fund), 2200e8, "B0 moves with the watermark");
+    }
+
+    function test_benchmark_rateRaisedDuringAnOutageDoesNotReachTheDeferredGain() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        feed.setDown(true);
+        _assertUntouched(m, _callAt(m, 1.2e8, 1000), 1e8); // the rate-change call, outgoing 10%: deferred
+        feed.setDown(false);
+        _assertCharged(m, 1.2e8, 0.02e8, _callAt(m, 1.2e8, 2000)); // 10% of the 0.20 outperformance, not 20%
+    }
+
+    function test_benchmark_rateRecordRestartsOnceNoOutperformanceIsOwed() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        feed.set(2400e8, block.timestamp); // benchmark +20%: the threshold is 1.20
+        _callAt(m, 1.1e8, 100); // cut to 1% while trailing the benchmark
+        _callAt(m, 1.1e8, 2000); // raised back, still trailing it
+        _assertCharged(m, 1.5e8, 0.06e8, _callAt(m, 1.5e8, 2000)); // 20% of 1.50 - 1.20
+    }
+
+    function test_benchmark_lowerRateHoldsWhileOutperformanceIsOwedBelowTheWatermark() public {
+        MockFeed feed = new MockFeed();
+        feed.set(2000e8, block.timestamp);
+        BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 90 days);
+        _call(m, 1e8);
+        skip(10 days);
+        _callAt(m, 0.9e8, 100); // benchmark -20%, fund -10%: outperformance owed at a price below the watermark
+        skip(10 days);
+        _callAt(m, 0.9e8, 2000);
+        skip(80 days);
+        feed.set(1600e8, block.timestamp);
+        _assertCharged(m, 0.9e8, 0.001e8, _callAt(m, 0.9e8, 2000)); // 1% of 0.90 - 0.80
+    }
+
+    function test_benchmark_decimalsChangeDefers() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        feed.setDecimals(6);
+        feed.set(2000e6, block.timestamp); // the same level at a smaller scale would read as a 99% fall
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
+        feed.setDecimals(8);
+        feed.set(2000e8, block.timestamp);
+        _assertCharged(m, 1.5e8, 0.1e8, _call(m, 1.5e8)); // the deferred gain is still charged
+    }
+
+    function test_benchmark_absurdAnswerDefers() public {
+        MockFeed feed = new MockFeed();
+        feed.set(4000, block.timestamp); // a low-scale index level
+        BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 0);
+        _call(m, 1e8);
+        feed.set(type(int256).max, block.timestamp); // watermark * level / 4000 would not fit in 256 bits
+        _assertUntouched(m, _call(m, 1.5e8), 1e8);
     }
 }

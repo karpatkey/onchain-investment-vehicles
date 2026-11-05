@@ -122,6 +122,33 @@ contract WatermarkFeeVariantsTest is kpkSharesTestBase {
         assertEq(k.balanceOf(feeRecipient), scaledFee * supply / (price * 10_000 - scaledFee), "charged at 5%, not 20%");
     }
 
+    function test_periodic_raiseRightAfterACharge_chargesTheOldRate() public {
+        perfFeeModule = new PeriodicWatermarkFee(365 days);
+        KpkShares k = _deployKpkSharesWithFees(0, 0, 500); // 5%
+        _createSharesForTestingWithContract(k, alice, _sharesAmount(1000));
+        uint256 nav = k.totalSupply();
+        _settle(k, nav); // seed at 1.00 under 5%
+        skip(365 days);
+        nav = nav * 11 / 10;
+        _settle(k, nav); // period due: charged at 5%, and the next period begins under 5%
+        vm.prank(admin);
+        k.setPerformanceFeeRate(2000, address(usdc)); // re-sends that settlement's price: skipped, 5% still recorded
+
+        skip(366 days);
+        nav = nav * 12 / 10;
+        uint256 price = _priceAt(k, nav);
+        uint256 supply = k.totalSupply();
+        uint256 watermark = WatermarkFeeBase(address(perfFeeModule)).highWatermark(address(k));
+        uint256 before = k.balanceOf(feeRecipient);
+        _settle(k, nav);
+        uint256 scaledFee = (price - watermark) * 500;
+        assertEq(
+            k.balanceOf(feeRecipient) - before,
+            scaledFee * supply / (price * 10_000 - scaledFee),
+            "the period that began under 5% is charged at 5%"
+        );
+    }
+
     function testFuzz_exact_eachShareGivesUpFeePctOfGain(
         uint256 supply,
         uint256 netSupply,

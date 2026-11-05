@@ -44,28 +44,29 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
         external
         returns (uint256 fee)
     {
-        // 0 is the "not seeded" marker, and is what KpkShares passes for a fee asset it has never settled.
-        if (sharesPrice == 0) return 0;
         uint256 watermark = highWatermark[msg.sender];
         uint256 newWatermark;
         if (watermark == 0) {
-            if (!_canSeed()) return 0;
+            // 0 is the "not seeded" marker, and is what KpkShares passes for a fee asset it has never settled.
+            if (sharesPrice == 0 || !_canSeed()) return 0;
             newWatermark = sharesPrice;
         } else {
+            // Before any skip: a skipped call is still a call made under the rate it passes.
+            uint256 rate = _recordRate(feePct);
             // KpkShares records the operator's pre-fee price and `setPerformanceFeeRate` sends it back. A module that
             // leaves its watermark at the post-fee price would read that price as a new gain and charge its own fee's
             // dilution, so an exact repeat of the last charged price is skipped while that charge's watermark stands
             // (pinned: test/WatermarkFeeVariants.t.sol::test_rateChangeAfterACharge_mintsNothing). A genuine settlement
             // at that exact price is skipped too: deferred where the watermark only rises, but forgiven if
             // `NoWatermarkFee` resets or `BenchmarkFee`'s benchmark recovers before the next charge.
-            if (sharesPrice == lastChargedPrice[msg.sender]) return 0;
-            (fee, newWatermark) = _crystallize(sharesPrice, watermark, feePct, netSupply);
+            if (sharesPrice == 0 || sharesPrice == lastChargedPrice[msg.sender]) return 0;
+            (fee, newWatermark) = _crystallize(sharesPrice, watermark, rate, netSupply);
             if (fee == 0 && newWatermark == watermark) return 0;
         }
         highWatermark[msg.sender] = newWatermark;
         // Any later move without a charge retires the evidence (pinned: test/FeeStructures.t.sol::test_noWatermark_repeatAfterAResetIsCharged).
         lastChargedPrice[msg.sender] = fee != 0 ? sharesPrice : 0;
-        _afterWatermarkSet(feePct);
+        _afterWatermarkSet();
         emit WatermarkUpdated(msg.sender, watermark, newWatermark);
         emit PerformanceFeeCalculated(msg.sender, fee, sharesPrice, timeElapsed);
     }
@@ -75,7 +76,7 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
     ///      own records of what it read.
     /// @param sharesPrice  The current price per share (8 decimals).
     /// @param watermark    The fund's current watermark, never 0.
-    /// @param feePct       The performance fee rate in basis points.
+    /// @param feePct       The fee rate to charge at, in basis points, as `_recordRate` returned it.
     /// @param netSupply    totalSupply minus the fee receiver's balance.
     /// @return fee          Shares the caller mints to its fee receiver.
     /// @return newWatermark The watermark to store for the caller.
@@ -90,7 +91,12 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
         return true;
     }
 
+    /// @dev Called on every call for a seeded fund, skipped ones included, with the rate passed in; returns the
+    ///      rate to charge at. Defaults to the rate passed in.
+    function _recordRate(uint256 feePct) internal virtual returns (uint256) {
+        return feePct;
+    }
+
     /// @dev Runs after a new watermark is stored for `msg.sender`, on seeding and on every change.
-    /// @param feePct The fee rate passed in on the call that set the watermark.
-    function _afterWatermarkSet(uint256 feePct) internal virtual {}
+    function _afterWatermarkSet() internal virtual {}
 }

@@ -516,8 +516,11 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         one after it charges on whatever gain is above the watermark at that moment. The period is rolling, not tied
         to calendar dates: it restarts at every watermark move, including the first seed and a reset. ESMA's
         guidelines make once a year the default for European funds, with an exception for a whole-life watermark
-        like ours. Each charge uses the lowest rate in force during the period: a raise never reaches back over gains
-        made under a lower rate, and a cut applies to the period it lands in.</p>
+        like ours. Each charge uses the lowest rate passed in since the fund last owed nothing (since the watermark
+        moved, or since a settlement found the price at or below it): a raise never reaches back over gains made
+        under a lower rate, and a cut applies to every gain not yet charged. A raise sent right after a charge
+        therefore applies from the next period, or sooner if the price falls back to the watermark; one sent when a
+        period is due applies to the next period in full.</p>
     </div>
     <figure>
       <svg viewBox="0 0 1000 380" role="img" aria-labelledby="period-title period-desc">
@@ -634,10 +637,13 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     </figure>
     <div class="prose">
       <p>A feed with no code, a reverting, short or malformed reply, a read needing more than 100,000 gas, a
-        non-positive answer or a stale update defers the fee: nothing is seeded or charged, and the watermark and its
-        benchmark level stay put, so the fee is deferred rather than lost and settlements keep working. The feed address is a constructor argument, so it is
-        part of the module's address: a fund whose shares live on several chains cannot use one
-        <code>BenchmarkFee</code> address everywhere if the feed address differs per chain.</p>
+        non-positive or absurdly large answer, a change in the feed's decimals or a stale update defers the fee:
+        nothing is charged, and the watermark and its benchmark level stay put, so a seeded fund's fee is deferred
+        rather than lost and settlements keep working. A rate raised during the outage does not reach the deferred
+        gain. A fund not yet seeded is seeded at the first usable reading, and gains before it are not charged. The
+        feed address is a constructor argument, so it is part of the module's address: a fund whose shares live on
+        several chains cannot use one <code>BenchmarkFee</code> address everywhere if the feed address differs per
+        chain.</p>
       <p>The feed is read when the call executes, while the fund price can be older: the operator strikes it when
         preparing the settlement, and a rate change re-sends the last settled price. If the benchmark moved in
         between, the outperformance is mismeasured in either direction by about the fee rate times that move. Settle
