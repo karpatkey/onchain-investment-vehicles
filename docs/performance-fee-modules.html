@@ -163,6 +163,17 @@
   #calc-out { min-width: 940px; }
   .calc .check { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.5rem; align-self: end; padding-bottom: 0.6rem; color: var(--ink); }
   .calc .check input { width: auto; margin: 0; accent-color: var(--ink); }
+  .calc .wide { grid-column: 1 / -1; }
+  .calc select {
+    width: 100%; margin-top: 4px;
+    font: 400 1rem "Public Sans", system-ui, sans-serif;
+    color: var(--ink); background: #fff;
+    border: 1.5px solid var(--rule); border-radius: 6px; padding: 0.5rem 0.6rem;
+  }
+  #path-steps { min-width: 980px; }
+  #path-summary { min-width: 860px; }
+  #path-steps th[scope="row"], #path-summary th[scope="row"] { white-space: nowrap; }
+  #path-steps td.what, #path-steps th.what { text-align: left; }
 
   .choice { display: grid; grid-template-columns: 220px 1fr; gap: 0.4rem 1.6rem; max-width: 900px; }
   .choice dt { font-weight: 600; padding-top: 1rem; border-top: 1px solid var(--rule); }
@@ -192,7 +203,7 @@
   <p class="toc">On this page: <a href="#shared">what every module does</a> · <a href="#glance">the choices,
     the nine modules and their settings</a> · <a href="#sizings">sizing the fee</a> · <a href="#hurdles">hurdles</a>
     · <a href="#periodic">crystallization period and rate changes</a> · <a href="#benchmark">benchmark</a> ·
-    <a href="#no-watermark">no watermark</a> · <a href="#calculator">calculator</a> · <a href="#limits">what no
+    <a href="#no-watermark">no watermark</a> · <a href="#path">price paths with falls</a> · <a href="#calculator">calculator</a> · <a href="#limits">what no
     module fixes</a> · <a href="#choosing">choosing a module</a></p>
 </header>
 
@@ -358,7 +369,7 @@
         fee receiver starts with no shares, and the operator always reports price as NAV divided by
         total supply. The first settlement seeds every module's watermark at $1.00.</p>
     </div>
-    <div class="switch" role="group" aria-label="Fee module shown in the chart">
+    <div class="switch" id="tide-switch" role="group" aria-label="Fee module shown in the chart">
       <button type="button" data-v="gross" aria-pressed="false"><span class="swatch sw-gross"></span>WatermarkFee</button>
       <button type="button" data-v="post" aria-pressed="false"><span class="swatch sw-post"></span>PostFeeWatermarkFee</button>
       <button type="button" data-v="exact" aria-pressed="true"><span class="swatch sw-exact"></span>ExactWatermarkFee</button>
@@ -374,6 +385,8 @@
         path.</figcaption>
     </figure>
     <p class="readout" id="readout" aria-live="polite"></p>
+    <p class="note">This chart only rises. <a href="#path">Price paths with falls</a>, further down, runs every
+      module through falls, recoveries and the other edge cases.</p>
     <div class="prose">
       <h3>Charge 1: NAV rises to $1,200</h3>
       <p>The price reaches $1.20. Alice has gained $200, so a 20% fee is worth $40.</p>
@@ -823,6 +836,69 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     </figure>
   </section>
 
+  <section id="path">
+    <div class="prose">
+      <h2>Price paths with falls</h2>
+      <p>The charts above follow prices that mostly rise. Here the fund's NAV can go anywhere, and all nine modules
+        run through the same settlements. Pick a scenario or type your own path.</p>
+      <p>The simulation follows the contracts, not the formulas: 8-decimal prices, 18-decimal shares and the same
+        rounding; the first call seeds; a repeat of the last charged price is skipped; the period clock and the
+        lowest-rate record run as on-chain; and <code>KpkShares</code> rejects a settlement whose price is more than
+        30% from the last settled price, so the module never sees it. Investors hold 1,000 shares throughout, every
+        settlement reports NAV ÷ total supply, the fee receiver keeps its fee shares, and settlements are at least a
+        day apart, so each one calls the module.</p>
+    </div>
+    <form class="calc" id="path-form" onsubmit="return false">
+      <label class="wide">Scenario<select name="preset"></select></label>
+      <label class="wide">Fund NAV at each settlement, in $, comma-separated (the first one seeds)<input name="navs" type="text" spellcheck="false"></label>
+      <label class="wide"><span>Benchmark level at each settlement, for <code>BenchmarkFee</code> (blank or 0: feed unusable; missing values repeat the last)</span><input name="bench" type="text" spellcheck="false"></label>
+      <label>Days between settlements<input name="days" type="number" step="1" min="1" value="30" inputmode="numeric"></label>
+      <label>Fee rate (%)<input name="r" type="number" step="0.5" min="0" max="20" value="20" inputmode="decimal"></label>
+      <label>Crystallization period (days)<input name="period" type="number" step="1" min="0" value="0" inputmode="numeric"></label>
+      <label>Hurdle (% a year)<input name="h" type="number" step="0.5" min="0" value="10" inputmode="decimal"></label>
+      <label>Catch-up (%)<input name="c" type="number" step="1" min="0.01" max="100" value="100" inputmode="decimal"></label>
+      <label class="check"><input name="abs" type="checkbox">Benchmark requires an absolute gain</label>
+    </form>
+    <p class="note" id="path-preset-note"></p>
+    <p class="warn" id="path-warn" aria-live="polite"></p>
+    <div class="switch" id="path-switch" role="group" aria-label="Fee module shown in the price-path chart"></div>
+    <figure>
+      <svg id="path-chart" viewBox="0 0 1000 420" role="img" aria-labelledby="path-title path-desc">
+        <title id="path-title">Share price, watermark and fees along the chosen path</title>
+        <desc id="path-desc">The price at each settlement for the selected module, with fee drops, the watermark
+          after each settlement, and the threshold a hurdle or benchmark measured against. The table below gives
+          the same numbers.</desc>
+      </svg>
+      <figcaption>Coloured line: the price each settlement reports, with magenta drops where fee shares are minted.
+        Dashed: the watermark after each settlement. Dotted rings: the hurdle or benchmark threshold, where it differs
+        from the watermark. Filled dots charged a fee; hollow dots did not; crosses are settlements
+        <code>KpkShares</code> rejects. Hover a dot for what happened.</figcaption>
+    </figure>
+    <p class="readout" id="path-readout" aria-live="polite"></p>
+    <div class="scroll">
+      <table id="path-steps">
+        <thead>
+          <tr><th>Settlement</th><th>NAV</th><th>Price reported</th><th>Fee due above</th><th>Fee shares</th>
+            <th>Price after</th><th>Watermark after</th><th class="what">What happened</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="prose">
+      <h3>Every module on this path</h3>
+    </div>
+    <div class="scroll">
+      <table id="path-summary">
+        <thead>
+          <tr><th>Module</th><th>Settlements that charged</th><th>Fee shares</th><th>Investors paid, at each charge</th>
+            <th>As a share of the fund's net gain</th><th>Investors' value at the end</th>
+            <th>Fee shares worth at the end</th><th>Final watermark</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
   <section id="calculator">
     <div class="prose">
       <h2>Try your own numbers</h2>
@@ -938,8 +1014,9 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
 <footer class="wrap">
   <p>Sources: <code>src/FeeModules/</code> (<code>WatermarkFeeBase.sol</code> and the nine modules built on it);
     tests in <code>test/WatermarkFeeVariants.t.sol</code> and <code>test/FeeStructures.t.sol</code>; pull request
-    <a href="https://github.com/karpatkey/onchain-investment-vehicles/pull/66">#66</a>. Worked examples use each
-    module's formula without on-chain rounding. Written 2026-11-04; updated 2026-11-05 for the review fixes.</p>
+    <a href="https://github.com/karpatkey/onchain-investment-vehicles/pull/66">#66</a>. Worked examples and the
+    calculator use each module's formula without on-chain rounding; the price-path simulation uses the contracts'
+    integer arithmetic. Written 2026-11-04; updated 2026-11-05 for the review fixes.</p>
 </footer>
 
 <script>
@@ -1080,7 +1157,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     readout.innerHTML = `<strong>${m.name}.</strong> ${msg}${gained}`;
   }
 
-  const buttons = document.querySelectorAll('.switch button');
+  const buttons = document.querySelectorAll('#tide-switch button');
   buttons.forEach(b => b.addEventListener('click', () => {
     buttons.forEach(o => o.setAttribute('aria-pressed', String(o === b)));
     draw(b.dataset.v);
@@ -1307,6 +1384,388 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     `ExactWatermarkFee ${usd(exactSwing[last].post, 4)}`;
   el('text', { x: sx(last) + 16, y: sy(noWm[last].post) + 22, fill: '#B3261E', 'font-weight': 600 }, sl).textContent =
     `NoWatermarkFee ${usd(noWm[last].post, 4)}`;
+
+  // ── Price paths with falls ────────────────────────────────────────────────
+  // Integer arithmetic as on-chain: 8-decimal prices, 18-decimal shares, the contracts' rounding. Each branch
+  // mirrors WatermarkFeeBase.calculatePerformanceFee, PeriodicWatermarkFee._crystallize and the modules'
+  // _crystallize / _crystallizeDue; the deviation check mirrors KpkShares._validatePriceDeviation.
+  const E8 = 10n ** 8n, BPS = 10000n, DAY = 86400n, YEAR = 365n * DAY;
+  const N0 = 1000n * 10n ** 18n; // investor shares; the path has no subscriptions or redemptions
+  const MAX_DEVIATION_BPS = 3000n;
+  const FAMILY = new Set(['periodic', 'hard', 'soft', 'catch', 'bench', 'nowm']);
+  const mulDiv = (a, b, c, up = false) => up ? (a * b + c - 1n) / c : a * b / c;
+  const p8 = x => Number(x) / 1e8;
+  const e18 = x => Number(x) / 1e18;
+
+  function sizeExact(S, P, scaled) {
+    const fee = mulDiv(scaled, S, P * BPS - scaled);
+    return { fee, wm: fee === 0n ? P : P - scaled / BPS };
+  }
+
+  // WatermarkFee, PostFeeWatermarkFee and ExactWatermarkFee.
+  function plainCharge(id, st, P, W, r) {
+    if (P <= W) return { fee: 0n, wm: W, thr: W, note: 'at or below the watermark: nothing charged' };
+    if (id === 'exact') return { ...sizeExact(st.S, P, (P - W) * r), thr: W };
+    const fee = (P - W) * N0 / P * r / BPS;
+    if (id === 'gross' || fee === 0n) return { fee, wm: P, thr: W };
+    return { fee, wm: mulDiv(P, st.S, st.S + fee, true), thr: W };
+  }
+
+  // The six modules built on PeriodicWatermarkFee, once their period has run.
+  function dueCharge(id, st, P, W, r, elapsed, level, o) {
+    if (id === 'bench') {
+      if (level === 0n) return { fee: 0n, wm: W, thr: null, note: 'feed unusable: fee deferred' };
+      let T = mulDiv(W, level, st.B0, true);
+      if (P <= T) {
+        st.rate = 0n;
+        return { fee: 0n, wm: W, thr: T, note: 'no outperformance: nothing charged' };
+      }
+      if (o.abs && T < W) T = W;
+      if (P <= T) return { fee: 0n, wm: W, thr: T, note: 'beat the benchmark, but below the watermark itself' };
+      const res = sizeExact(st.S, P, (P - T) * r);
+      if (res.fee !== 0n || res.wm !== W) st.B0 = level;
+      return { ...res, thr: T };
+    }
+    if (id === 'periodic' || id === 'nowm') {
+      if (P < W && id === 'nowm') return { fee: 0n, wm: P, thr: W, note: 'fell: reference reset to this price' };
+      if (P <= W) return { fee: 0n, wm: W, thr: W, note: 'at or below the watermark: nothing charged' };
+      return { ...sizeExact(st.S, P, (P - W) * r), thr: W };
+    }
+    const H = W + mulDiv(W, o.hurdle * elapsed, BPS * YEAR, true);
+    if (P <= H) return { fee: 0n, wm: W, thr: H, note: 'at or below the hurdle: nothing charged' };
+    const full = (P - W) * r;
+    const scaled = id === 'hard' ? (P - H) * r : id === 'soft' ? full
+      : ((P - H) * o.catchUp < full ? (P - H) * o.catchUp : full);
+    return { ...sizeExact(st.S, P, scaled), thr: H };
+  }
+
+  function moduleCall(id, st, P, t, level, o) {
+    if (st.W === 0n) {
+      if (id === 'bench') {
+        if (level === 0n) return { fee: 0n, thr: null, note: 'not seeded: feed unusable' };
+        st.B0 = level;
+      }
+      st.W = P; st.last = 0n; st.setAt = t; st.rate = 0n;
+      return { fee: 0n, thr: null, note: 'seed: watermark set to this price, nothing charged' };
+    }
+    const family = FAMILY.has(id);
+    let r = o.rate;
+    if (family) {
+      r = st.rate;
+      if (r === 0n || o.rate < r) st.rate = r = o.rate;
+    }
+    if (P === st.last) return { fee: 0n, thr: null, note: 'repeat of the last charged price: skipped' };
+    const W = st.W;
+    let res;
+    if (!family) {
+      res = plainCharge(id, st, P, W, r);
+    } else {
+      const elapsed = t - st.setAt;
+      res = elapsed >= o.period ? dueCharge(id, st, P, W, r, elapsed, level, o)
+        : { fee: 0n, wm: W, thr: null, note: `period running: day ${elapsed / DAY} of ${o.period / DAY}` };
+      if (res.fee === 0n && res.wm === W && id !== 'bench' && P <= W) st.rate = 0n;
+    }
+    if (res.fee === 0n && res.wm === W) return res;
+    st.W = res.wm;
+    st.last = res.fee !== 0n ? P : 0n;
+    if (family) { st.setAt = t; st.rate = 0n; }
+    if (!res.note) res.note = res.fee !== 0n ? 'charged' : 'fee rounds to 0 shares: watermark moves';
+    return res;
+  }
+
+  function simulate(id, navs, levels, o) {
+    const st = { S: N0, R: 0n, W: 0n, last: 0n, setAt: 0n, rate: 0n, B0: 0n, settled: 0n };
+    return navs.map((nav, i) => {
+      const P = nav * E8 / st.S;
+      const step = { nav, P, wmBefore: st.W, rejected: false };
+      if (st.settled !== 0n) {
+        const dev = (P > st.settled ? P - st.settled : st.settled - P) * BPS / st.settled;
+        if (dev > MAX_DEVIATION_BPS) {
+          return { ...step, rejected: true, fee: 0n, post: P, wm: st.W, thr: null,
+                   note: `rejected by KpkShares: ${fmt(Number(dev) / 100, 2)}% from the last settled price`,
+                   inv: nav * N0 / st.S, rec: nav * st.R / st.S, paid: 0n };
+        }
+      }
+      st.settled = P;
+      const res = o.rate === 0n ? { fee: 0n, thr: null, note: 'fee rate 0: KpkShares does not call the module' }
+        : moduleCall(id, st, P, BigInt(i) * o.step, levels[i], o);
+      st.S += res.fee;
+      st.R += res.fee;
+      return { ...step, fee: res.fee, post: nav * E8 / st.S, wm: st.W, thr: res.thr ?? null, note: res.note,
+               inv: nav * N0 / st.S, rec: nav * st.R / st.S, paid: N0 * (P - nav * E8 / st.S) / E8 };
+    });
+  }
+
+  const PRESETS = {
+    fall: { name: 'Rise, fall below the watermark and the seed, recover past both',
+      navs: '1000, 1150, 1250, 1100, 950, 1050, 1200, 1300, 1350',
+      bench: '2000, 2100, 2300, 2200, 1900, 2000, 2200, 2300, 2400',
+      note: 'The watermark modules charge nothing from the fall until the old high is passed. NoWatermarkFee resets on the way down and charges the recovery. The hurdle keeps growing while the fund is under water.' },
+    early: { name: 'Falls straight after the seed, then recovers',
+      navs: '1000, 900, 800, 900, 1000, 1100, 1200',
+      bench: '2000, 1900, 1700, 1800, 2000, 2100, 2200',
+      note: 'Nothing is charged until the price is back above the seed, except under NoWatermarkFee, which resets at the low and charges the whole climb back.' },
+    saw: { name: 'Sawtooth around the watermark',
+      navs: '1000, 1100, 1050, 1100, 1050, 1120, 1080, 1150',
+      bench: '2000',
+      note: 'Each new high is charged once by the watermark modules; NoWatermarkFee charges every up-move.' },
+    crash: { name: 'Fall of about 25% in one settlement, slow recovery',
+      navs: '1000, 1200, 900, 800, 900, 1000, 1100, 1200, 1300',
+      bench: '2000, 2200, 1500, 1600, 1800, 1900, 2000, 2100, 2200',
+      note: 'Close to the 30% limit KpkShares allows in one settlement. The recovery back to the old high is free under every watermark module.' },
+    reject: { name: 'Fall of more than 30% in one settlement',
+      navs: '1000, 1200, 700, 900, 1000, 1150, 1300',
+      bench: '2000, 2200, 1500, 1800, 2000, 2100, 2200',
+      note: 'KpkShares rejects the settlement at NAV $700, so no module sees it, and the next settlement is checked against the last accepted price.' },
+    flat: { name: 'Swings and ends where it started',
+      navs: '1000, 900, 1000, 900, 1000',
+      bench: '2000',
+      note: 'The fund ends flat. Only NoWatermarkFee charges, on each recovery.' },
+    outage: { name: 'Benchmark feed down for two settlements',
+      navs: '1000, 1100, 1200, 1150, 1250, 1300',
+      bench: '2000, 2050, , , 2100, 2150',
+      note: 'BenchmarkFee defers while the feed is unusable and charges the outperformance once it is back. The other modules ignore the feed.' },
+    loss: { name: 'Fund loses money, but less than its benchmark',
+      navs: '1000, 950, 900, 880, 900',
+      bench: '2000, 1800, 1600, 1500, 1600',
+      note: 'BenchmarkFee charges although investors lost money, unless it requires an absolute gain. The watermark modules charge nothing.' },
+    rise: { name: 'Steady rise, for comparison',
+      navs: '1000, 1050, 1100, 1150, 1200, 1250',
+      bench: '2000, 2020, 2040, 2060, 2080, 2100',
+      note: 'A rise of 5% of the starting NAV each time, with the benchmark rising 1% a step.' },
+  };
+
+  const pform = document.getElementById('path-form');
+  const pwarn = document.getElementById('path-warn');
+  const pnote = document.getElementById('path-preset-note');
+  const pread = document.getElementById('path-readout');
+  const pstep = document.querySelector('#path-steps tbody');
+  const psum = document.querySelector('#path-summary tbody');
+  const pchart = document.getElementById('path-chart');
+  const player = el('g', {}, pchart);
+  const pswitch = document.getElementById('path-switch');
+  let pathModule = 'exact';
+
+  for (const [key, p] of Object.entries(PRESETS)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = p.name;
+    pform.elements.preset.appendChild(opt);
+  }
+  const custom = document.createElement('option');
+  custom.value = 'custom';
+  custom.textContent = 'Your own path';
+  pform.elements.preset.appendChild(custom);
+
+  for (const m of CALC_MODULES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.v = m.id;
+    b.setAttribute('aria-pressed', String(m.id === pathModule));
+    b.innerHTML = `<span class="swatch sw-${m.id}"></span>${m.name}`;
+    b.addEventListener('click', () => {
+      pathModule = m.id;
+      pswitch.querySelectorAll('button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+      renderPath();
+    });
+    pswitch.appendChild(b);
+  }
+
+  // A decimal string as an integer scaled by 10^dec, or null if it is not a plain non-negative decimal.
+  function toFixedInt(s, dec) {
+    if (!/^\d+(\.\d+)?$/.test(s)) return null;
+    const [i, f = ''] = s.split('.');
+    return BigInt(i + (f + '0'.repeat(dec)).slice(0, dec));
+  }
+  function parseList(str, dec, blankIsZero) {
+    const out = [];
+    for (const raw of str.split(',')) {
+      const s = raw.trim();
+      if (s === '' && blankIsZero) { out.push(0n); continue; }
+      const v = toFixedInt(s, dec);
+      if (v === null) return null;
+      out.push(v);
+    }
+    return out;
+  }
+
+  function cell(tr, text, cls) {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (cls) td.className = cls;
+    tr.appendChild(td);
+  }
+
+  function drawPathChart(s, m, days) {
+    player.replaceChildren();
+    const n = s.length;
+    const X0 = 100, X1 = 950, T = 24, B = 340;
+    const x = i => X0 + i * (X1 - X0) / Math.max(1, n - 1);
+    const vals = [];
+    for (const st of s) {
+      vals.push(p8(st.P), p8(st.post));
+      if (st.wm) vals.push(p8(st.wm));
+      if (st.thr) vals.push(p8(st.thr));
+    }
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.08 || 0.05;
+    lo -= pad; hi += pad;
+    const y = p => T + (hi - p) / (hi - lo) * (B - T);
+    const raw = (hi - lo) / 5, mag = 10 ** Math.floor(Math.log10(raw));
+    const tick = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw);
+    const g = el('g', { 'font-family': 'Public Sans, system-ui, sans-serif', 'font-size': 13.5, fill: '#5D7380' }, player);
+    for (let v = Math.ceil(lo / tick) * tick; v <= hi; v += tick) {
+      el('line', { x1: X0 - 20, x2: X1 + 30, y1: y(v), y2: y(v), stroke: '#C9DCE4', 'stroke-dasharray': '2 5' }, g);
+      el('text', { x: X0 - 28, y: y(v) + 5, 'text-anchor': 'end' }, g).textContent = usd(v, tick < 0.01 ? 3 : 2);
+    }
+    const every = Math.ceil(n / 10);
+    s.forEach((st, i) => {
+      el('line', { x1: x(i), x2: x(i), y1: T, y2: B, stroke: '#E3EDF1' }, g);
+      if (i % every) return;
+      el('text', { x: x(i), y: B + 24, 'text-anchor': 'middle', fill: '#12324A' }, g).textContent = usd(e18(st.nav), 0);
+      el('text', { x: x(i), y: B + 42, 'text-anchor': 'middle' }, g).textContent = `day ${i * days}`;
+    });
+    el('text', { x: X0 - 28, y: B + 24, 'text-anchor': 'end', fill: '#12324A' }, g).textContent = 'NAV';
+
+    let wd = '';
+    s.forEach((st, i) => {
+      if (!st.wm) return;
+      const yw = y(p8(st.wm));
+      wd += `${wd ? 'L' : 'M'}${x(i)},${yw} L${i < n - 1 ? x(i + 1) : X1 + 30},${yw} `;
+    });
+    if (wd) el('path', { d: wd, fill: 'none', stroke: '#6E9DB2', 'stroke-width': 2, 'stroke-dasharray': '7 5' }, player);
+
+    let pd = '';
+    s.forEach((st, i) => {
+      if (st.rejected) return;
+      pd += `${pd ? 'L' : 'M'}${x(i)},${y(p8(st.P))} `;
+      if (st.fee > 0n) pd += `L${x(i)},${y(p8(st.post))} `;
+    });
+    el('path', { d: pd, fill: 'none', stroke: m.color, 'stroke-width': 3, 'stroke-linejoin': 'round' }, player);
+
+    const labels = el('g', { 'font-family': 'Public Sans, system-ui, sans-serif', 'font-size': 12.5, fill: '#A3266E' }, player);
+    s.forEach((st, i) => {
+      if (st.fee === 0n) return;
+      el('line', { x1: x(i), x2: x(i), y1: y(p8(st.P)), y2: y(p8(st.post)), stroke: '#A3266E', 'stroke-width': 5,
+                   'stroke-linecap': 'round' }, player);
+      if (n <= 12) el('text', { x: x(i), y: y(p8(st.P)) - 14, 'text-anchor': 'middle' }, labels).textContent =
+        `${fmt(e18(st.fee), 2)} fee shares`;
+    });
+    s.forEach((st, i) => {
+      if (!st.thr || st.thr === st.wmBefore) return;
+      const ring = el('circle', { cx: x(i), cy: y(p8(st.thr)), r: 5, fill: '#FAFCFC', stroke: m.color, 'stroke-width': 2,
+                                  'stroke-dasharray': '2 2' }, player);
+      el('title', {}, ring).textContent = `Day ${i * days}: fee due above ${usd(p8(st.thr), 4)}`;
+    });
+    s.forEach((st, i) => {
+      const cx = x(i), cy = y(p8(st.P));
+      let node;
+      if (st.rejected) {
+        node = el('path', { d: `M${cx - 6},${cy - 6} L${cx + 6},${cy + 6} M${cx - 6},${cy + 6} L${cx + 6},${cy - 6}`,
+                            stroke: '#B3261E', 'stroke-width': 3, 'stroke-linecap': 'round' }, player);
+      } else {
+        node = el('circle', { cx, cy, r: 6, fill: st.fee > 0n ? m.color : '#FAFCFC', stroke: m.color, 'stroke-width': 2.5 }, player);
+      }
+      el('title', {}, node).textContent = `Day ${i * days}, price ${usd(p8(st.P), 4)}: ${st.note}`;
+    });
+  }
+
+  function renderPath() {
+    const f = pform.elements;
+    const navs = parseList(f.navs.value, 18, false);
+    const levels = parseList(f.bench.value, 8, true);
+    const v = k => Number(f[k].value);
+    const days = v('days'), r = v('r'), period = v('period'), h = v('h'), c = v('c');
+    let problem = '';
+    if (!navs || navs.length < 2 || navs.length > 30 || navs.some(x => x === 0n)) {
+      problem = 'Enter 2 to 30 NAVs above 0, separated by commas, such as 1000, 1100, 950.';
+    } else if (!levels) {
+      problem = 'Enter benchmark levels as numbers separated by commas; leave one blank or 0 for an unusable feed.';
+    } else if (![days, r, period, h, c].every(Number.isFinite) || !Number.isInteger(days) || days < 1
+               || r < 0 || r > 20 || !Number.isInteger(period) || period < 0 || h < 0 || c < 0.01 || c > 100) {
+      problem = 'Use whole days of at least 1, a fee rate from 0 to 20% (KpkShares\u2019 maximum), whole period days, '
+        + 'a hurdle of 0 or more and a catch-up from 0.01 to 100%.';
+    }
+    pwarn.textContent = problem;
+    if (problem) return;
+    while (levels.length < navs.length) levels.push(levels[levels.length - 1]);
+    const o = { step: BigInt(days) * DAY, rate: BigInt(Math.round(r * 100)), period: BigInt(period) * DAY,
+                hurdle: BigInt(Math.round(h * 100)), catchUp: BigInt(Math.round(c * 100)), abs: f.abs.checked };
+    const sims = Object.fromEntries(CALC_MODULES.map(m => [m.id, simulate(m.id, navs, levels, o)]));
+    const m = CALC_MODULES.find(x => x.id === pathModule);
+    const s = sims[pathModule];
+    drawPathChart(s, m, days);
+
+    pstep.replaceChildren();
+    s.forEach((st, i) => {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.scope = 'row';
+      th.textContent = `day ${i * days}`;
+      tr.appendChild(th);
+      cell(tr, usd(e18(st.nav)));
+      cell(tr, usd(p8(st.P), 4));
+      cell(tr, st.thr ? usd(p8(st.thr), 4) : '\u2014');
+      cell(tr, st.fee > 0n ? fmt(e18(st.fee), 2) : '0');
+      cell(tr, st.rejected ? '\u2014' : usd(p8(st.post), 4));
+      cell(tr, st.wm ? usd(p8(st.wm), 4) : 'not set');
+      cell(tr, st.note, 'what');
+      pstep.appendChild(tr);
+    });
+
+    const gain = e18(navs[navs.length - 1] - navs[0]);
+    // What investors give up at each charge (their value just before minus just after), not what the fee shares
+    // are worth later: the receiver's shares go on rising and falling with the fund like everyone else's.
+    const summary = id => {
+      const t = sims[id], end = t[t.length - 1];
+      const paid = e18(t.reduce((a, x) => a + x.paid, 0n));
+      const share = paid === 0 ? '\u2014' : gain > 0 ? pct(paid / gain) : 'charged on a fund that did not gain';
+      return { charged: t.filter(x => x.fee > 0n).length, fees: e18(t.reduce((a, x) => a + x.fee, 0n)), paid,
+               rec: e18(end.rec), inv: e18(end.inv), share, wm: end.wm };
+    };
+    psum.replaceChildren();
+    for (const mod of CALC_MODULES) {
+      const sm = summary(mod.id);
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.scope = 'row';
+      th.innerHTML = `<span class="swatch" style="background:${mod.color}"></span>${mod.name}`;
+      tr.appendChild(th);
+      for (const text of [String(sm.charged), fmt(sm.fees, 2), usd(sm.paid), sm.share, usd(sm.inv), usd(sm.rec),
+                          sm.wm ? usd(p8(sm.wm), 4) : 'not set']) cell(tr, text);
+      psum.appendChild(tr);
+    }
+
+    const sm = summary(pathModule);
+    const rejected = s.filter(x => x.rejected).length;
+    const result = sm.paid === 0 ? 'no fee is charged'
+      : `investors pay ${usd(sm.paid)} in fees at the charges, `
+        + (gain > 0 ? `${sm.share} of the fund's ${usd(gain)} net gain`
+                    : `although the fund ${gain < 0 ? `ended ${usd(-gain)} down` : 'ended flat'}`);
+    pread.innerHTML = `<strong>${m.name}.</strong> ${sm.charged} of the ${s.length - 1} settlements after the first `
+      + `charged a fee, ${fmt(sm.fees, 2)} fee shares in all: ${result}. Investors' 1,000 shares go from `
+      + `${usd(e18(s[0].inv))} to ${usd(sm.inv)}; the fee shares are worth ${usd(sm.rec)} at the end. Final watermark: `
+      + `${sm.wm ? usd(p8(sm.wm), 4) : 'never set'}.`
+      + (rejected ? ` ${rejected} settlement${rejected > 1 ? 's were' : ' was'} rejected by KpkShares.` : '');
+  }
+
+  function loadPreset(key) {
+    const p = PRESETS[key];
+    pnote.textContent = p ? p.note : 'Your own path: edit the NAVs and benchmark levels above.';
+    if (!p) return;
+    pform.elements.navs.value = p.navs;
+    pform.elements.bench.value = p.bench;
+  }
+  pform.elements.preset.addEventListener('change', () => { loadPreset(pform.elements.preset.value); renderPath(); });
+  pform.addEventListener('input', e => {
+    if (e.target.name === 'navs' || e.target.name === 'bench') {
+      pform.elements.preset.value = 'custom';
+      loadPreset('custom');
+    }
+    if (e.target.name !== 'preset') renderPath();
+  });
+  loadPreset('fall');
+  renderPath();
 })();
 </script>
 </body>
