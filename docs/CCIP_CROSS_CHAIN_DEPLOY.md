@@ -392,9 +392,10 @@ Once `--check` exits 0, record it in `script/deployed-infra.json` and `docs/DEPL
 The registry row keeps `excluded: true`: the flag means "outside the constructor-baked registry",
 which `test/CcipNetworksSync.t.sol` pins, so the repo helpers (`deploy-all.sh`'s fan-out list and
 `CcipDeployEverywhere.setChainSelectors`) keep skipping the chain. On-chain it is a normal
-destination once wired: the default `deployEverywhere` on every counterpart (and from the chain
-itself) includes it and pays its CCIP fee. To leave it out of a fund, pass an explicit
-`destChainIds`.
+destination once wired: the default (no-array) `deployEverywhere` on a counterpart with an outbound
+lane to it sends it the fund's stack and pays that CCIP fee, unless it is one of the fund's shares
+chains. To leave it out, pass an explicit `destChainIds` from that counterpart. A fund originating on
+the chain itself deploys locally and fans out to its own lanes the same way.
 
 ## Usage — from a block explorer (no script needed)
 
