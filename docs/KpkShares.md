@@ -123,7 +123,7 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 
 #### Performance fee modules
 
-All modules share `WatermarkFeeBase` (seeding, per-fund keying, events). None is deployed; which one a fund uses is still open. Worked examples, diagrams and a calculator: [watermark-fee-modules.html](watermark-fee-modules.html).
+All modules share `WatermarkFeeBase` (seeding, per-fund keying, events). None is deployed; which one a fund uses is still open. Worked examples, diagrams and a calculator: [performance-fee-modules.html](performance-fee-modules.html).
 
 **Watermark sizing.** Three modules that differ only in how a gain becomes fee shares and where the watermark lands afterwards:
 
