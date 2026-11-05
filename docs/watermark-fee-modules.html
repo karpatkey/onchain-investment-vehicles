@@ -152,6 +152,8 @@
   table.glance td:first-child { white-space: nowrap; }
   table.glance td:first-child a { color: var(--ink); font-weight: 600; text-decoration-color: var(--sound); }
   #glance .note { margin-top: 0.8rem; }
+  table.rates { min-width: 620px; max-width: 900px; }
+  table.rates th, table.rates td { text-align: left; vertical-align: top; }
   #calc-out th[scope="row"] { white-space: nowrap; }
   #calc-out { min-width: 940px; }
   .calc .check { flex-direction: row; align-items: center; justify-content: flex-start; gap: 0.5rem; align-self: end; padding-bottom: 0.6rem; color: var(--ink); }
@@ -204,12 +206,13 @@
     <p>The first call seeds the reference at the price it is given and charges nothing. After that each module
       decides whether the price owes a fee, how many fee shares to mint, and where the reference goes next; a
       call that changes nothing leaves no trace. For the three watermark modules, a price at or below the
-      watermark charges nothing and leaves the watermark where it is. Two calls are always ignored: a price of 0,
+      watermark charges nothing and leaves the watermark where it is. Two calls never charge: a price of 0,
       which is what <code>KpkShares</code> passes for an asset it has never settled, and a repeat of the price the
       module last charged at while that charge's watermark stands. <code>setPerformanceFeeRate</code> sends that
       price back, the price before that settlement's fee, and a module whose watermark sits at the post-fee price
       would otherwise charge it again. A genuine settlement at exactly that price is skipped too, which defers its
-      fee, or forgives it if a <code>NoWatermarkFee</code> reset or a benchmark recovery comes first.
+      fee, or forgives it if a <code>NoWatermarkFee</code> reset or a benchmark recovery comes first. For the six
+      modules with the <a href="#periodic">lowest-rate rule</a>, a skipped call still counts the rate it passes.
       The <code>timeElapsed</code> argument is passed through to an event; the hurdle and period modules keep
       their own clock.</p>
     <p>Nothing here moves money directly. The module returns a number of shares, and
@@ -516,11 +519,31 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         one after it charges on whatever gain is above the watermark at that moment. The period is rolling, not tied
         to calendar dates: it restarts at every watermark move, including the first seed and a reset. ESMA's
         guidelines make once a year the default for European funds, with an exception for a whole-life watermark
-        like ours. Each charge uses the lowest rate passed in since the fund last owed nothing (since the watermark
-        moved, or since a settlement found the price at or below it): a raise never reaches back over gains made
-        under a lower rate, and a cut applies to every gain not yet charged. A raise sent right after a charge
-        therefore applies from the next period, or sooner if the price falls back to the watermark; one sent when a
-        period is due applies to the next period in full.</p>
+        like ours.</p>
+      <p>The six modules built on <code>PeriodicWatermarkFee</code> (this one, the three hurdles,
+        <code>BenchmarkFee</code> and <code>NoWatermarkFee</code>) charge at the lowest rate passed in since the fund
+        last owed nothing, whatever their period. The fund owes nothing when the watermark moves, or when a
+        settlement finds the price at or below it (for <code>BenchmarkFee</code>, finds no outperformance). Every
+        call counts, including the rate-change call and settlements that change nothing, so a raise never reaches
+        back over gains made under a lower rate, and a cut applies to every gain not yet charged.</p>
+    </div>
+    <div class="scroll">
+      <table class="rates">
+        <thead><tr><th>The admin, with a one-year period</th><th>The current period is charged at</th><th>The new rate applies from</th></tr></thead>
+        <tbody>
+          <tr><td>raises the rate mid-period, including the same day as a charge</td><td>the old rate</td><td>the next period</td></tr>
+          <tr><td>raises it after a period has run, before the next settlement</td><td>the old rate, charged by the rate-change call itself</td><td>the next period, in full</td></tr>
+          <tr><td>raises it, and a later settlement finds the price at or below the watermark</td><td>the new rate, since nothing earlier is still owed</td><td>that settlement</td></tr>
+          <tr><td>cuts the rate</td><td>the new rate</td><td>at once, including gains not yet charged</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose">
+      <p class="note">So a raise is best sent once a period has run: the rate-change call charges that period at
+        the old rate and the next one runs entirely at the new rate. With no period the same rule holds: unless the
+        fund owed nothing when the rate changed, the first charge after a raise is still at the old rate, because it
+        covers gains made before the raise. Each row is a test in <code>test/FeeStructures.t.sol</code> or
+        <code>test/WatermarkFeeVariants.t.sol</code>.</p>
     </div>
     <figure>
       <svg viewBox="0 0 1000 380" role="img" aria-labelledby="period-title period-desc">
@@ -671,8 +694,8 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <h2>Try your own numbers</h2>
       <p>One charge, from a watermark to a new price, for all nine modules. The rates are percentages here;
         the contracts take basis points. The hurdle, benchmark and period settings only affect the modules that
-        use them, and the period applies to the six modules after the first three. Management fees and on-chain
-        rounding are left out.</p>
+        use them, and the period applies to the six modules after the first three. Management fees, rate changes
+        and on-chain rounding are left out.</p>
     </div>
     <form class="calc" id="calc" onsubmit="return false">
       <label>Watermark ($ per share)<input name="w" type="number" step="0.0001" min="0" value="1.00" inputmode="decimal"></label>
@@ -761,7 +784,8 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <dt><span class="swatch sw-periodic"></span>PeriodicWatermarkFee</dt>
       <dd>Use when fees should crystallize at most once per period, as ESMA's once-a-year default expects; the period is rolling, not tied to calendar dates. Investors who
         redeem mid-period escape that period's fee; those who subscribe mid-period pay for gains made before
-        they joined.</dd>
+        they joined. With this module and the five built on it, send a rate raise once a period has run; sent
+        mid-period, it waits for the next one.</dd>
       <dt><span class="swatch sw-bench"></span>BenchmarkFee</dt>
       <dd>Use when the mandate is to beat a market. Set <code>requireAbsoluteGain</code> unless charging in a
         year when investors lost money is intended. Needs a feed at the same address on every chain the
@@ -781,7 +805,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
   <p>Sources: <code>src/FeeModules/</code> (<code>WatermarkFeeBase.sol</code> and the nine modules built on it);
     tests in <code>test/WatermarkFeeVariants.t.sol</code> and <code>test/FeeStructures.t.sol</code>; pull request
     <a href="https://github.com/karpatkey/onchain-investment-vehicles/pull/66">#66</a>. Worked examples use each
-    module's formula without on-chain rounding. Written 2026-11-04.</p>
+    module's formula without on-chain rounding. Written 2026-11-04; updated 2026-11-05 for the review fixes.</p>
 </footer>
 
 <script>
