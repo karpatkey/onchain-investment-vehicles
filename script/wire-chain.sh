@@ -157,6 +157,11 @@ for name in $deployed; do
   fi
   # The chain's own registry must know the counterpart too; constructor-seeded peers already do.
   known=$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$pid")
+  # A counterpart outside the baked registry (`excluded`) can only be known through an executed step 1,
+  # so it counts as execution having begun; a constructor-seeded one does not.
+  if [ "$known" = "$psel" ] && [ "$(echo "$peer" | jq -r '.excluded // false')" = "true" ]; then
+    present=$((present + 1))
+  fi
   if [ "$known" != "$psel" ]; then
     [ "$known" = "0" ] || die "$CHAIN maps $pid to selector $known, not $psel: correct it by hand"
     accept_txs+=("$(tx "$pid" "$psel")")
