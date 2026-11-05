@@ -33,7 +33,7 @@
 # mode never touches an existing directory: track execution with --check, and delete the directory by
 # hand only to regenerate before anything was executed.
 set -Eeuo pipefail
-trap 'echo "wire-chain.sh: failed at line $LINENO" >&2; exit 2' ERR
+trap '[ "$BASH_SUBSHELL" -gt 0 ] || echo "wire-chain.sh: failed at line $LINENO" >&2; exit 2' ERR
 
 die() { echo "$*" >&2; exit 2; }
 CHAIN="${1:-}"
@@ -131,7 +131,10 @@ ORDER="Execute in file order: 1-$CHAIN.json (if present), then every 2-<counterp
 echo "=== CCIP wiring of $CHAIN (chainId $ID, selector $SEL); orchestrator $ORCH ==="
 accept_txs=()
 counterpart_batches=()
-for name in $(jq -r '.chains[] | select(.deployed == true) | .name' "$INFRA"); do
+deployed=$(jq -r '.chains[] | select(.deployed == true) | .name' "$INFRA")
+[ -n "$deployed" ] || die "no deployed chains in $INFRA"
+present=0
+for name in $deployed; do
   [ "$name" != "$CHAIN" ] || continue
   peer=$(row "$name"); [ -n "$peer" ] || die "$name is in deployed-infra.json but not in the registry"
   pid=$(echo "$peer" | jq -r .chainId); psel=$(echo "$peer" | jq -r .ccipChainSelector)
@@ -146,6 +149,7 @@ for name in $(jq -r '.chains[] | select(.deployed == true) | .name' "$INFRA"); d
   have=$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$name" "$ID")
   if [ "$have" = "$SEL" ]; then
     echo "  $name: already lists $CHAIN"
+    present=$((present + 1))
   elif [ "$have" != "0" ]; then
     die "$name maps $ID to selector $have, not $SEL: correct it by hand, this script only adds"
   else
@@ -169,6 +173,7 @@ done
 own=$(call "$ORCH" 'chainSelectorOf(uint256)(uint64)' "$CHAIN" "$ID")
 if [ "$own" = "$SEL" ]; then
   echo "  $CHAIN: own id already set (can originate)"
+  present=$((present + 1))
   # Origin open while counterparts still reject it: a fan-out from here can lose CCIP fees right now.
   if [ "$pending" -gt 0 ]; then
     echo "  WARNING: $CHAIN can already originate while $pending entr(y/ies) are pending: execute them now" >&2
@@ -186,6 +191,9 @@ if [ "$MODE" = "--check" ]; then
   exit 1
 fi
 [ "$pending" -gt 0 ] || { echo "$CHAIN is fully wired: nothing to write"; exit 0; }
+# Execution has begun but the directory is gone: regenerating now would commit a smaller set than the
+# Council reviewed and signed. Restore the directory from git instead.
+[ "$present" -eq 0 ] || die "$present entr(y/ies) already on-chain and $pending pending: execution has begun, so restore $OUT from git rather than regenerating it"
 jq -n --arg chain "$CHAIN" --argjson id "$ID" --arg sel "$SEL" --arg orch "$ORCH" --arg order "$ORDER" \
   '{chain: $chain, chainId: $id, ccipChainSelector: $sel, orchestrator: $orch, order: $order, files: $ARGS.positional}' \
   --args "${files[@]}" > "$STAGE/manifest.json"

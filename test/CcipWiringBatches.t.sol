@@ -38,6 +38,7 @@ contract CcipWiringBatchesTest is Test {
     // ── The committed batches ────────────────────────────────────────────────────────────────────
 
     function test_wiringBatchesMatchTheRegistryAndTheOrder() public view {
+        uint256 checked;
         Vm.DirEntry[] memory dirs = vm.readDir("script/safe-txs");
         for (uint256 d = 0; d < dirs.length; d++) {
             if (!dirs[d].isDir || !vm.contains(dirs[d].path, "/ccip-wire-")) continue;
@@ -51,9 +52,13 @@ contract CcipWiringBatchesTest is Test {
             this.checkManifest(wired, manifest, names);
             for (uint256 f = 0; f < entries.length; f++) {
                 if (_eq(names[f], "manifest.json")) continue;
-                this.checkBatch(wired, names[f], vm.readFile(entries[f].path));
+                checked += this.checkBatch(wired, names[f], vm.readFile(entries[f].path));
             }
         }
+        // The Robinhood batches are the reviewed record of what the Council signs: they stay committed
+        // after execution, so their absence is a lost record, not a finished wiring.
+        assertTrue(vm.isDir("script/safe-txs/ccip-wire-robinhood"), "ccip-wire-robinhood is missing");
+        assertGt(checked, 0, "no wiring batch found under script/safe-txs/ccip-wire-*");
     }
 
     // ── Negative controls (synthetic batches, independent of what is committed) ───────────────────
@@ -92,6 +97,53 @@ contract CcipWiringBatchesTest is Test {
         string memory e = vm.replace(_entry("4663", "6180753054346818345"), '"data": null', '"data": "0xdeadbeef"');
         vm.expectRevert(bytes("2-base.json: raw data beside contractMethod"));
         this.checkBatch("robinhood", "2-base.json", _batch("8453", e));
+    }
+
+    function test_rejectsFalsyRawCalldata() public {
+        string memory e = vm.replace(
+            _entry("4663", "6180753054346818345"),
+            '"data": null',
+            '"data": "0x0000000000000000000000000000000000000000000000000000000000000000"'
+        );
+        vm.expectRevert(bytes("2-base.json: raw data beside contractMethod"));
+        this.checkBatch("robinhood", "2-base.json", _batch("8453", e));
+    }
+
+    function test_rejectsAStepOnTheWrongChain() public {
+        string memory b = _batch("4663", _entry("4663", "6180753054346818345"));
+        vm.expectRevert(bytes("2-robinhood.json: steps 1 and 3 run on the wired chain, 2 elsewhere"));
+        this.checkBatch("robinhood", "2-robinhood.json", b);
+    }
+
+    function test_rejectsASelectorOffTheRegistry() public {
+        string memory b = _batch("8453", _entry("4663", "6180753054346818346"));
+        vm.expectRevert(
+            bytes("2-base.json: selector differs from the registry: 6180753054346818346 != 6180753054346818345")
+        );
+        this.checkBatch("robinhood", "2-base.json", b);
+    }
+
+    function test_rejectsAnotherOwner() public {
+        string memory b = vm.replace(
+            _batch("8453", _entry("4663", "6180753054346818345")),
+            vm.toString(owner),
+            "0x000000000000000000000000000000000000dEaD"
+        );
+        vm.expectRevert(
+            bytes(
+                "2-base.json: not the owner: 0x000000000000000000000000000000000000dEaD != 0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537"
+            )
+        );
+        this.checkBatch("robinhood", "2-base.json", b);
+    }
+
+    function test_rejectsAManifestNamingAnotherFile() public {
+        string[] memory names = new string[](3);
+        names[0] = "2-base.json";
+        names[1] = "3-robinhood.json";
+        names[2] = "manifest.json";
+        vm.expectRevert(bytes("ccip-wire-robinhood: manifest and files differ"));
+        this.checkManifest("robinhood", _manifest('"2-ethereum.json","3-robinhood.json"'), names);
     }
 
     function test_rejectsAManifestMissingAFile() public {
@@ -179,6 +231,13 @@ contract CcipWiringBatchesTest is Test {
             }
         }
         assertGt(txs, 0, string.concat(file, ": empty batch"));
+        // The Builder sends a truthy `data` as raw calldata instead of encoding `contractMethod`, and
+        // the JSON cheatcodes read null, false and "0x00…" alike, so pin the text: every entry carries
+        // exactly `"data": null`, as wire-chain.sh writes it.
+        assertTrue(
+            vm.split(batch, '"data"').length == txs + 1 && vm.split(batch, '"data": null').length == txs + 1,
+            string.concat(file, ": raw data beside contractMethod")
+        );
         if (step != 1) assertTrue(txs == 1, string.concat(file, ": step ", parts[0], " must hold exactly one entry"));
     }
 
@@ -187,12 +246,6 @@ contract CcipWiringBatchesTest is Test {
     function _checkEntry(string memory batch, string memory file, string memory t) internal view returns (uint256) {
         assertEq(batch.readAddress(string.concat(t, ".to")), orchestrator, string.concat(file, ": wrong target"));
         assertEq(batch.readString(string.concat(t, ".value")), "0", string.concat(file, ": sends value"));
-        // The Builder encodes from `contractMethod`; a raw `data` beside it must not exist (null only).
-        string memory data = string.concat(t, ".data");
-        assertTrue(
-            !vm.keyExists(batch, data) || keccak256(vm.parseJson(batch, data)) == keccak256(abi.encode(bytes32(0))),
-            string.concat(file, ": raw data beside contractMethod")
-        );
         assertEq(
             batch.readString(string.concat(t, ".contractMethod.name")),
             "setChainSelector",
