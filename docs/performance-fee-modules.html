@@ -172,7 +172,13 @@
     .choice dd { border-top: none; padding-top: 0; }
   }
   footer { margin-top: 4rem; padding: 2rem 0 4rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.92rem; }
+  .katex-display { overflow-x: auto; overflow-y: hidden; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css" integrity="sha384-WwGtaC6ywCHxA5cstpj/3+xIZvTez8dq2IcBQaXRkenHZ7FVVq1ZROtURwfbtTlG" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.js" integrity="sha384-a1WQdjRj162i159OYq041X6I4K8NenkrI09LlPmiHg0YOb7CR+wJOraXwK9abpnE" crossorigin="anonymous"></script>
+<!-- Only \( \) and \[ \]: the page is full of dollar amounts, so `$` cannot be a math delimiter. -->
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/contrib/auto-render.min.js" integrity="sha384-bjyGPfbij8/NDKJhSGZNP/khQVgtHUE5exjm4Ydllo42FwIgYsdLO2lXGmRBf5Mz" crossorigin="anonymous"
+  onload="renderMathInElement(document.getElementById('formulas'), {delimiters: [{left: '\\[', right: '\\]', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
 </head>
 <body>
 
@@ -470,42 +476,76 @@
     </figure>
   </section>
 
-  <section>
+  <section id="formulas">
     <div class="prose">
       <h2>The formulas</h2>
-      <p>With price <var>P</var>, watermark <var>W</var>, rate <var>r</var>, investor shares
-        <var>N</var> (<code>netSupply</code>) and total supply <var>S</var>. Each block is the fee step of the
-        module's <code>_crystallize</code>; when <var>P</var> ≤ <var>W</var> all three return first, charging
-        nothing and leaving the watermark where it is.</p>
+      <p>With price \(P\), watermark \(W\), fee rate \(r\) (the basis points divided by 10,000), investor shares
+        \(N\) (<code>netSupply</code>) and total supply \(S\); \(f\) is the number of fee shares minted and \(W'\) the
+        watermark after the call. Each block is the fee step of the module's <code>_crystallize</code>; when
+        \(P \le W\) all three return first, charging nothing and leaving the watermark where it is.</p>
 
       <h3><span class="swatch sw-gross"></span>WatermarkFee</h3>
-      <p>fee = (<var>P</var> − <var>W</var>) · <var>N</var> / <var>P</var> · <var>r</var>; watermark → <var>P</var></p>
+      \[ f = r\,\frac{(P - W)\,N}{P}, \qquad W' = P \]
 <pre><code>uint256 totalProfit = ((sharesPrice - watermark) * netSupply) / sharesPrice;
 fee = (totalProfit * feePct) / 10_000;
 newWatermark = sharesPrice;</code></pre>
 
       <h3><span class="swatch sw-post"></span>PostFeeWatermarkFee</h3>
-      <p>fee as above; watermark → <var>P</var> · <var>S</var> / (<var>S</var> + fee), the price after the mint</p>
+      <p>The same \(f\), with the watermark moved to the price after the mint:</p>
+      \[ W' = \left\lceil \frac{P\,S}{S + f} \right\rceil \]
 <pre><code>(fee, newWatermark) = super._crystallize(sharesPrice, watermark, feePct, netSupply);
 if (fee == 0) return (fee, newWatermark);
 uint256 supply = IERC20(msg.sender).totalSupply();
 newWatermark = Math.mulDiv(sharesPrice, supply, supply + fee, Math.Rounding.Ceil);</code></pre>
 
       <h3><span class="swatch sw-exact"></span>ExactWatermarkFee</h3>
-      <p>per-share fee <var>a</var> = <var>r</var> · (<var>P</var> − <var>W</var>);
-        fee = <var>a</var> · <var>S</var> / (<var>P</var> − <var>a</var>); watermark → <var>P</var> − <var>a</var></p>
+      <p>A per-share fee \(a\), then the shares that take exactly \(a\) from every share:</p>
+      \[ a = r\,(P - W), \qquad f = \frac{a\,S}{P - a}, \qquad W' = P - a \]
 <pre><code>// scaledFee = (sharesPrice - watermark) * feePct, i.e. a * 10_000
 if (netSupply == 0) return (0, sharesPrice);
 uint256 supply = IERC20(msg.sender).totalSupply();
 fee = Math.mulDiv(scaledFee, supply, sharesPrice * 10_000 - scaledFee);
 newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code></pre>
-      <p>Minting <var>a</var> · <var>S</var> / (<var>P</var> − <var>a</var>) shares leaves every share
-        worth <var>P</var> − <var>a</var>. Investors lose <var>a</var> per share, to within one price unit of rounding. The receiver's
-        existing shares lose <var>a</var> too, but its new shares are worth <var>a</var> · <var>S</var>, so
-        it nets <var>a</var> · <var>N</var>: the fee on investor shares and nothing on its own.</p>
-      <p>This sizing lives in <code>_sizeExact</code>, and every module in the next section reuses it with its own
-        <var>a</var>. Every module except <code>WatermarkFee</code> reads <code>totalSupply()</code> from the
-        calling fund and assumes the reported price is NAV ÷ total supply at that moment.
+      <p>Minting \(f\) leaves every share worth \(P - a\), so investors lose \(a\) per share, to within one price
+        unit of rounding:</p>
+      \[ \frac{P\,S}{S + f} = \frac{P\,S}{S + \frac{a\,S}{P - a}} = P - a \]
+      <p>The receiver's existing \(S - N\) shares lose \(a\) too, but its new shares are worth \(f\,(P - a) = a\,S\),
+        so it nets the fee on investor shares and nothing on its own:</p>
+      \[ f\,(P - a) - a\,(S - N) = a\,N \]
+
+      <h3>The other six</h3>
+      <p>Every module in the <a href="#structures">next section</a> uses the exact sizing above
+        (<code>_sizeExact</code>), so each is defined by its own \(a\) and the threshold above which it is due.
+        With a crystallization period \(\tau\), none is due until \(t \ge \tau\), where \(t\) is the time since the
+        watermark last moved, and \(r\) is the lowest rate passed in since the fund last owed nothing:</p>
+      \[ r = \min \{\, r_i : \text{rates passed in since the fund last owed nothing} \,\} \]
+      <p><span class="swatch sw-periodic"></span><strong>PeriodicWatermarkFee</strong>, once due:</p>
+      \[ a = r\,(P - W) \quad \text{if } P > W \]
+      <p>The hurdles grow the watermark by \(h\) a year (<code>hurdleBps</code> divided by 10,000) as simple
+        interest over \(t\) years, rounded up:</p>
+      \[ H = \left\lceil W\,(1 + h\,t) \right\rceil \]
+      <p><span class="swatch sw-hard"></span><strong>HardHurdleFee</strong>,
+        <span class="swatch sw-soft"></span><strong>SoftHurdleFee</strong> and
+        <span class="swatch sw-catch"></span><strong>CatchUpHurdleFee</strong> are due only above the hurdle. With
+        catch-up share \(c\) (<code>catchUpBps</code> divided by 10,000), and \(P > H\):</p>
+      \[ \begin{aligned}
+           a_{\text{hard}} &= r\,(P - H) \\
+           a_{\text{soft}} &= r\,(P - W) \\
+           a_{\text{catch-up}} &= \min\big(c\,(P - H),\; r\,(P - W)\big)
+         \end{aligned} \]
+      <p>For \(c > r\) the catch-up reaches the full rate at</p>
+      \[ P^{*} = \frac{c\,H - r\,W}{c - r} \]
+      <p>and for \(c = r\) it is the hard hurdle. <span class="swatch sw-bench"></span><strong>BenchmarkFee</strong>
+        carries the watermark at the benchmark's return, from level \(B_0\) when the watermark last moved to \(B\)
+        now:</p>
+      \[ T_B = \left\lceil W\,\frac{B}{B_0} \right\rceil, \qquad a = r\,(P - T_B) \quad \text{if } P > T_B \]
+      <p>With <code>requireAbsoluteGain</code> the threshold is \(\max(T_B, W)\). \(B_0\) becomes \(B\) whenever the
+        watermark moves.</p>
+      <p><span class="swatch sw-nowm"></span><strong>NoWatermarkFee</strong> charges like Exact above the
+        reference, and moves the reference down to the price after a fall:</p>
+      \[ a = r\,(P - W) \quad \text{if } P > W, \qquad W' = P \quad \text{if } P < W \]
+      <p>Every module except <code>WatermarkFee</code> reads <code>totalSupply()</code> from the calling fund and
+        assumes the reported price is NAV ÷ total supply at that moment.
         <code>KpkShares</code> mints the management fee just before calling, so a price struck before that mint
         overstates the price: the performance fee is then measured on the gain before the management fee, which can
         charge investors in a period whose net result is below the watermark, while the watermark lands above the true
