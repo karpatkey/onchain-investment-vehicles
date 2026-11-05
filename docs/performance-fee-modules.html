@@ -203,10 +203,21 @@
     <p>Every module shares <code>WatermarkFeeBase</code>. It keeps one reference price per fund (the
       <code>highWatermark</code> mapping), keyed by the calling <code>KpkShares</code> proxy, so one deployment
       can serve many funds and a stranger calling the module directly only moves their own entry.</p>
-    <p>The first call seeds the reference at the price it is given and charges nothing. After that each module
-      decides whether the price owes a fee, how many fee shares to mint, and where the reference goes next; a
-      call that changes nothing leaves no trace. For the three watermark modules, a price at or below the
-      watermark charges nothing and leaves the watermark where it is. Two calls never charge: a price of 0,
+    <p id="seed">The watermark starts at the price of the module's first call: that call seeds the fund's entry at
+      the price it is given and charges nothing, so the first watermark is not the price investors entered at.
+      <code>KpkShares</code> only calls the module when the performance fee rate is above 0, a module is set, the
+      settlement is in an asset marked <code>isFeeModuleAsset</code>, and more than 6 hours
+      (<code>MIN_TIME_ELAPSED</code>) have passed since the last performance-fee update, a clock that deployment
+      starts. A settlement in the first 6 hours therefore records the fund's price without calling the module, and
+      the first qualifying settlement after that seeds it at the operator's price. A rate change can also be the
+      first call: it passes the asset's last settled price, which is 0, and ignored, if the asset has never
+      settled. <code>BenchmarkFee</code> also waits for a usable feed reading. Gains before the seed are never
+      charged, and if the fund is below its entry price at that moment, the climb back up to entry is charged. A
+      new module seeds again at the first price it sees, since each module keeps its own storage. The worked
+      examples on this page seed at $1.00.</p>
+    <p>After the seed, each module decides whether the price owes a fee, how many fee shares to mint, and where the
+      reference goes next; a call that changes nothing leaves no trace. For the three watermark modules, a price at
+      or below the watermark charges nothing and leaves the watermark where it is. Two calls never charge: a price of 0,
       which is what <code>KpkShares</code> passes for an asset it has never settled, and a repeat of the price the
       module last charged at while that charge's watermark stands. <code>setPerformanceFeeRate</code> sends that
       price back, the price before that settlement's fee, and a module whose watermark sits at the post-fee price
@@ -483,6 +494,14 @@
         \(N\) (<code>netSupply</code>) and total supply \(S\); \(f\) is the number of fee shares minted and \(W'\) the
         watermark after the call. Each block is the fee step of the module's <code>_crystallize</code>; when
         \(P \le W\) all three return first, charging nothing and leaving the watermark where it is.</p>
+
+      <h3>The watermark \(W\)</h3>
+      <p>\(W\) is the fund's entry in <code>highWatermark</code>: one price per share for each fund, in the units of
+        the price the operator reports for the settled asset, with 8 decimals; 0 means not yet seeded. The first
+        call with a non-zero price \(P_1\) sets it and charges nothing (<a href="#seed">when that call happens</a>):</p>
+      \[ W_0 = P_1, \qquad f = 0 \]
+      <p>After that each module moves it as its block below shows. The three watermark modules never lower it:
+        \(W' \ge W\).</p>
 
       <h3><span class="swatch sw-gross"></span>WatermarkFee</h3>
       \[ f = r\,\frac{(P - W)\,N}{P}, \qquad W' = P \]
