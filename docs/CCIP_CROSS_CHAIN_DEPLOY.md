@@ -214,8 +214,10 @@ resolution. Note it is **not** read by the Solidity scripts at runtime: the per-
 the registry (editing the JSON alone does not change what gets deployed). Every `linkToken` was
 resolved **on-chain** from each chain's
 CCIP `onRamp → feeQuoter.getFeeTokens()` and confirmed via `symbol() == "LINK"` (Avalanche: `LINK.e`,
-bridged). The **21 wired chains** below are the verified target set; the two `NOT-READY` rows are
-excluded. Sorted by chain ID:
+bridged). The **23 deployable chains** below are the verified target set; the two `NOT-READY` rows
+are excluded. Robinhood and Arc came after the constructor-baked registry: they are `excluded` in it
+and wired by Security Council batches instead (see "Wiring a chain deployed after the baked
+registry"). Sorted by chain ID:
 
 | Chain | Chain ID | CCIP chain selector | LINK fee token (on-chain) | Verdict |
 |---|---|---|---|---|
@@ -229,7 +231,9 @@ excluded. Sorted by chain ID:
 | World Chain | 480 | `2049429975587534727` | `0x915b…5473` | READY-AFTER-EMPTY |
 | HyperEVM | 999 | `2442541497099098535` | `0x1AC2…De59` | READY-AFTER-EMPTY |
 | Sei | 1329 | `9027416829622342829` | — | **NOT-READY** |
+| Robinhood | 4663 | `6180753054346818345` | `0x4926…bCE34` | READY |
 | Mantle | 5000 | `1556008542357238666` | `0xfe36…E043` | READY-AFTER-EMPTY |
+| Arc | 5042 | `6370580034781731079` | `0x76a4…eb40` | READY-AFTER-EMPTY |
 | Base | 8453 | `15971525489660198786` | `0x88Fb…e196` | READY |
 | Plasma | 9745 | `9335212494177455608` | `0x76a4…eb40` | READY-AFTER-EMPTY |
 | Mode | 34443 | `7264351850409363825` | `0x183E…1F54` | **NOT-READY** |
@@ -297,6 +301,40 @@ factory construction. To onboard a brand-new chain not yet in the registry: conf
 (Safe stack, Roles v2.1.1, ModuleProxyFactory, CREATE2 deployer, CCIP router + LINK fee token,
 `Empty` helper factory), add a verified row to `script/ccip-networks.json`, generate its
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.
+
+`deploy-chain.sh` refuses `excluded` rows, so a chain added after the baked registry runs its
+per-chain script directly, as Robinhood did. Arc's gas token is native USDC; the run is about 28M
+gas, 1.1 USDC at forge's 40 gwei estimate:
+
+```bash
+source .env && forge script script/chains/Deploy_Arc.s.sol:Deploy_Arc --rpc-url arc \
+  --account $DEPLOYER_NAME --broadcast --slow \
+  --sig "run(address,address)" 0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72 $DEPLOY_FINAL_OWNER
+source .env && script/wire-chain.sh arc   # then the Security Council batches
+```
+
+Without `--broadcast` the same command simulates against live Arc and prints the predicted addresses,
+which must be the canonical ones in `script/deployed-infra.json`.
+
+Before broadcasting on Arc (or any chain added later):
+
+1. **Claim the timelock mastercopy atomically first.** Multicall3 (`0xcA11bde05977b3631167028862bE2a173976CA11`)
+   is on Arc, so send one `aggregate3` transaction from the deployer with two calls: the CREATE2
+   deployer `0x4e59b44847b379578588920cA78FbF26c0B4956C` with `SALT_TIMELOCK_MASTERCOPY` (`script/base/OivChainDeploy.sol`) followed by
+   the mastercopy init code, then `initialize(0, [], [], address(0))` on `0x9760280fED9e760668186334f88b6d763A7d976E`.
+   The script then takes its `[SKIP]` branch, so the initializer is never open between two
+   transactions. This is how HyperEVM was done (see `docs/DEPLOYED_ADDRESSES.md`). Prove it on Arc,
+   with `CLAIM_BLOCK` set to the claim transaction's block: `cast logs --rpc-url arc --from-block
+   $CLAIM_BLOCK --to-block latest --address 0x9760280fED9e760668186334f88b6d763A7d976E
+   "RoleGranted(bytes32,address,address)"` must show exactly one grant, in that transaction (the same
+   address exists on every chain, so a query without `--rpc-url arc` proves nothing).
+2. **Make sure nothing else broadcasts from the deployer** during the run: other workflows use the same
+   EOA on Arc, and a nonce clash leaves a partial deploy.
+3. After the broadcast, **verify all six contracts** (including `Empty`) on every explorer that serves
+   5042: Etherscan V2 (no `[etherscan]` alias in `foundry.toml`, so verify manually), Sourcify, and the
+   chain's Blockscout at explorer.arc.io. Routescan and Tenderly do not serve Arc.
+4. Wire it: `script/wire-chain.sh arc` writes the batches for Arc and its three lanes (Ethereum, Base,
+   Polygon). The Council executes them in file order, `3-arc.json` last.
 
 ## Deploying the orchestrator
 
