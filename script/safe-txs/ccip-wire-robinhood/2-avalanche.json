@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "chainId": "43114",
+  "createdAt": 1793893094000,
+  "meta": {
+    "name": "CCIP wiring of robinhood, step 2 (avalanche) - setChainSelector on the CcipOivDeployer",
+    "description": "Step 2 of the CCIP wiring of robinhood: setChainSelector(4663, 6180753054346818345) on the CcipOivDeployer 0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D of avalanche, so it accepts stacks from robinhood and lists it as a destination. Lanes read live by script/wire-chain.sh: robinhood->avalanche true, avalanche->robinhood true. Execute in file order: 1-robinhood.json (if present), then every 2-<counterpart>.json in any order, then 3-robinhood.json LAST.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "chainId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "ccipChainSelector",
+            "type": "uint64"
+          }
+        ],
+        "name": "setChainSelector",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "chainId": "4663",
+        "ccipChainSelector": "6180753054346818345"
+      }
+    }
+  ]
+}
