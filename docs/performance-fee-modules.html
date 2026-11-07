@@ -315,7 +315,7 @@
       <dt>How often, and at which rate</dt>
       <dd>At every settlement, or at most once per rolling crystallization period. The first three modules
         charge at the rate in force at the charge; the other six charge each period at the lowest rate passed in
-        during it, a period running from one watermark move to the next.</dd>
+        during it or the period before, a period running from one watermark move to the next.</dd>
     </dl>
     <div class="scroll">
       <table class="glance">
@@ -563,8 +563,9 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <p>Every module in the <a href="#structures">next section</a> uses the exact sizing above
         (<code>_sizeExact</code>), so each is defined by its own \(a\) and the threshold above which it is due.
         With a crystallization period \(\tau\), none is due until \(t \ge \tau\), where \(t\) is the time since the
-        watermark last moved, and \(r\) is the lowest rate passed in since then, counting the call that moved it:</p>
-      \[ r = \min \{\, r_i : \text{rates passed in since the watermark last moved, that call included} \,\} \]
+        watermark last moved, and \(r\) is the lowest rate passed in during this period or the one before, each
+        period beginning at a watermark move and counting the call that made it (at the seed, the seed's rate):</p>
+      \[ r = \min \{\, r_i : \text{rates passed in since the watermark's second-to-last move, both moving calls included} \,\} \]
       <p><span class="swatch sw-periodic"></span><strong>PeriodicWatermarkFee</strong>, once due:</p>
       \[ a = r\,(P - W) \quad \text{if } P > W \]
       <p>The hurdles grow the watermark by \(h\) a year (<code>hurdleBps</code> divided by 10,000) as simple
@@ -665,33 +666,38 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         like ours.</p>
       <p>The six modules built on <code>PeriodicWatermarkFee</code> (this one, the three hurdles,
         <code>BenchmarkFee</code> and <code>NoWatermarkFee</code>) charge each period at the lowest rate passed in
-        during it, whatever their period. A period begins when the watermark moves, and the call that moves it counts
-        with the rate it passes. Every later call counts too, including the rate-change call and settlements that
-        change nothing. Only a watermark move restarts the record, never a price: the rate-change call passes the
-        last settled price, which can be stale, so a price cannot be evidence that nothing is owed. A raise
-        therefore never reaches back over gains made while a lower rate was passed in, and a cut applies to the whole
-        period it lands in, however long the fund stays below its watermark. The rate-change call passes the
-        outgoing rate only if that rate is above 0 and the asset it is given is a fee asset; otherwise the module is
-        not called and the outgoing rate is not recorded.</p>
+        during that period or the one before, whatever their period. A period begins when the watermark moves, and
+        the call that moves it counts with the rate it passes. Every later call counts too, including the rate-change
+        call and settlements that change nothing or are skipped as a repeat. Only a watermark move restarts the
+        record, never a price. The previous period counts because a call's price can lag the fund: the rate-change
+        call passes the last settled price, and the operator strikes a settlement's price before it executes. A gain
+        the moving call's price does not yet show was made under the previous period's rates and is charged in the
+        next one, so as long as the lag is shorter than a period, a raise never reaches a gain made while a lower
+        rate was passed in. A cut keeps applying while the watermark stands; <code>NoWatermarkFee</code>'s reset on a
+        fall moves it, and so does a relative <code>BenchmarkFee</code> charge below it. The rate-change call passes
+        the outgoing rate only if that rate is above 0 and the asset it is given is a fee asset; otherwise the module
+        is not called and the outgoing rate is not recorded, so give it a fee asset.</p>
     </div>
     <div class="scroll">
       <table class="rates">
-        <thead><tr><th>The admin, with a one-year period</th><th>The current period is charged at</th><th>The new rate applies from</th></tr></thead>
+        <thead><tr><th>The admin, with a one-year period</th><th>Charged at the old rate</th><th>The new rate applies from</th></tr></thead>
         <tbody>
-          <tr><td>raises the rate mid-period, including the same day as a charge</td><td>the old rate</td><td>the next period</td></tr>
-          <tr><td>raises it after a period has run, before the next settlement</td><td>the old rate, charged by the rate-change call itself</td><td>the period after next: that call begins the next period under the old rate</td></tr>
-          <tr><td>cuts the rate mid-period</td><td>the new rate</td><td>at once, for the whole period</td></tr>
-          <tr><td>cuts it after a period has run, before the next settlement</td><td>the old rate, charged by the rate-change call itself</td><td>the next period</td></tr>
-          <tr><td>cuts it, then raises it back, while the fund stays below its watermark</td><td>the cut rate</td><td>the period after the next charge</td></tr>
+          <tr><td>raises the rate mid-period, or right after a charge</td><td>the current period and the next</td><td>the period after next</td></tr>
+          <tr><td>raises it after a period has run, and the rate-change call charges that period</td><td>that period, charged by the rate-change call, and the two after it</td><td>the third period after it: that call begins the next period under the old rate</td></tr>
+          <tr><td>raises it after a period has run, and the rate-change call charges nothing (its stale price is at or below the watermark)</td><td>that period and the next</td><td>the period after next</td></tr>
+          <tr><td>cuts the rate mid-period</td><td>nothing</td><td>at once: the current period and the next are charged at most the new rate</td></tr>
+          <tr><td>cuts it after a period has run, and the rate-change call charges that period</td><td>that period, charged by the rate-change call</td><td>the next period</td></tr>
+          <tr><td>cuts it, then raises it back, before the period is charged</td><td>nothing</td><td>the cut rate covers that period and the next; the raised rate applies from the period after next</td></tr>
         </tbody>
       </table>
     </div>
     <div class="prose">
-      <p class="note">So send a raise mid-period, well before the period is due: it then applies from the next
-        period. A raise sent once a period has run waits a further period, because the rate-change call charges the
-        due period and begins the next one under the outgoing rate. With no period the same rule holds, each charge
-        ending one period and beginning the next. Each row is a test in <code>test/FeeStructures.t.sol</code> or
-        <code>test/WatermarkFeeVariants.t.sol</code>.</p>
+      <p class="note">So send a raise mid-period, well before the period is due: it then applies from the period
+        after next. A raise sent once a period has run waits one period more if the rate-change call charges the due
+        period, because that call begins the next period under the outgoing rate. With no period the same rule
+        holds, each charge ending one period and beginning the next. Each row is tested in
+        <code>test/FeeStructures.t.sol</code> or <code>test/WatermarkFeeVariants.t.sol</code>, some at a shorter
+        period; the length does not change the rule.</p>
     </div>
     <figure>
       <svg viewBox="0 0 1000 380" role="img" aria-labelledby="period-title period-desc">
@@ -848,11 +854,11 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <p>The charts above follow prices that mostly rise. Here the fund's NAV can go anywhere, and all nine modules
         run through the same settlements. Pick a scenario or type your own path.</p>
       <p>The simulation follows the contracts, not the formulas: 8-decimal prices, 18-decimal shares and the same
-        rounding; the first call seeds; a repeat of the last charged price is skipped; the period clock and the
-        lowest-rate record run as on-chain; and <code>KpkShares</code> rejects a settlement whose price is more than
-        30% from the last settled price, so the module never sees it. Investors hold 1,000 shares throughout, every
-        settlement reports NAV ÷ total supply, the fee receiver keeps its fee shares, and settlements are at least a
-        day apart, so each one calls the module.</p>
+        rounding; the first call seeds; a repeat of the last charged price is skipped; the period clock runs as
+        on-chain; the rate is the same at every settlement, so the lowest-rate rule never changes a fee here; and
+        <code>KpkShares</code> rejects a settlement whose price is more than 30% from the last settled price, so the
+        module never sees it. Investors hold 1,000 shares throughout, every settlement reports NAV ÷ total supply,
+        the fee receiver keeps its fee shares, and settlements are at least a day apart, so each one calls the module.</p>
     </div>
     <form class="calc" id="path-form" onsubmit="return false">
       <label class="wide">Scenario<select name="preset"></select></label>
@@ -1001,7 +1007,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
       <dd>Use when fees should crystallize at most once per period, as ESMA's once-a-year default expects; the period is rolling, not tied to calendar dates. Investors who
         redeem mid-period escape that period's fee; those who subscribe mid-period pay for gains made before
         they joined. With this module and the five built on it, send a rate raise mid-period: it applies from the
-        next period, while a raise sent once a period has run waits a further period.</dd>
+        period after next, while a raise sent once a period has run can wait one period more.</dd>
       <dt><span class="swatch sw-bench"></span>BenchmarkFee</dt>
       <dd>Use when the mandate is to beat a market. Set <code>requireAbsoluteGain</code> unless charging in a
         year when investors lost money is intended. Needs a feed at the same address on every chain the
@@ -1451,15 +1457,11 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         if (level === 0n) return { fee: 0n, thr: null, note: 'not seeded: feed unusable' };
         st.B0 = level;
       }
-      st.W = P; st.last = 0n; st.setAt = t; st.rate = o.rate;
+      st.W = P; st.last = 0n; st.setAt = t;
       return { fee: 0n, thr: null, note: 'seed: watermark set to this price, nothing charged' };
     }
     const family = FAMILY.has(id);
-    let r = o.rate;
-    if (family) {
-      r = st.rate;
-      if (r === 0n || o.rate < r) st.rate = r = o.rate;
-    }
+    const r = o.rate;
     if (P === st.last) return { fee: 0n, thr: null, note: 'repeat of the last charged price: skipped' };
     const W = st.W;
     let res;
@@ -1473,7 +1475,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
     if (res.fee === 0n && res.wm === W) return res;
     st.W = res.wm;
     st.last = res.fee !== 0n ? P : 0n;
-    if (family) { st.setAt = t; st.rate = o.rate; }
+    if (family) st.setAt = t;
     if (!res.note) res.note = res.fee !== 0n ? 'charged' : 'fee rounds to 0 shares: watermark moves';
     return res;
   }

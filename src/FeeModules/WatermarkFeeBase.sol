@@ -12,9 +12,9 @@ import {IPerfFeeModule} from "./IPerfFeeModule.sol";
 ///         The first call for a fund seeds the watermark at the price it is given and charges nothing.
 ///         That is the first price the module is shown, not the price investors entered at: KpkShares
 ///         only calls the module from a fee-module settlement more than `MIN_TIME_ELAPSED` after the
-///         previous performance-fee update, or from `setPerformanceFeeRate`. Gains before that first
-///         call are never charged, and if the fund is below its entry price at that moment, the recovery
-///         back up to entry is charged.
+///         previous performance-fee update, or from `setPerformanceFeeRate`, which passes the last settled price
+///         and so can seed at a price older than the call. Gains before the seed price are never charged, and if
+///         the fund is below its entry price at that moment, the recovery back up to entry is charged.
 ///
 ///         `timeElapsed` does not enter the fee math; it is only re-emitted.
 abstract contract WatermarkFeeBase is IPerfFeeModule {

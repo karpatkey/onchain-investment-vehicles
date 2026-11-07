@@ -243,7 +243,7 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.2e8, 0.004e8, _callAt(m, 1.2e8, 2000)); // 2% of the 0.20 gain
     }
 
-    function test_periodic_cutBelowTheWatermarkLastsUntilTheWatermarkMoves() public {
+    function test_periodic_cutBelowTheWatermarkLastsAnotherPeriod() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(90 days);
         _callAt(m, 1e8, 2000);
         skip(20 days);
@@ -253,10 +253,12 @@ contract FeeStructuresTest is Test {
         skip(300 days);
         _assertCharged(m, 1.3e8, 0.003e8, _callAt(m, 1.3e8, 2000)); // still 1%: only a watermark move restarts it
         skip(91 days);
-        _assertCharged(m, 1.4e8, 0.0206e8, _callAt(m, 1.4e8, 2000)); // the period that charge began, at 20%
+        _assertCharged(m, 1.4e8, 0.00103e8, _callAt(m, 1.4e8, 2000)); // 1% again: the previous period's rate
+        skip(91 days);
+        _assertCharged(m, 1.5e8, 0.020206e8, _callAt(m, 1.5e8, 2000)); // 20% of 1.50 - 1.39897
     }
 
-    function test_periodic_raiseByAChargingRateChangeCallWaitsForTheNextPeriod() public {
+    function test_periodic_raiseByAChargingRateChangeCallWaitsThreeCharges() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
         _callAt(m, 1e8, 500);
         skip(366 days);
@@ -267,7 +269,9 @@ contract FeeStructuresTest is Test {
         skip(366 days);
         _assertCharged(m, 1.3e8, 0.01025e8, _callAt(m, 1.3e8, 2000)); // 5% of 1.30 - 1.095
         skip(366 days);
-        _assertCharged(m, 1.4e8, 0.02205e8, _callAt(m, 1.4e8, 2000)); // 20% of 1.40 - 1.28975
+        _assertCharged(m, 1.4e8, 0.0055125e8, _callAt(m, 1.4e8, 2000)); // 5%: the previous period began under it
+        skip(366 days);
+        _assertCharged(m, 1.5e8, 0.0211025e8, _callAt(m, 1.5e8, 2000)); // 20% of 1.50 - 1.3944875
     }
 
     function test_periodic_cutByAChargingRateChangeCallAppliesNextPeriod() public {
@@ -282,6 +286,31 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.3e8, 0.011e8, _callAt(m, 1.3e8, 500)); // 5% of 1.30 - 1.08
     }
 
+    function test_periodic_settlementPricedBeforeARaiseKeepsTheOldRate() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(30 days);
+        _callAt(m, 1e8, 1000); // seed under 10%
+        skip(31 days);
+        _assertUntouched(m, _callAt(m, 1e8, 1000), 1e8); // the raise to 20%: outgoing 10%, nothing to charge
+        // A settlement priced at 1.10 before the raise executes after it, under 20%, with the fund already higher.
+        _assertCharged(m, 1.1e8, 0.01e8, _callAt(m, 1.1e8, 2000)); // 10% of 1.10 - 1.00
+        skip(31 days);
+        _assertCharged(m, 1.2e8, 0.011e8, _callAt(m, 1.2e8, 2000)); // still 10%: the price lagged gains made under it
+        skip(31 days);
+        _assertCharged(m, 1.3e8, 0.0222e8, _callAt(m, 1.3e8, 2000)); // 20% of 1.30 - 1.189
+    }
+
+    function test_periodic_skippedRepeatStillRecordsItsRate() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
+        _callAt(m, 1e8, 2000);
+        skip(366 days);
+        _assertCharged(m, 1.1e8, 0.02e8, _callAt(m, 1.1e8, 2000));
+        // A cut to 5% and a raise back before the next settlement: each rate-change call re-sends 1.10, a repeat.
+        _assertUntouched(m, _callAt(m, 1.1e8, 2000), 1.08e8);
+        _assertUntouched(m, _callAt(m, 1.1e8, 500), 1.08e8); // skipped, but 5% is recorded
+        skip(366 days);
+        _assertCharged(m, 1.3e8, 0.011e8, _callAt(m, 1.3e8, 2000)); // 5% of 1.30 - 1.08
+    }
+
     function test_periodic_seedRecordsItsRate() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
         _callAt(m, 1e8, 500); // seeded under 5%
@@ -289,12 +318,13 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.1e8, 0.005e8, _callAt(m, 1.1e8, 2000)); // the period began under 5%
     }
 
-    function test_periodic_zeroPeriodRaiseWaitsForTheNextCharge() public {
+    function test_periodic_zeroPeriodRaiseWaitsTwoCharges() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(0);
         _callAt(m, 1e8, 500);
         _callAt(m, 0.9e8, 500); // below the watermark: nothing to charge
         _assertCharged(m, 1.2e8, 0.01e8, _callAt(m, 1.2e8, 2000)); // 5%: the period began under 5%
-        _assertCharged(m, 1.3e8, 0.022e8, _callAt(m, 1.3e8, 2000)); // 20% from the period that charge began
+        _assertCharged(m, 1.3e8, 0.0055e8, _callAt(m, 1.3e8, 2000)); // 5%: the previous period's rate
+        _assertCharged(m, 1.4e8, 0.0211e8, _callAt(m, 1.4e8, 2000)); // 20% of 1.40 - 1.2945
     }
 
     // ── No watermark ───────────────────────────────────────────────────────────────────────────────
@@ -345,6 +375,16 @@ contract FeeStructuresTest is Test {
         (BenchmarkFee absolute, MockFeed feed2) = _benchmark(true);
         feed2.set(1600e8, vm.getBlockTimestamp());
         _assertUntouched(absolute, _call(absolute, 0.9e8), 1e8);
+    }
+
+    function test_benchmark_absoluteChargesOnlyAboveBothThresholds() public {
+        (BenchmarkFee down, MockFeed feed) = _benchmark(true);
+        feed.set(1600e8, vm.getBlockTimestamp()); // benchmark -20%: the watermark is the higher threshold
+        _assertCharged(down, 1.05e8, 0.01e8, _call(down, 1.05e8)); // 20% of 1.05 - 1.00, not of 1.05 - 0.80
+
+        (BenchmarkFee up, MockFeed feed2) = _benchmark(true);
+        feed2.set(2400e8, vm.getBlockTimestamp()); // benchmark +20%, fund +10%: trails the benchmark
+        _assertUntouched(up, _call(up, 1.1e8), 1e8);
     }
 
     function test_benchmark_underperformanceIsMadeUpBeforeTheNextFee() public {
@@ -463,12 +503,14 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.2e8, 0.02e8, _callAt(m, 1.2e8, 2000)); // 10% of the 0.20 outperformance, not 20%
     }
 
-    function test_benchmark_cutWhileTrailingLastsUntilTheWatermarkMoves() public {
+    function test_benchmark_cutWhileTrailingLastsAnotherPeriod() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
         feed.set(2400e8, vm.getBlockTimestamp()); // benchmark +20%: the threshold is 1.20
         _callAt(m, 1.1e8, 100); // cut to 1% while trailing the benchmark
         _callAt(m, 1.1e8, 2000); // raised back, still trailing it
         _assertCharged(m, 1.5e8, 0.003e8, _callAt(m, 1.5e8, 2000)); // still 1% of 1.50 - 1.20
+        _assertCharged(m, 1.6e8, 0.00103e8, _callAt(m, 1.6e8, 2000)); // 1% again: the previous period's rate
+        _assertCharged(m, 1.7e8, 0.020206e8, _callAt(m, 1.7e8, 2000)); // 20% of 1.70 - 1.59897
     }
 
     function test_benchmark_lowerRateHoldsWhileOutperformanceIsOwedBelowTheWatermark() public {

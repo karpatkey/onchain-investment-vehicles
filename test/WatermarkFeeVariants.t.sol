@@ -132,7 +132,7 @@ contract WatermarkFeeVariantsTest is kpkSharesTestBase {
         nav = nav * 11 / 10;
         _settle(k, nav); // period due: charged at 5%, and the next period begins under 5%
         vm.prank(admin);
-        k.setPerformanceFeeRate(2000, address(usdc)); // re-sends that settlement's price: skipped, 5% still recorded
+        k.setPerformanceFeeRate(2000, address(usdc)); // re-sends that settlement's price: skipped as a repeat
 
         skip(366 days);
         nav = nav * 12 / 10;
@@ -173,6 +173,38 @@ contract WatermarkFeeVariantsTest is kpkSharesTestBase {
             k.balanceOf(feeRecipient) - before,
             scaledFee * supply / (price * 10_000 - scaledFee),
             "a gain made under 5% is charged at 5%"
+        );
+    }
+
+    function test_periodic_twoRateChangesBeforeASettlement_chargeTheLowerRate() public {
+        perfFeeModule = new PeriodicWatermarkFee(365 days);
+        KpkShares k = _deployKpkSharesWithFees(0, 0, 500); // 5%
+        _createSharesForTestingWithContract(k, alice, _sharesAmount(1000));
+        uint256 nav = k.totalSupply();
+        _settle(k, nav); // seed at 1.00 under 5%
+        skip(363 days);
+        nav = nav * 110 / 100;
+        uint256 stale = _priceAt(k, nav);
+        _settle(k, nav); // 1.10, mid-period: nothing charged
+        nav = nav * 120 / 110; // the fund then reaches 1.20 under 5%, with no settlement
+        vm.prank(admin);
+        k.setPerformanceFeeRate(1000, address(usdc)); // mid-period: records the outgoing 5%
+        skip(2 days);
+        vm.prank(admin);
+        k.setPerformanceFeeRate(2000, address(usdc)); // period due: charges on the stale 1.10, passing the outgoing 10%
+        uint256 watermark = WatermarkFeeBase(address(perfFeeModule)).highWatermark(address(k));
+        assertEq(watermark, stale - (stale - 1e8) * 500 / 10_000, "the second rate-change call charged 1.00 -> 1.10");
+
+        skip(366 days);
+        uint256 price = _priceAt(k, nav);
+        uint256 supply = k.totalSupply();
+        uint256 before = k.balanceOf(feeRecipient);
+        _settle(k, nav);
+        uint256 scaledFee = (price - watermark) * 500;
+        assertEq(
+            k.balanceOf(feeRecipient) - before,
+            scaledFee * supply / (price * 10_000 - scaledFee),
+            "the 1.10 -> 1.20 gain the stale price did not show was made under 5%"
         );
     }
 
