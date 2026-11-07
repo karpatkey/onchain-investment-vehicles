@@ -72,6 +72,18 @@ contract GasBurnerFeed {
     }
 }
 
+/// Answers `latestRoundData` normally, then spends whatever gas `decimals()` is given.
+contract DecimalsBurnerFeed {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, 2000e8, block.timestamp, block.timestamp, 1);
+    }
+
+    function decimals() external pure returns (uint8) {
+        while (true) {}
+        return 8;
+    }
+}
+
 /// Answers with only the first four of the five words, all well-formed.
 contract FourWordFeed {
     fallback() external {
@@ -392,6 +404,16 @@ contract FeeStructuresTest is Test {
         vm.prank(fund);
         uint256 fee = m.calculatePerformanceFee{gas: 1_000_000}(1.5e8, 0, RATE, S);
         assertLt(before - gasleft(), 200_000, "the feed spends at most its gas limit");
+        _assertUntouched(m, fee, 1e8);
+    }
+
+    function test_benchmark_gasBurningDecimalsDefers() public {
+        (BenchmarkFee m, MockFeed feed) = _benchmark(false);
+        vm.etch(address(feed), address(new DecimalsBurnerFeed()).code);
+        uint256 before = gasleft();
+        vm.prank(fund);
+        uint256 fee = m.calculatePerformanceFee{gas: 1_000_000}(1.5e8, 0, RATE, S);
+        assertLt(before - gasleft(), 250_000, "the second call is capped too");
         _assertUntouched(m, fee, 1e8);
     }
 

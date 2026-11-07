@@ -39,10 +39,13 @@ import {PeriodicWatermarkFee} from "./PeriodicWatermarkFee.sol";
 ///         test/FeeStructures.t.sol::test_benchmark_decimalsChangeDefers, test/FeeStructures.t.sol::test_benchmark_absurdAnswerDefers).
 ///
 ///         Only the ratio of two readings is used, so the feed's decimals do not matter as long as they do not
-///         change; a feed whose `decimals()` changes defers every fee until the module is replaced.
+///         change; while the feed's `decimals()` differs from the value read at deployment, every reading is
+///         unusable and the fee is deferred.
 contract BenchmarkFee is PeriodicWatermarkFee {
-    /// @notice Gas the feed may use per read. A read that needs more counts as unusable, so a misbehaving feed
-    ///         cannot consume the settlement's gas.
+    /// @notice Gas each feed call may use; a reading makes two calls, `latestRoundData` and then `decimals`. A
+    ///         call that needs more makes the reading unusable, so a misbehaving feed costs a settlement at most
+    ///         about twice this (pinned: test/FeeStructures.t.sol::test_benchmark_gasBurningFeedDefers,
+    ///         test/FeeStructures.t.sol::test_benchmark_gasBurningDecimalsDefers).
     uint256 public constant FEED_GAS_LIMIT = 100_000;
 
     /// @notice The benchmark feed.

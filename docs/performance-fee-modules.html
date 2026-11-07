@@ -666,8 +666,10 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         <code>BenchmarkFee</code> and <code>NoWatermarkFee</code>) charge at the lowest rate passed in since the fund
         last owed nothing, whatever their period. The fund owes nothing when the watermark moves, or when a
         settlement finds the price at or below it (for <code>BenchmarkFee</code>, finds no outperformance). Every
-        call counts, including the rate-change call and settlements that change nothing, so a raise never reaches
-        back over gains made under a lower rate, and a cut applies to every gain not yet charged.</p>
+        call counts, including the rate-change call and settlements that change nothing, so a raise does not reach
+        back over gains made while a lower rate was passed in, and a cut applies to every gain not yet charged. The
+        rate-change call passes the outgoing rate only if that rate is above 0 and the asset it is given is a fee
+        asset; otherwise the module is not called and the outgoing rate is not recorded.</p>
     </div>
     <div class="scroll">
       <table class="rates">
@@ -801,7 +803,7 @@ newWatermark = fee == 0 ? sharesPrice : sharesPrice - scaledFee / 10_000;</code>
         <code>test/FeeStructures.t.sol</code>.</figcaption>
     </figure>
     <div class="prose">
-      <p>A feed with no code, a reverting, short or malformed reply, a read needing more than 100,000 gas, a
+      <p>A feed with no code, a reverting, short or malformed reply, a feed call needing more than 100,000 gas, a
         non-positive or absurdly large answer, a change in the feed's decimals or a stale update defers the fee:
         nothing is charged, and the watermark and its benchmark level stay put, so a seeded fund's fee is deferred
         rather than lost and settlements keep working. A rate raised during the outage does not reach the deferred

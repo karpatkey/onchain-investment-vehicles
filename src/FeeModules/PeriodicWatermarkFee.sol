@@ -8,7 +8,7 @@ import {ExactWatermarkFee} from "./ExactWatermarkFee.sol";
 /// @notice `ExactWatermarkFee` that charges at most once per `crystallizationPeriod`: a call before the
 ///         period has run since the watermark last moved charges nothing and leaves the watermark, and the first
 ///         call after it charges on whatever gain is above the watermark at that moment. A period of 0 charges at
-///         every call, like `ExactWatermarkFee`, except at a rate change (below). Also the base for the hurdle,
+///         every call, like `ExactWatermarkFee`, except that a rate raise waits as described below. Also the base for the hurdle,
 ///         benchmark and no-watermark modules, which take the same period.
 /// @dev    Nothing accrues between charges. KpkShares prices subscriptions and redemptions at the operator's
 ///         price, which carries no pending performance fee, so an investor who redeems mid-period pays none
@@ -20,8 +20,11 @@ import {ExactWatermarkFee} from "./ExactWatermarkFee.sol";
 ///
 ///         A charge uses the lowest rate passed in since the fund last owed nothing: since the watermark last
 ///         moved, or since the last call that found the price at or below it (for `BenchmarkFee`, a due call that
-///         found no outperformance). Every call counts, including one that changes nothing, so a raise never
-///         reaches a gain made while a lower rate was in force, and a cut applies to every gain not yet charged.
+///         found no outperformance). Every call counts, including one that changes nothing, so a raise does not
+///         reach a gain made while a lower rate was passed in, and a cut applies to every gain not yet charged.
+///         KpkShares' rate-change call passes the outgoing rate only if that rate is above 0 and the asset given to
+///         `setPerformanceFeeRate` is a fee asset; otherwise the module is not called and the outgoing rate is not
+///         recorded.
 ///         A raise applies from the next time the fund owes nothing: KpkShares' rate-change call passes the
 ///         outgoing rate, so when that call charges a due period the next period runs at the new rate, but a raise
 ///         sent right after a charge leaves the period that charge began at the old rate. This holds at any
