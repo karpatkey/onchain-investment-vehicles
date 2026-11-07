@@ -149,6 +149,33 @@ contract WatermarkFeeVariantsTest is kpkSharesTestBase {
         );
     }
 
+    function test_periodic_raiseWithAStaleSettledPrice_chargesTheOldRate() public {
+        perfFeeModule = new PeriodicWatermarkFee(365 days);
+        KpkShares k = _deployKpkSharesWithFees(0, 0, 500); // 5%
+        _createSharesForTestingWithContract(k, alice, _sharesAmount(1000));
+        uint256 nav = k.totalSupply();
+        _settle(k, nav); // seed at 1.00 under 5%
+        skip(30 days);
+        nav = nav * 98 / 100;
+        _settle(k, nav); // 0.98, below the watermark
+        nav = nav * 110 / 98; // the fund then reaches 1.10 with no settlement
+        vm.prank(admin);
+        k.setPerformanceFeeRate(2000, address(usdc)); // re-sends the stale 0.98 with the outgoing 5%
+
+        skip(366 days);
+        uint256 price = _priceAt(k, nav);
+        uint256 supply = k.totalSupply();
+        uint256 watermark = WatermarkFeeBase(address(perfFeeModule)).highWatermark(address(k));
+        uint256 before = k.balanceOf(feeRecipient);
+        _settle(k, nav);
+        uint256 scaledFee = (price - watermark) * 500;
+        assertEq(
+            k.balanceOf(feeRecipient) - before,
+            scaledFee * supply / (price * 10_000 - scaledFee),
+            "a gain made under 5% is charged at 5%"
+        );
+    }
+
     function testFuzz_exact_eachShareGivesUpFeePctOfGain(
         uint256 supply,
         uint256 netSupply,

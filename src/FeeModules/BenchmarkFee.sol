@@ -95,22 +95,11 @@ contract BenchmarkFee is PeriodicWatermarkFee {
         if (level == 0) return (0, watermark);
         // Rounded up, in investors' favour.
         uint256 threshold = Math.mulDiv(watermark, level, benchmarkAtWatermark[msg.sender], Math.Rounding.Ceil);
-        if (sharesPrice <= threshold) {
-            // No outperformance: a later fee can only be on outperformance from here on.
-            delete periodRate[msg.sender];
-            return (0, watermark);
-        }
         if (requireAbsoluteGain && threshold < watermark) threshold = watermark;
         if (sharesPrice <= threshold) return (0, watermark);
         (fee, newWatermark) = _sizeExact(sharesPrice, (sharesPrice - threshold) * feePct, netSupply);
         // Mirrors the base's no-op test, so B0 moves exactly when the base stores the new watermark.
         if (fee != 0 || newWatermark != watermark) benchmarkAtWatermark[msg.sender] = level;
-    }
-
-    /// @dev Only a due call reads the feed, and outperformance can be owed at a price below the watermark, so a
-    ///      call that moves nothing never restarts the rate record here; `_crystallizeDue` does when it finds none.
-    function _owesNothing(uint256, uint256) internal pure override returns (bool) {
-        return false;
     }
 
     /// @dev Seeding needs a benchmark level to measure from; records it.

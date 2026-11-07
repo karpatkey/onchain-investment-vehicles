@@ -22,7 +22,9 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
     ///         it records, and whether it can move down, depends on the concrete module.
     mapping(address => uint256) public highWatermark;
 
-    /// @notice Price each calling fund was last charged a fee at, as passed in (before the fee's dilution).
+    /// @notice Price of each calling fund's last charge, as passed in (before the fee's dilution), while that
+    ///         charge's watermark stands; 0 before any charge and after any watermark move without a charge. The
+    ///         repeat-price skip compares against it.
     mapping(address => uint256) public lastChargedPrice;
 
     /// @notice Emitted when a fund's watermark is seeded or changes.
@@ -66,7 +68,7 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
         highWatermark[msg.sender] = newWatermark;
         // Any later move without a charge retires the evidence (pinned: test/FeeStructures.t.sol::test_noWatermark_repeatAfterAResetIsCharged).
         lastChargedPrice[msg.sender] = fee != 0 ? sharesPrice : 0;
-        _afterWatermarkSet();
+        _afterWatermarkSet(feePct);
         emit WatermarkUpdated(msg.sender, watermark, newWatermark);
         emit PerformanceFeeCalculated(msg.sender, fee, sharesPrice, timeElapsed);
     }
@@ -98,5 +100,6 @@ abstract contract WatermarkFeeBase is IPerfFeeModule {
     }
 
     /// @dev Runs after a new watermark is stored for `msg.sender`, on seeding and on every change.
-    function _afterWatermarkSet() internal virtual {}
+    /// @param feePct The fee rate passed in on the call that set the watermark.
+    function _afterWatermarkSet(uint256 feePct) internal virtual {}
 }

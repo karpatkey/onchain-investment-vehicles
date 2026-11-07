@@ -84,8 +84,13 @@ contract DecimalsBurnerFeed {
     }
 }
 
-/// Answers with only the first four of the five words, all well-formed.
+/// Answers `latestRoundData` with only the first four of the five words, all well-formed, and `decimals()`
+/// correctly, so only the reply-length check can reject it.
 contract FourWordFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
     fallback() external {
         bytes memory reply = abi.encode(uint256(1), int256(2000e8), block.timestamp, block.timestamp);
         assembly {
@@ -238,34 +243,58 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.2e8, 0.004e8, _callAt(m, 1.2e8, 2000)); // 2% of the 0.20 gain
     }
 
-    function test_periodic_rateRecordRestartsOnceNothingIsOwed() public {
+    function test_periodic_cutBelowTheWatermarkLastsUntilTheWatermarkMoves() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(90 days);
         _callAt(m, 1e8, 2000);
         skip(20 days);
         _callAt(m, 0.95e8, 100); // cut to 1% while below the watermark
         skip(10 days);
-        _callAt(m, 0.95e8, 2000); // raised back, still below it: nothing owed under either rate
+        _callAt(m, 0.95e8, 2000); // raised back, still below it
         skip(300 days);
-        _assertCharged(m, 1.3e8, 0.06e8, _callAt(m, 1.3e8, 2000)); // 20% of a gain made entirely under 20%
+        _assertCharged(m, 1.3e8, 0.003e8, _callAt(m, 1.3e8, 2000)); // still 1%: only a watermark move restarts it
+        skip(91 days);
+        _assertCharged(m, 1.4e8, 0.0206e8, _callAt(m, 1.4e8, 2000)); // the period that charge began, at 20%
     }
 
-    function test_periodic_raiseWhenTheRateChangeCallChargesAppliesNextPeriod() public {
+    function test_periodic_raiseByAChargingRateChangeCallWaitsForTheNextPeriod() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
         _callAt(m, 1e8, 500);
         skip(366 days);
-        // KpkShares' rate-change call: outgoing 5%, period due, so it charges and moves the watermark.
+        // KpkShares' rate-change call: outgoing 5%, period due, so it charges and begins the next period at 5%.
         _assertCharged(m, 1.1e8, 0.005e8, _callAt(m, 1.1e8, 500));
         skip(1 hours);
-        _callAt(m, 1.095e8, 2000); // the first settlement under the new 20%
+        _callAt(m, 1.098e8, 2000); // the first settlement under the new 20%, above the watermark
         skip(366 days);
-        _assertCharged(m, 1.3e8, 0.041e8, _callAt(m, 1.3e8, 2000)); // 20% of 1.30 - 1.095
+        _assertCharged(m, 1.3e8, 0.01025e8, _callAt(m, 1.3e8, 2000)); // 5% of 1.30 - 1.095
+        skip(366 days);
+        _assertCharged(m, 1.4e8, 0.02205e8, _callAt(m, 1.4e8, 2000)); // 20% of 1.40 - 1.28975
     }
 
-    function test_periodic_zeroPeriodUsesTheRatePassedIn() public {
+    function test_periodic_cutByAChargingRateChangeCallAppliesNextPeriod() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
+        _callAt(m, 1e8, 2000);
+        skip(366 days);
+        // KpkShares' rate-change call: outgoing 20%, period due, so it charges the due period at 20%.
+        _assertCharged(m, 1.1e8, 0.02e8, _callAt(m, 1.1e8, 2000));
+        skip(1 hours);
+        _callAt(m, 1.09e8, 500); // the first settlement under the new 5%
+        skip(366 days);
+        _assertCharged(m, 1.3e8, 0.011e8, _callAt(m, 1.3e8, 500)); // 5% of 1.30 - 1.08
+    }
+
+    function test_periodic_seedRecordsItsRate() public {
+        PeriodicWatermarkFee m = new PeriodicWatermarkFee(365 days);
+        _callAt(m, 1e8, 500); // seeded under 5%
+        skip(366 days);
+        _assertCharged(m, 1.1e8, 0.005e8, _callAt(m, 1.1e8, 2000)); // the period began under 5%
+    }
+
+    function test_periodic_zeroPeriodRaiseWaitsForTheNextCharge() public {
         PeriodicWatermarkFee m = new PeriodicWatermarkFee(0);
         _callAt(m, 1e8, 500);
         _callAt(m, 0.9e8, 500); // below the watermark: nothing to charge
-        _assertCharged(m, 1.2e8, 0.04e8, _callAt(m, 1.2e8, 2000)); // 20%, as ExactWatermarkFee would
+        _assertCharged(m, 1.2e8, 0.01e8, _callAt(m, 1.2e8, 2000)); // 5%: the period began under 5%
+        _assertCharged(m, 1.3e8, 0.022e8, _callAt(m, 1.3e8, 2000)); // 20% from the period that charge began
     }
 
     // ── No watermark ───────────────────────────────────────────────────────────────────────────────
@@ -296,74 +325,74 @@ contract FeeStructuresTest is Test {
 
     function _benchmark(bool requireAbsoluteGain) internal returns (BenchmarkFee m, MockFeed feed) {
         feed = new MockFeed();
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, requireAbsoluteGain, 0);
         _call(m, 1e8);
     }
 
     function test_benchmark_chargesOnlyTheOutperformance() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
-        feed.set(2200e8, block.timestamp); // benchmark +10%
+        feed.set(2200e8, vm.getBlockTimestamp()); // benchmark +10%
         _assertCharged(m, 1.2e8, 0.02e8, _call(m, 1.2e8)); // 20% of 1.20 - 1.10
         assertEq(m.benchmarkAtWatermark(fund), 2200e8, "benchmark level moves with the watermark");
     }
 
     function test_benchmark_relativeChargesALoss_absoluteDoesNot() public {
         (BenchmarkFee relative, MockFeed feed) = _benchmark(false);
-        feed.set(1600e8, block.timestamp); // benchmark -20%, fund -10%
+        feed.set(1600e8, vm.getBlockTimestamp()); // benchmark -20%, fund -10%
         _assertCharged(relative, 0.9e8, 0.02e8, _call(relative, 0.9e8));
 
         (BenchmarkFee absolute, MockFeed feed2) = _benchmark(true);
-        feed2.set(1600e8, block.timestamp);
+        feed2.set(1600e8, vm.getBlockTimestamp());
         _assertUntouched(absolute, _call(absolute, 0.9e8), 1e8);
     }
 
     function test_benchmark_underperformanceIsMadeUpBeforeTheNextFee() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
-        feed.set(2400e8, block.timestamp); // benchmark +20%, fund +10%
+        feed.set(2400e8, vm.getBlockTimestamp()); // benchmark +20%, fund +10%
         _assertUntouched(m, _call(m, 1.1e8), 1e8);
         _assertCharged(m, 1.25e8, 0.01e8, _call(m, 1.25e8)); // only 1.25 - 1.20 counts
     }
 
     function test_benchmark_unusableFeedDefersInsteadOfReverting() public {
         MockFeed feed = new MockFeed();
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         skip(2 days);
         BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 0);
         assertEq(_call(m, 1e8), 0);
         assertEq(m.highWatermark(fund), 0, "stale feed: not seeded");
 
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         _call(m, 1e8);
         assertEq(m.highWatermark(fund), 1e8, "fresh feed: seeded");
 
-        feed.set(2000e8, block.timestamp - 2 days);
+        feed.set(2000e8, vm.getBlockTimestamp() - 2 days);
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
-        feed.set(0, block.timestamp);
+        feed.set(0, vm.getBlockTimestamp());
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
         feed.setDown(true);
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
 
         feed.setDown(false);
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         _assertCharged(m, 1.5e8, 0.1e8, _call(m, 1.5e8)); // the deferred gain is still charged
     }
 
     function test_benchmark_negativeOrFutureAnswerDefers() public {
         MockFeed feed = new MockFeed();
         BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 0);
-        feed.set(-1, block.timestamp);
+        feed.set(-1, vm.getBlockTimestamp());
         assertEq(_call(m, 1e8), 0);
         assertEq(m.highWatermark(fund), 0, "negative answer: not seeded");
-        feed.set(2000e8, block.timestamp + 1);
+        feed.set(2000e8, vm.getBlockTimestamp() + 1);
         assertEq(_call(m, 1e8), 0);
         assertEq(m.highWatermark(fund), 0, "future update: not seeded");
 
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         _call(m, 1e8);
-        feed.set(2000e8, block.timestamp + 1);
+        feed.set(2000e8, vm.getBlockTimestamp() + 1);
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
-        feed.set(-1, block.timestamp);
+        feed.set(-1, vm.getBlockTimestamp());
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
     }
 
@@ -419,7 +448,7 @@ contract FeeStructuresTest is Test {
 
     function test_benchmark_moveWithoutAChargeRecordsTheLevel() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
-        feed.set(2200e8, block.timestamp);
+        feed.set(2200e8, vm.getBlockTimestamp());
         vm.prank(fund);
         assertEq(m.calculatePerformanceFee(1.2e8, 0, RATE, 0), 0); // no investor shares: moves, charges nothing
         assertEq(m.highWatermark(fund), 1.2e8);
@@ -434,17 +463,17 @@ contract FeeStructuresTest is Test {
         _assertCharged(m, 1.2e8, 0.02e8, _callAt(m, 1.2e8, 2000)); // 10% of the 0.20 outperformance, not 20%
     }
 
-    function test_benchmark_rateRecordRestartsOnceNoOutperformanceIsOwed() public {
+    function test_benchmark_cutWhileTrailingLastsUntilTheWatermarkMoves() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
-        feed.set(2400e8, block.timestamp); // benchmark +20%: the threshold is 1.20
+        feed.set(2400e8, vm.getBlockTimestamp()); // benchmark +20%: the threshold is 1.20
         _callAt(m, 1.1e8, 100); // cut to 1% while trailing the benchmark
         _callAt(m, 1.1e8, 2000); // raised back, still trailing it
-        _assertCharged(m, 1.5e8, 0.06e8, _callAt(m, 1.5e8, 2000)); // 20% of 1.50 - 1.20
+        _assertCharged(m, 1.5e8, 0.003e8, _callAt(m, 1.5e8, 2000)); // still 1% of 1.50 - 1.20
     }
 
     function test_benchmark_lowerRateHoldsWhileOutperformanceIsOwedBelowTheWatermark() public {
         MockFeed feed = new MockFeed();
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 90 days);
         _call(m, 1e8);
         skip(10 days);
@@ -452,26 +481,26 @@ contract FeeStructuresTest is Test {
         skip(10 days);
         _callAt(m, 0.9e8, 2000);
         skip(80 days);
-        feed.set(1600e8, block.timestamp);
+        feed.set(1600e8, vm.getBlockTimestamp());
         _assertCharged(m, 0.9e8, 0.001e8, _callAt(m, 0.9e8, 2000)); // 1% of 0.90 - 0.80
     }
 
     function test_benchmark_decimalsChangeDefers() public {
         (BenchmarkFee m, MockFeed feed) = _benchmark(false);
         feed.setDecimals(6);
-        feed.set(2000e6, block.timestamp); // the same level at a smaller scale would read as a 99% fall
+        feed.set(2000e6, vm.getBlockTimestamp()); // the same level at a smaller scale would read as a 99% fall
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
         feed.setDecimals(8);
-        feed.set(2000e8, block.timestamp);
+        feed.set(2000e8, vm.getBlockTimestamp());
         _assertCharged(m, 1.5e8, 0.1e8, _call(m, 1.5e8)); // the deferred gain is still charged
     }
 
     function test_benchmark_absurdAnswerDefers() public {
         MockFeed feed = new MockFeed();
-        feed.set(4000, block.timestamp); // a low-scale index level
+        feed.set(4000, vm.getBlockTimestamp()); // a low-scale index level
         BenchmarkFee m = new BenchmarkFee(AggregatorV3Interface(address(feed)), 1 days, false, 0);
         _call(m, 1e8);
-        feed.set(type(int256).max, block.timestamp); // watermark * level / 4000 would not fit in 256 bits
+        feed.set(type(int256).max, vm.getBlockTimestamp()); // watermark * level / 4000 would not fit in 256 bits
         _assertUntouched(m, _call(m, 1.5e8), 1e8);
     }
 }

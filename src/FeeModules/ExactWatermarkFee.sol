@@ -7,7 +7,10 @@ import {WatermarkFeeBase} from "./WatermarkFeeBase.sol";
 
 /// @title ExactWatermarkFee
 /// @notice High-watermark performance fee that charges investors `feePct` of their gain above the watermark,
-///         to within one price unit of rounding (pinned: test/WatermarkFeeVariants.t.sol::testFuzz_exact_eachShareGivesUpFeePctOfGain).
+///         to within one price unit of rounding once the supply is at least one whole share (pinned for supplies
+///         from 1e18: test/WatermarkFeeVariants.t.sol::testFuzz_exact_eachShareGivesUpFeePctOfGain). The minted
+///         shares round down, so on a dust supply, where one share unit is a large part of the fund, investors
+///         can pay noticeably less than `feePct`.
 /// @dev    With price P, watermark W and total supply S, the per-share fee is a = feePct * (P - W) / 10_000.
 ///         Minting f = a * S / (P - a) shares leaves every share worth P - a: each investor share gives up
 ///         `a`, and the receiver's existing shares give up `a` too, so the receiver nets a * netSupply and
