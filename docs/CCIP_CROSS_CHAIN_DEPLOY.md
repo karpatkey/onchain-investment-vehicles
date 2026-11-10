@@ -233,7 +233,7 @@ registry"). Sorted by chain ID:
 | Sei | 1329 | `9027416829622342829` | — | **NOT-READY** |
 | Robinhood | 4663 | `6180753054346818345` | `0x4926…bCE34` | READY |
 | Mantle | 5000 | `1556008542357238666` | `0xfe36…E043` | READY-AFTER-EMPTY |
-| Arc | 5042 | `6370580034781731079` | `0x76a4…eb40` | READY-AFTER-EMPTY |
+| Arc | 5042 | `6370580034781731079` | `0x76a4…eb40` | READY |
 | Base | 8453 | `15971525489660198786` | `0x88Fb…e196` | READY |
 | Plasma | 9745 | `9335212494177455608` | `0x76a4…eb40` | READY-AFTER-EMPTY |
 | Mode | 34443 | `7264351850409363825` | `0x183E…1F54` | **NOT-READY** |
@@ -303,8 +303,8 @@ factory construction. To onboard a brand-new chain not yet in the registry: conf
 `script/chains/Deploy_*` script, and add its RPC alias to `foundry.toml` + `.env.sample`.
 
 `deploy-chain.sh` refuses `excluded` rows, so a chain added after the baked registry runs its
-per-chain script directly, as Robinhood did. Arc's gas token is native USDC; the run is about 28M
-gas, 1.1 USDC at forge's 40 gwei estimate:
+per-chain script directly, as Robinhood did, and as Arc did on 2026-11-10 (9 txs, about 0.41 USDC; Arc's
+gas token is native USDC; see `docs/DEPLOYED_ADDRESSES.md`):
 
 ```bash
 source .env && forge script script/chains/Deploy_Arc.s.sol:Deploy_Arc --rpc-url arc \
@@ -327,12 +327,16 @@ Before broadcasting on Arc (or any chain added later):
    with `CLAIM_BLOCK` set to the claim transaction's block: `cast logs --rpc-url arc --from-block
    $CLAIM_BLOCK --to-block latest --address 0x9760280fED9e760668186334f88b6d763A7d976E
    "RoleGranted(bytes32,address,address)"` must show exactly one grant, in that transaction (the same
-   address exists on every chain, so a query without `--rpc-url arc` proves nothing).
+   address exists on every chain, so a query without `--rpc-url arc` proves nothing). Some RPC plans cap
+   the `eth_getLogs` range (Arc's free tier: 10 blocks), so scan in chunks up to `latest`; an error is
+   not an empty result.
 2. **Make sure nothing else broadcasts from the deployer** during the run: other workflows use the same
    EOA on Arc, and a nonce clash leaves a partial deploy.
 3. After the broadcast, **verify all six contracts** (including `Empty`) on every explorer that serves
-   5042: Etherscan V2 (no `[etherscan]` alias in `foundry.toml`, so verify manually), Sourcify, and the
-   chain's Blockscout at explorer.arc.io. Routescan and Tenderly do not serve Arc.
+   5042: Sourcify first (its push reaches Etherscan V2 and Blockscout), Etherscan V2 (no `[etherscan]`
+   alias in `foundry.toml`, so verify manually; `Empty` needs its own submit with the legacy solc 0.8.27
+   input), Tenderly (public) and the chain's Blockscout at explorer.arc.io, whose API sits behind
+   Cloudflare, so read it in a browser. OKLink and Routescan do not serve Arc.
 4. Wire it: `script/wire-chain.sh arc` writes the batches for Arc and its three lanes (Ethereum, Base,
    Polygon). The Council executes them in file order, `3-arc.json` last.
 

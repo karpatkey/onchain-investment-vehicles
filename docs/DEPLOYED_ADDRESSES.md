@@ -12,15 +12,16 @@ Canonical addresses of the OIV infrastructure (`KpkOivFactory`, `CcipOivDeployer
 
 ---
 
-## Current — salt v4 (LIVE on 20 chains, Security Council-owned)
+## Current — salt v4 (LIVE on 21 chains, Security Council-owned)
 
 Deployed **2026-09-29** from `main@fe62dd4` (squash of #50 + #60), built in a fresh clone with forge
 1.7.1 and solc 0.8.34. Salts are `uint256(4)`. Every contract is CREATE2-deployed through
 `0x4e59b44847b379578588920cA78FbF26c0B4956C`, so each address is identical on every chain. Robinhood Chain
-(chainId `4663`) was added as the 20th chain on **2026-10-06**, from a copy of the same frozen clone (see
-its per-chain note below).
+(chainId `4663`) was added as the 20th chain on **2026-10-06**, from a copy of the same frozen clone, and
+Arc (chainId `5042`) as the 21st on **2026-11-10**, from `main@4df34d1` (#68) (see their per-chain notes
+below).
 
-| Contract | Salt-v4 address | Runtime codehash (identical on all 20) |
+| Contract | Salt-v4 address | Runtime codehash (identical on all 21) |
 |---|---|---|
 | `KpkOivFactory` | `0x73Bb12a05669748f3c9cbE8764271c69182f49E5` | `0x5b14bc7b7882da06e279e67f3e687d09dbe81cb0247c812d69d1ee9224ee72e2` |
 | `CcipOivDeployer` (orchestrator) | `0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D` | `0x15be0ec4f19b6e0ae36ffd5122a6a76aa4bab8baec95001a96a61fe13ab37b02` |
@@ -30,29 +31,29 @@ its per-chain note below).
 | `Empty` (Avatar Safe sole signer) | `0xA4703438f8cc4fc2C2503a7e43935Da16BA74652` (unchanged) | — |
 
 `Ownable.owner` of the factory and the orchestrator is the **Security Council Safe
-`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 20 chains, transferred inside each chain's deploy. Read back
-on-chain on 20/20, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
+`0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537` (5-of-8)** on all 21 chains, transferred inside each chain's deploy. Read back
+on-chain on 21/21, together with the factory's `kpkSharesMastercopy()` / `timelockDeployer()`, the
 orchestrator's `factory()` / `router()` / `linkToken()`, every codehash above, and the timelock
 mastercopy's initializer (claimed, inert; exactly one `RoleGranted` on every chain). The factory has no
 infrastructure setters. The orchestrator owner still controls the CCIP wiring
 (`configure`, `setChainSelector(s)` / `removeChainSelector`, withdrawals). The CCIP selector registry
-is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step. Robinhood is
-deployed but is **not** one of those 19; see its note below.
+is **seeded in the constructor** (19 chains), so there is no post-deploy seeding step. Robinhood and
+Arc are deployed but are **not** among those 19; see their notes below.
 
 Chains: ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, celo, linea, scroll,
-sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain, robinhood. **Excluded:** bob, katana. Per-chain
+sonic, unichain, worldchain, hyperevm, mantle, plasma, ink, berachain, robinhood, arc. **Excluded:** bob, katana. Per-chain
 blocks and creation transactions are in [`script/deployed-infra.json`](../script/deployed-infra.json).
 
-**Source verification** (read back 2026-09-30, Robinhood 2026-10-06; 5 contracts per chain): **complete, with no gaps**.
+**Source verification** (read back 2026-09-30, Robinhood 2026-10-06, Arc 2026-11-10; 5 contracts per chain): **complete, with no gaps**.
 
 | Backend | Chains served | Verified |
 |---|---|---|
-| Sourcify | 20 | 100/100 exact match |
-| Etherscan V2 | 18 (not scroll, ink) | 90/90 |
-| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain, robinhood | 45/45 |
-| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll, robinhood | 55/55 |
-| Routescan | ethereum, avalanche, mantle, plasma (not robinhood) | 20/20 |
-| Tenderly | 19 (hyperevm is not a Tenderly network) | 95/95 |
+| Sourcify | 21 | 105/105 exact match |
+| Etherscan V2 | 19 (not scroll, ink) | 95/95 |
+| Blockscout | ethereum, base, arbitrum, polygon, celo, unichain, ink, worldchain, robinhood, arc | 50/50 |
+| OKLink | ethereum, optimism, gnosis, base, arbitrum, bnb, polygon, avalanche, linea, scroll, robinhood (not arc) | 55/55 |
+| Routescan | ethereum, avalanche, mantle, plasma (not robinhood, arc) | 20/20 |
+| Tenderly | 20 (hyperevm is not a Tenderly network) | 100/100 |
 
 Per-chain notes:
 - **Ethereum:** the timelock kit (`TimelockControllerUpgradeable` mastercopy + `KpkTimelockDeployer`)
@@ -99,6 +100,29 @@ Per-chain notes:
   `script/ccip-networks.json` marks it `excluded` (outside the baked registry), so `deploy-all.sh` and
   the repo helper `CcipDeployEverywhere.setChainSelectors` never route to it. Once wired, the default
   on-chain `deployEverywhere` on those seven chains includes it; pass `destChainIds` to leave it out.
+- **Arc (chainId `5042`), added 2026-11-10:** 9 txs, all status 1, in blocks 30535959–30536227, from
+  kpk-deployer `0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72` (nonces 34–42). Built from a fresh clone of
+  `main@4df34d1` (#68), whose `src/` is unchanged, and all six runtime codehashes read back equal to
+  Robinhood's. The timelock mastercopy was claimed first: its CREATE2 and `initialize` went out as **one**
+  Multicall3 `aggregate3` transaction
+  (`0x8c56c89e0723f10174f09a2d143190cf1d47f0b5f5c5c754a5c274ad84a55186`, as on HyperEVM), so it was never
+  open. It has exactly one `RoleGranted`, `DEFAULT_ADMIN` to itself, with Multicall3 as the sender.
+  Then `Deploy_Arc`'s 8 txs, which also onboarded `Empty` through its canonical helper factory. The MultiSend
+  unwrapper (`0xB4Cd4bb764C089f20DA18700CE8bc5e49F369efD`) was already present and was skipped. The
+  orchestrator uses router `0xB79791184973589c38e114D43Eb8E4588C283A18` (Router 1.2.0) and LINK
+  `0x76a443768A5e3B8d1AED0105FC250877841Deb40`. Gas is native USDC. The Security Council Safe there has the
+  same 8 owners as on mainnet, 5-of-8. Verified on Sourcify (exact match), Etherscan V2 (arc.etherscan.io,
+  own verification), Blockscout (explorer.arc.io, checked in a browser because its API sits behind
+  Cloudflare) and Tenderly, 5/5 each. OKLink and Routescan do not serve 5042, and arc-scan.org no longer
+  resolves to a routable address. `Empty` is verified on Etherscan and Blockscout there.
+
+  **No CCIP to or from Arc until the Security Council wires it.** 5042 is not in the constructor-seeded
+  registry: until then, `deployEverywhere` / `dispatchTo` on Arc revert `UnknownChain(5042)`, and the
+  other chains' `ccipReceive` rejects Arc as a source. Arc's lanes run both ways with Ethereum, Base and
+  Polygon only. `script/safe-txs/ccip-wire-arc/` (from `script/wire-chain.sh arc`) holds the batches:
+  execute `2-ethereum.json`, `2-base.json` and `2-polygon.json` first and `3-arc.json` last. There is no
+  step 1, because Arc's own seeded registry already knows those three. Like Robinhood, it stays
+  `excluded` in `script/ccip-networks.json`.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a

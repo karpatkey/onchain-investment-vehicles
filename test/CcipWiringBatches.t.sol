@@ -55,9 +55,10 @@ contract CcipWiringBatchesTest is Test {
                 checked += this.checkBatch(wired, names[f], vm.readFile(entries[f].path));
             }
         }
-        // The Robinhood batches are the reviewed record of what the Council signs: they stay committed
-        // after execution, so their absence is a lost record, not a finished wiring.
+        // The Robinhood and Arc batches are the reviewed record of what the Council signs: they stay
+        // committed after execution, so their absence is a lost record, not a finished wiring.
         assertTrue(vm.isDir("script/safe-txs/ccip-wire-robinhood"), "ccip-wire-robinhood is missing");
+        assertTrue(vm.isDir("script/safe-txs/ccip-wire-arc"), "ccip-wire-arc is missing");
         assertGt(checked, 0, "no wiring batch found under script/safe-txs/ccip-wire-*");
     }
 
