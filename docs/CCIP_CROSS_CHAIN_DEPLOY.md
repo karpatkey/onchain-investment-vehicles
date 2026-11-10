@@ -310,13 +310,14 @@ gas token is native USDC; see `docs/DEPLOYED_ADDRESSES.md`):
 source .env && forge script script/chains/Deploy_Arc.s.sol:Deploy_Arc --rpc-url arc \
   --account $DEPLOYER_NAME --broadcast --slow \
   --sig "run(address,address)" 0xAa5A7C7Ea51F276301f881F9CCB501a1dFeF4F72 $DEPLOY_FINAL_OWNER
-source .env && script/wire-chain.sh arc   # then the Security Council batches
 ```
 
 Without `--broadcast` the same command simulates against live Arc and prints the predicted addresses,
-which must be the canonical ones in `script/deployed-infra.json`.
+which must be the canonical ones in `script/deployed-infra.json`. Arc's wiring batches are committed in
+`script/safe-txs/ccip-wire-arc/`; track their execution with `script/wire-chain.sh arc --check` (write
+mode refuses an existing directory).
 
-Before broadcasting on Arc (or any chain added later):
+How Arc was done, and the checklist for any chain added later:
 
 1. **Claim the timelock mastercopy atomically first.** Multicall3 (`0xcA11bde05977b3631167028862bE2a173976CA11`)
    is on Arc, so send one `aggregate3` transaction from the deployer with two calls: the CREATE2
@@ -337,8 +338,9 @@ Before broadcasting on Arc (or any chain added later):
    alias in `foundry.toml`, so verify manually; `Empty` needs its own submit with the legacy solc 0.8.27
    input), Tenderly (public) and the chain's Blockscout at explorer.arc.io, whose API sits behind
    Cloudflare, so read it in a browser. OKLink and Routescan do not serve Arc.
-4. Wire it: `script/wire-chain.sh arc` writes the batches for Arc and its three lanes (Ethereum, Base,
-   Polygon). The Council executes them in file order, `3-arc.json` last.
+4. Wire it: `script/wire-chain.sh <chain>` writes the batches for the chain and every counterpart with
+   a lane (for Arc: Ethereum, Base, Polygon). The Council executes them in file order, `3-<chain>.json`
+   last.
 
 ## Deploying the orchestrator
 

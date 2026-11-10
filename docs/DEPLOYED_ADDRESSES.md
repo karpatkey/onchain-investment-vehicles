@@ -122,7 +122,8 @@ Per-chain notes:
   Polygon only. `script/safe-txs/ccip-wire-arc/` (from `script/wire-chain.sh arc`) holds the batches:
   execute `2-ethereum.json`, `2-base.json` and `2-polygon.json` first and `3-arc.json` last. There is no
   step 1, because Arc's own seeded registry already knows those three. Like Robinhood, it stays
-  `excluded` in `script/ccip-networks.json`.
+  `excluded` in `script/ccip-networks.json`. Once wired, the default on-chain `deployEverywhere` on
+  Ethereum, Base and Polygon includes Arc as a paid destination; pass `destChainIds` to leave it out.
 
 > **The deployed timelock kit must not move.** Any edit to `src/KpkTimelockDeployer.sol`, its import
 > graph (including `src/interfaces/IKpkTimelockDeployer.sol` and `src/interfaces/IRoles.sol`), or a
