@@ -1,0 +1,13 @@
+{
+  "chain": "arc",
+  "chainId": 5042,
+  "ccipChainSelector": "6370580034781731079",
+  "orchestrator": "0xD99e4B13fc50A6321f6A84f2D4F83d6e34AE699D",
+  "order": "Execute in file order: 1-arc.json (if present), then every 2-<counterpart>.json in any order, then 3-arc.json LAST.",
+  "files": [
+    "2-ethereum.json",
+    "2-base.json",
+    "2-polygon.json",
+    "3-arc.json"
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "_comment": "Salt v4 OIV infrastructure, deployed 2026-09-29 on 19 chains from main@fe62dd4 (frozen clone, forge 1.7.1), and on 2026-10-06 on robinhood (chainId 4663) as the 20th chain from a copy of the same frozen clone. Same address on every chain (CREATE2 via 0x4e59...956C). owner()==finalOwner (Security Council Safe) on factory and orchestrator, read on-chain on all 20. Salt v3 is kept under `superseded` for the funds that still run on it.",
+  "_comment": "Salt v4 OIV infrastructure, deployed 2026-09-29 on 19 chains from main@fe62dd4 (frozen clone, forge 1.7.1), and on 2026-10-06 on robinhood (chainId 4663) as the 20th chain from a copy of the same frozen clone, and on 2026-11-10 on arc (chainId 5042) as the 21st chain from main@4df34d1 (#68), whose src/ is unchanged, so the addresses and runtime codehashes are the same. Same address on every chain (CREATE2 via 0x4e59...956C). owner()==finalOwner (Security Council Safe) on factory and orchestrator, read on-chain on all 21. Salt v3 is kept under `superseded` for the funds that still run on it.",
   "version": "2.1.1",
   "saltVersion": 4,
   "sourceCommit": "fe62dd4bcf3a6ad3870d6e767314827972b949a2",
@@ -681,17 +681,51 @@
       "explorerVerified": true,
       "explorerVerifiedNote": "Read back 2026-10-06: Sourcify 5/5 exact_match, Etherscan V2 (robin.etherscan.io) 5/5 own verification (no similar match), Blockscout (robinhoodchain.blockscout.com) 5/5, OKLink 5/5 (chainShortName ROBINHOOD), Tenderly 5/5 public. Routescan does not serve 4663. Empty is verified on Etherscan + Blockscout there.",
       "note": "Added 2026-10-06 as the 20th chain: 9 txs (blocks 81745726-81745902, all status 1) from kpk-deployer, nonces 164-172, built from a copy of the frozen clone that only added script/chains/Deploy_Robinhood.s.sol, the robinhood rpc endpoint and the registry entry. TL mastercopy initialize claimed in the same run (0xd6a4662d8dd45002730e2067a7312f3aad115182fefcbda89edb2c2d6008300f; one RoleGranted, DEFAULT_ADMIN to itself). Orchestrator configured with router 0x06fC836cf9839B1cd891C440A0a45242DA6Ae1c9 (Router 1.2.0) and LINK 0x492641F648a4986844848E0beFE66D14817bCE34. Empty and the MultiSend unwrapper were already present and were skipped. The Security Council Safe there has the same 8 owners as mainnet, 5-of-8. CCIP: robinhood is NOT in the constructor-baked registry, so deployEverywhere / dispatchTo revert UnknownChain(4663) on robinhood and every other chain's ccipReceive rejects it as a source (InvalidSourceChain); no fan-out to or from 4663 until the Security Council calls setChainSelector(4663, 6180753054346818345) on robinhood and on each counterpart chain. Single-chain funds deploy locally via the orchestrator's deployLocal with `sharesChains = [{chainId: 4663, asset}]` and the same asset in `sharesParams.asset`; a topology that does not name 4663 lands only the operational stack there."
+    },
+    {
+      "name": "arc",
+      "chainId": 5042,
+      "deployed": true,
+      "deployedAt": "2026-11-10",
+      "block": 30535959,
+      "txHash": "0x27330c6489c03724e839cf6e318db3eeaf9378a14833700e4572fb5ddcfae23c",
+      "creations": {
+        "shares_mc": {
+          "tx": "0xa2ac4e1ceef3038d6e2b911cb30e19573bcc0e4d82cd2d92cf9d4f51ba825693",
+          "block": 30536205
+        },
+        "tl_mc": {
+          "tx": "0x8c56c89e0723f10174f09a2d143190cf1d47f0b5f5c5c754a5c274ad84a55186",
+          "block": 30535959
+        },
+        "tl_dep": {
+          "tx": "0xe3539e6b57b259fb24a61a2c38ae52d12420c07a037c9c3d826f9d9e8efb5f39",
+          "block": 30536210
+        },
+        "factory": {
+          "tx": "0x27330c6489c03724e839cf6e318db3eeaf9378a14833700e4572fb5ddcfae23c",
+          "block": 30536212
+        },
+        "orch": {
+          "tx": "0xf1e6774c3b814a659cf1c0899aaade2ea28e33f443d64b2b131f8d776784d627",
+          "block": 30536222
+        }
+      },
+      "owner": "safe",
+      "explorerVerified": true,
+      "explorerVerifiedNote": "Read back 2026-11-10: Sourcify 5/5 exact_match, Etherscan V2 (arc.etherscan.io) 5/5 own verification (no similar match, constructor args byte-exact), Blockscout (explorer.arc.io) 5/5, checked in a browser because its API sits behind Cloudflare, Tenderly 5/5 public. OKLink and Routescan do not serve 5042; arc-scan.org no longer resolves to a routable address. Empty is verified on Etherscan V2 and Blockscout, and is a partial (not exact) match on Sourcify.",
+      "note": "Added 2026-11-10 as the 21st chain: 9 txs (blocks 30535959-30536227, all status 1) from kpk-deployer, nonces 34-42, built from a fresh clone of main@4df34d1 (#68). The timelock mastercopy was claimed first, CREATE2 and initialize in ONE Multicall3 aggregate3 tx (0x8c56c89e0723f10174f09a2d143190cf1d47f0b5f5c5c754a5c274ad84a55186, as on hyperevm), so it was never open: exactly one RoleGranted, DEFAULT_ADMIN to itself, sender Multicall3; then Deploy_Arc's 8 txs (Empty through its canonical helper factory, the shares mastercopy, the timelock deployer, the factory, its ownership to the Security Council, the orchestrator, configure, its ownership to the Security Council). The timelock mastercopy (claimed above) and the MultiSend unwrapper were already present, so the script skipped them. All six runtime codehashes read back equal to robinhood's. Orchestrator configured with router 0xB79791184973589c38e114D43Eb8E4588C283A18 (Router 1.2.0) and LINK 0x76a443768A5e3B8d1AED0105FC250877841Deb40. Gas is native USDC (about 0.41 USDC for the 9 txs). CCIP: arc is NOT in the constructor-baked registry, so until the Security Council executes script/safe-txs/ccip-wire-arc/ (2-ethereum, 2-base, 2-polygon, then 3-arc last), deployEverywhere / dispatchTo revert UnknownChain(5042) on arc and ethereum, base and polygon reject it as a source (InvalidSourceChain). Its lanes run both ways with ethereum, base and polygon only."
     }
   ],
   "verification": {
-    "_comment": "Read-back counts (5 contracts per chain): the 19 original chains on 2026-09-30, robinhood on 2026-10-06. Complete, no gaps. A chain a backend does not serve is not counted.",
+    "_comment": "Read-back counts (5 contracts per chain): the 19 original chains on 2026-09-30, robinhood on 2026-10-06, arc on 2026-11-10. Complete, no gaps. A chain a backend does not serve is not counted.",
     "sourcify": {
-      "chains": 20,
-      "verified": "100/100 exact_match"
+      "chains": 21,
+      "verified": "105/105 exact_match"
     },
     "etherscanV2": {
-      "chains": 18,
-      "verified": "90/90",
+      "chains": 19,
+      "verified": "95/95",
       "note": "arbitrum verified via the Arbiscan web form on 2026-09-29/30 after the API queue stalled"
     },
     "blockscout": {
@@ -704,9 +738,11 @@
         "unichain",
         "ink",
         "worldchain",
-        "robinhood"
+        "robinhood",
+        "arc"
       ],
-      "verified": "45/45"
+      "verified": "50/50",
+      "note": "arc (explorer.arc.io) read in a browser: its API sits behind Cloudflare"
     },
     "oklink": {
       "chains": [
@@ -722,7 +758,8 @@
         "scroll",
         "robinhood"
       ],
-      "verified": "55/55"
+      "verified": "55/55",
+      "note": "does not serve arc (5042)"
     },
     "routescan": {
       "chains": [
@@ -732,11 +769,11 @@
         "plasma"
       ],
       "verified": "20/20",
-      "note": "does not serve robinhood (4663)"
+      "note": "does not serve robinhood (4663) or arc (5042)"
     },
     "tenderly": {
-      "chains": 19,
-      "verified": "95/95",
+      "chains": 20,
+      "verified": "100/100",
       "note": "hyperevm is not a Tenderly network"
     }
   },

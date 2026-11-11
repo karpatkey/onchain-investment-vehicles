@@ -51,8 +51,8 @@ contract SelectorSeedScopeTest is Test {
     }
 
     /// @dev The mainnet orchestrator's registry must end up with exactly the baked (wired) destinations:
-    ///      the 19 wired chains minus mainnet itself (a source, never its own destination). Robinhood has
-    ///      salt-v4 infra (20 chains deployed) but is `excluded`, i.e. not wired, so it is not counted.
+    ///      the 19 wired chains minus mainnet itself (a source, never its own destination). Robinhood and Arc
+    ///      have salt-v4 infra (21 chains deployed) but are `excluded`, i.e. not baked, so they are not counted.
     function test_seedableCountMatchesDeployedDestinations() public view {
         uint256 count;
         for (uint256 i = 0; i < 256; i++) {

@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {OivChainDeploy} from "../base/OivChainDeploy.sol";
 
 /// @title  Deploy_Arc
-/// @notice Per-chain OIV infra deploy for arc (chainId 5042, verdict READY-AFTER-EMPTY).
+/// @notice Per-chain OIV infra deploy for arc (chainId 5042, verdict READY; deployed 2026-11-10).
 ///         Runs Empty preflight -> KpkOivFactory + mastercopies + KpkTimelockDeployer -> CcipOivDeployer (+configure),
 ///         all deterministic. CCIP router/LINK below were resolved + verified on-chain and are kept
 ///         in sync with script/ccip-networks.json by test/CcipNetworksSync.t.sol; CHAIN_ID is guarded

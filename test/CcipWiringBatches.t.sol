@@ -50,15 +50,48 @@ contract CcipWiringBatchesTest is Test {
             }
             string memory manifest = vm.readFile(string.concat(dirs[d].path, "/manifest.json"));
             this.checkManifest(wired, manifest, names);
+            this.checkComplete(wired, names);
             for (uint256 f = 0; f < entries.length; f++) {
                 if (_eq(names[f], "manifest.json")) continue;
                 checked += this.checkBatch(wired, names[f], vm.readFile(entries[f].path));
             }
         }
-        // The Robinhood batches are the reviewed record of what the Council signs: they stay committed
-        // after execution, so their absence is a lost record, not a finished wiring.
+        // The Robinhood and Arc batches are the reviewed record of what the Council signs: they stay
+        // committed after execution, so their absence is a lost record, not a finished wiring.
         assertTrue(vm.isDir("script/safe-txs/ccip-wire-robinhood"), "ccip-wire-robinhood is missing");
+        assertTrue(vm.isDir("script/safe-txs/ccip-wire-arc"), "ccip-wire-arc is missing");
         assertGt(checked, 0, "no wiring batch found under script/safe-txs/ccip-wire-*");
+        // The counterpart sets are the CCIP lanes read on-chain when the batches were reviewed (both
+        // routers' isChainSupported): a dropped 2-<counterpart>.json plus a matching manifest edit would
+        // otherwise pass every per-file check.
+        string[] memory rh = new string[](8);
+        rh[0] = "2-arbitrum.json";
+        rh[1] = "2-avalanche.json";
+        rh[2] = "2-base.json";
+        rh[3] = "2-bnb.json";
+        rh[4] = "2-ethereum.json";
+        rh[5] = "2-hyperevm.json";
+        rh[6] = "2-polygon.json";
+        rh[7] = "3-robinhood.json";
+        _assertFiles("robinhood", rh);
+        string[] memory arc = new string[](4);
+        arc[0] = "2-base.json";
+        arc[1] = "2-ethereum.json";
+        arc[2] = "2-polygon.json";
+        arc[3] = "3-arc.json";
+        _assertFiles("arc", arc);
+    }
+
+    function _assertFiles(string memory wired, string[] memory expected) internal view {
+        string memory dir = string.concat("script/safe-txs/ccip-wire-", wired);
+        string[] memory listed = vm.readFile(string.concat(dir, "/manifest.json")).readStringArray(".files");
+        assertEq(listed.length, expected.length, string.concat("ccip-wire-", wired, ": counterpart set changed"));
+        for (uint256 i = 0; i < expected.length; i++) {
+            assertTrue(
+                vm.isFile(string.concat(dir, "/", expected[i])),
+                string.concat("ccip-wire-", wired, ": missing ", expected[i])
+            );
+        }
     }
 
     // ── Negative controls (synthetic batches, independent of what is committed) ───────────────────
@@ -165,7 +198,39 @@ contract CcipWiringBatchesTest is Test {
         this.checkManifest("robinhood", _manifest('"3-robinhood.json"'), names);
     }
 
+    function test_rejectsAWiringWithoutItsFinalStep() public {
+        string[] memory names = new string[](3);
+        names[0] = "2-base.json";
+        names[1] = "2-ethereum.json";
+        names[2] = "manifest.json";
+        vm.expectRevert(bytes("ccip-wire-arc: needs exactly one 3-arc.json"));
+        this.checkComplete("arc", names);
+    }
+
+    function test_rejectsAWiringWithoutCounterparts() public {
+        string[] memory names = new string[](2);
+        names[0] = "3-arc.json";
+        names[1] = "manifest.json";
+        vm.expectRevert(bytes("ccip-wire-arc: no step-2 counterpart batch"));
+        this.checkComplete("arc", names);
+    }
+
     // ── Checks (external so negative controls can expect their reverts) ───────────────────────────
+
+    /// @dev Every wiring ends with its own step 3 (the chain's id, alone, LAST) and has at least one
+    ///      counterpart; without step 3 the chain never originates, without a step 2 nothing accepts it.
+    function checkComplete(string memory wired, string[] memory names) external pure {
+        string memory dir = string.concat("ccip-wire-", wired);
+        string memory last = string.concat("3-", wired, ".json");
+        uint256 finals;
+        uint256 counterparts;
+        for (uint256 i = 0; i < names.length; i++) {
+            if (_eq(names[i], last)) finals++;
+            else if (bytes(names[i]).length > 2 && bytes(names[i])[0] == "2" && bytes(names[i])[1] == "-") counterparts++;
+        }
+        require(finals == 1, string.concat(dir, ": needs exactly one ", last));
+        require(counterparts > 0, string.concat(dir, ": no step-2 counterpart batch"));
+    }
 
     function checkManifest(string memory wired, string memory manifest, string[] memory names) external view {
         string memory dir = string.concat("ccip-wire-", wired);
