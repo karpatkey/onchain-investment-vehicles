@@ -4,9 +4,10 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {WatermarkFee} from "src/FeeModules/WatermarkFee.sol";
 
-/// @notice Unit tests for the WatermarkFee performance-fee module, covering the audit fixes:
-///         seed-on-first-use (no fee on the starting NAV), per-fund (msg.sender-keyed) isolation,
-///         and that a direct unauthorized caller cannot grief a fund's watermark.
+/// @notice Unit tests for the watermark mechanics in `WatermarkFeeBase`, shared by every watermark fee
+///         module and exercised here through `WatermarkFee`: seed-on-first-use (no fee on the starting
+///         NAV), per-fund (msg.sender-keyed) isolation, and that a direct caller cannot grief a fund's
+///         watermark. Variant-specific fee math is in WatermarkFeeVariants.t.sol.
 contract WatermarkFeeTest is Test {
     WatermarkFee fee;
 

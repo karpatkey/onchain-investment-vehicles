@@ -404,46 +404,6 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
         assertEq(finalBalance, initialBalance); // No fees should be charged
     }
 
-    function testChargePerformanceFees() public {
-        // Deploy contract with performance fees enabled
-        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
-            MANAGEMENT_FEE_RATE,
-            REDEMPTION_FEE_RATE,
-            1000 // 10% performance fee
-        );
-
-        uint256 shares = _sharesAmount(1000);
-        _createSharesForTestingWithContract(kpkSharesWithFees, alice, shares);
-
-        // Set up time elapsed for performance fees BEFORE creating request
-        skip(365 days);
-
-        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-
-        // Approve the contract to spend Alice's shares for the redemption
-        vm.prank(alice);
-        kpkSharesWithFees.approve(address(kpkSharesWithFees), shares);
-
-        // Create and process a redeem request to trigger performance fee charging
-        vm.startPrank(alice);
-        // Calculate adjusted expected assets accounting for fee dilution (365 days elapsed)
-        uint256 minAssetsOut = _calculateAdjustedExpectedAssets(
-            kpkSharesWithFees, _sharesAmount(100), SHARES_PRICE, address(usdc), 365 days
-        );
-        uint256 requestId = kpkSharesWithFees.requestRedemption(_sharesAmount(100), minAssetsOut, address(usdc), alice);
-        vm.stopPrank();
-
-        // Process the request to trigger fee charging
-        vm.prank(ops);
-        uint256[] memory approveRequests = new uint256[](1);
-        approveRequests[0] = requestId;
-        uint256[] memory rejectRequests = new uint256[](0);
-        kpkSharesWithFees.processRequests(approveRequests, rejectRequests, address(usdc), SHARES_PRICE);
-
-        uint256 finalBalance = kpkSharesWithFees.balanceOf(feeRecipient);
-        assertGt(finalBalance, initialBalance); // Fees should be charged in shares
-    }
-
     function testChargePerformanceFeesWithMinimumRate() public {
         // Deploy contract with minimum performance fees enabled
         KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(
@@ -545,39 +505,20 @@ contract kpkSharesFeesTest is kpkSharesTestBase {
     }
 
     function testNoPerformanceFeesWhenModuleZero() public {
-        // Set performanceFeeModule to address(0)
+        KpkShares kpkSharesWithFees = _deployKpkSharesWithFees(0, 0, PERFORMANCE_FEE_RATE);
+        _createSharesForTestingWithContract(kpkSharesWithFees, alice, _sharesAmount(1000));
+        _seedPerformanceWatermark(kpkSharesWithFees, bob);
+
         vm.prank(admin);
-        kpkSharesContract.setPerformanceFeeModule(address(0));
+        kpkSharesWithFees.setPerformanceFeeModule(address(0));
 
-        // Verify module is zero
-        assertEq(address(kpkSharesContract.performanceFeeModule()), address(0));
-
-        // Create shares and wait sufficient time
-        uint256 requestId = _testRequestProcessing(true, alice, _usdcAmount(100), SHARES_PRICE, false);
+        skip(7 hours);
+        uint256 initialBalance = kpkSharesWithFees.balanceOf(feeRecipient);
         vm.prank(ops);
-        uint256[] memory approveRequests = new uint256[](1);
-        approveRequests[0] = requestId;
-        kpkSharesContract.processRequests(approveRequests, new uint256[](0), address(usdc), SHARES_PRICE);
+        kpkSharesWithFees.processRequests(new uint256[](0), new uint256[](0), address(usdc), SHARES_PRICE * 12 / 10);
 
-        // Get initial fee receiver balance
-        uint256 initialBalance = kpkSharesContract.balanceOf(feeRecipient);
-
-        // Wait for sufficient time to pass (more than MIN_TIME_ELAPSED)
-        skip(7 days);
-
-        // Process another request
-        uint256 requestId2 = _testRequestProcessing(true, bob, _usdcAmount(100), SHARES_PRICE, false);
-        vm.prank(ops);
-        uint256[] memory approveRequests2 = new uint256[](1);
-        approveRequests2[0] = requestId2;
-        kpkSharesContract.processRequests(approveRequests2, new uint256[](0), address(usdc), SHARES_PRICE);
-
-        // Verify no performance fees were charged (module is zero address)
-        // Management fees may still be charged, but performance fees should not be
-        uint256 finalBalance = kpkSharesContract.balanceOf(feeRecipient);
-        // If management fees were charged, balance would increase, but performance fees should be 0
-        // We can verify that performance fee module is still zero
-        assertEq(address(kpkSharesContract.performanceFeeModule()), address(0));
+        // With the module still set, this +20% settlement is charged (testChargePerformanceFeesWithMinimumRate).
+        assertEq(kpkSharesWithFees.balanceOf(feeRecipient), initialBalance, "an unset module must charge no fee");
     }
 
     function testNoPerformanceFeesWhenAssetNotFeeModuleAsset() public {

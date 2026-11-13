@@ -34,7 +34,9 @@ This directory contains the reorganized test suite for the `kpkShares` contract,
 - **`CcipOivDeployer.t.sol`** - Tests for the CCIP OIV deployer (`CcipOivDeployerTest`)
 - **`KpkOivFactory.t.sol`** - Tests for the OIV factory (`KpkOivFactoryTest`, `KpkOivFactoryUnitTest`)
 - **`KpkOivFactoryRegistry.t.sol`** - Tests for the curated external-fund registry (`KpkOivFactoryRegistryTest`)
-- **`WatermarkFee.t.sol`** - Tests for the `WatermarkFee` performance-fee module (`WatermarkFeeTest`)
+- **`WatermarkFee.t.sol`** - Shared watermark mechanics (seeding, per-fund isolation), exercised through `WatermarkFee` (`WatermarkFeeTest`)
+- **`WatermarkFeeVariants.t.sol`** - Fee modules driven through `KpkShares` (the three watermark variants and a hard hurdle), plus fuzzing of `ExactWatermarkFee`'s fee math (`WatermarkFeeVariantsTest`)
+- **`FeeStructures.t.sol`** - Periodic, hurdle (hard, soft, catch-up), benchmark and no-watermark fee modules, called directly (`FeeStructuresTest`)
 - **`CcipNetworksSync.t.sol`** - Guards the hardcoded per-chain CCIP constants against `script/ccip-networks.json` (`CcipNetworksSyncTest`)
 - **`EmptyCodehashSync.t.sol`** - Guards the copies of the canonical `Empty` bytecode against drift (`EmptyCodehashSyncTest`)
 

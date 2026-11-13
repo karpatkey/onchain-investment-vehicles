@@ -84,7 +84,7 @@ Full reference, the supported-network table, and the new-chain onboarding checkl
 
 ## `kpkShares` — the shares token
 
-`kpkShares` is the externally-audited ERC-20 each fund issues. It implements request-based subscriptions and redemptions with operator approval, management/performance/redemption fees, multi-asset support, and a UUPS upgrade path. The optional performance fee is computed by a pluggable module (`WatermarkFee`, a high-watermark implementation).
+`kpkShares` is the externally-audited ERC-20 each fund issues. It implements request-based subscriptions and redemptions with operator approval, management/performance/redemption fees, multi-asset support, and a UUPS upgrade path. The optional performance fee is computed by a pluggable module: `src/FeeModules/` holds three high-watermark variants (`WatermarkFee`, `PostFeeWatermarkFee`, `ExactWatermarkFee`) and the other standard structures (periodic crystallization, hard/soft/catch-up hurdles, benchmark-relative, no watermark), compared in [docs/KpkShares.md](docs/KpkShares.md#performance-fee-modules).
 
 Full reference: **[docs/KpkShares.md](docs/KpkShares.md)**.
 
@@ -117,7 +117,7 @@ src/
   KpkTimelockDeployer.sol  clones a per-fund TimelockController from a shared mastercopy
   kpkShares.sol            the fund's ERC-20 shares token (audited)
   IkpkShares.sol           kpkShares interface
-  FeeModules/              WatermarkFee (perf fee) + IPerfFeeModule
+  FeeModules/              IPerfFeeModule + performance fee modules (watermark, hurdle, benchmark, ...)
   interfaces/              Safe + Zodiac interfaces used by the factory
   utils/                   Empty (Avatar Safe signer), RecoverFunds
 script/
