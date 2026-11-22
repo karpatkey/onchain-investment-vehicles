@@ -1,0 +1,69 @@
+{
+  "name": "xbUSDG fee split (0xSplits Splits v2.2 PushSplit)",
+  "chain": "robinhood",
+  "chainId": 4663,
+  "status": "NOT executed: prepared and unsigned. At Robinhood Chain block 120858887 (2026-11-22T19:47:19Z) the split address had no code, xbUSDG feeReceiver() was still the KPK fee Safe, the timelock operation's getTimestamp was 0 and xbUSDG totalSupply() was 0.",
+  "order": "Execute in file order: 1 (Governance Safe), then 2 (Security Council Safe), then 3 (any address, only after the timelock delay has passed since 2 landed).",
+  "files": [
+    "1-governance-create-split.json",
+    "2-council-schedule-fee-receiver.json",
+    "3-execute-fee-receiver.json"
+  ],
+  "splitsV2": {
+    "version": "2.2",
+    "pushSplitFactory": "0x8E8eB0cC6AE34A38B67D5Cf91ACa38f60bc3Ecf4",
+    "pushSplitImplementation": "0x1e2086A7e84a32482ac03000D56925F607CCB708",
+    "upstream": "https://github.com/0xSplits/splits-contracts-monorepo/tree/23e9ef64c918205214fc23b2ff89fa590a32efc2/packages/splits-v2"
+  },
+  "split": {
+    "recipients": [
+      "0x8680f51Da765288EA163Cd971f0D535A41e37851",
+      "0x9F230218cf7FDe6A9246e6f8CB0b888377E92639"
+    ],
+    "allocations": [500000, 500000],
+    "totalAllocation": 1000000,
+    "distributionIncentive": 0,
+    "owner": "0x0000000000000000000000000000000000000000",
+    "saltLabel": "crossbow-usdg-fee-split-v1",
+    "salt": "0x16cc1a8ad3b23e6995b5b9364d9b8559f81ef1b55c20ef26640e79290df83a9c",
+    "predictedAddress": "0x581A8f9d85269f6Da997a9375b51752E564D1aeA"
+  },
+  "feeReceiverOperation": {
+    "shares": "0x622609130ae8fCe48c80EEc4DB95759a76737c03",
+    "timelock": "0x4F96c1FE0Af339Ce11a9c621b73Bbd201d2f8109",
+    "delaySeconds": 259200,
+    "predecessor": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "saltLabel": "crossbow-usdg-fee-receiver-split-v1",
+    "salt": "0xe38048aeb1cde2fd1982140a6e14702d7254cef933b63c17bb8b86e9f396dd3f",
+    "operationId": "0xf6e395b1b9138e3ac239fe1f6b5958c88629aca7f3d0de948f131dbc2dc85821"
+  },
+  "safes": {
+    "governance": "0x2F0d561B9a8CD981e6E73069592BDeA4e48A8bec",
+    "securityCouncil": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+    "manager": "0x74d7aFCf8d44ec6932afA4Cb4B6e2b799C1d4b84"
+  },
+  "tokens": {
+    "usdg": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+  },
+  "currentFeeReceiver": "0x9F230218cf7FDe6A9246e6f8CB0b888377E92639",
+  "batches": [
+    {
+      "file": "1-governance-create-split.json",
+      "safe": "0x2F0d561B9a8CD981e6E73069592BDeA4e48A8bec",
+      "to": "0x8E8eB0cC6AE34A38B67D5Cf91ACa38f60bc3Ecf4",
+      "function": "createSplitDeterministic"
+    },
+    {
+      "file": "2-council-schedule-fee-receiver.json",
+      "safe": "0x8b884f80B3B839F52b6cE168f133e7a5D1f0A537",
+      "to": "0x4F96c1FE0Af339Ce11a9c621b73Bbd201d2f8109",
+      "function": "schedule"
+    },
+    {
+      "file": "3-execute-fee-receiver.json",
+      "safe": "0x2F0d561B9a8CD981e6E73069592BDeA4e48A8bec",
+      "to": "0x4F96c1FE0Af339Ce11a9c621b73Bbd201d2f8109",
+      "function": "execute"
+    }
+  ]
+}

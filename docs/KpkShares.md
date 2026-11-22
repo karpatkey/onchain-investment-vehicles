@@ -105,7 +105,7 @@ OPERATOR (0x523a704056dcd17bcf83bed8b68c59416dac1119be77755efe3bde0a64e46e0c)
 - **Management Fees**: Time-based fees calculated on total share supply
 - **Performance Fees**: Watermark-based performance fees using modular calculation system
 - **Redemption Fees**: Percentage-based fees on redemption amounts
-- **Fee Distribution**: All fees are distributed as shares to the configured fee receiver
+- **Fee Distribution**: All fees are distributed as shares to the configured fee receiver. To share them between several recipients, make a 0xSplits PushSplit the fee receiver: see [FEE_SPLIT.md](FEE_SPLIT.md)
 - **Watermark System**: Performance fees only charged on profits above the highest previous share price
 - **Modular Design**: Performance fee calculation can be upgraded by changing the fee module
 - **Fee Timestamp Management**:

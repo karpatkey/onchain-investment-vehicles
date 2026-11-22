@@ -86,7 +86,7 @@ Full reference, the supported-network table, and the new-chain onboarding checkl
 
 `kpkShares` is the externally-audited ERC-20 each fund issues. It implements request-based subscriptions and redemptions with operator approval, management/performance/redemption fees, multi-asset support, and a UUPS upgrade path. The optional performance fee is computed by a pluggable module (`WatermarkFee`, a high-watermark implementation).
 
-Full reference: **[docs/KpkShares.md](docs/KpkShares.md)**.
+Full reference: **[docs/KpkShares.md](docs/KpkShares.md)**. To split a fund's fees between several recipients, see **[docs/FEE_SPLIT.md](docs/FEE_SPLIT.md)**.
 
 ---
 
@@ -134,6 +134,7 @@ docs/
   FUND_DEPLOYMENT_FLOW.md  fund deployment flow diagrams (direct, per-chain)
   CCIP_FUND_DEPLOYMENT_FLOW.md fund deployment flow diagrams (one-tx multichain)
   DEPLOYED_ADDRESSES.md    production addresses
+  FEE_SPLIT.md             splitting fees between recipients (0xSplits PushSplit)
 test/                      Foundry tests (fork-based for factory/CCIP)
   README.md                test-suite breakdown
 ```
