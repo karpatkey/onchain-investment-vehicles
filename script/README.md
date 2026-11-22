@@ -114,3 +114,7 @@ The script already grants the `OPERATOR` role to the configured `operator`, tran
 2. Confirm that the `OPERATOR` and `DEFAULT_ADMIN_ROLE` roles were assigned to the expected addresses
 3. Set up asset approvals for the portfolio safe
 4. Test the deployment with a small transaction
+
+## Safe batches
+
+Batches committed under `script/safe-txs/` are reviewed records of what a Safe signs. For splitting a fund's fees between recipients (0xSplits PushSplit), see [docs/FEE_SPLIT.md](../docs/FEE_SPLIT.md) and `script/safe-txs/fee-split-crossbow/`.
