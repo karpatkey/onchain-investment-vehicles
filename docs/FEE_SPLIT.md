@@ -214,6 +214,7 @@ How this repository stays inside that:
   credits 0xSplits and links the upstream files at the commit above.
 
 If anyone later vendors or imports upstream 0xSplits code into this repository (a copy of a contract, a
-submodule, an `import` of an upstream file), those files, and everything that imports them, must be
-licensed GPL-3.0-or-later, which this repository's MIT headers do not allow. Do that only as a
-deliberate licensing decision, not as a convenience.
+submodule, an `import` of an upstream file), the copied files stay GPL-3.0-or-later, the GPL-3.0 text must
+ship with them, and every file that imports them can only be distributed under GPL-3.0-or-later terms. The
+MIT headers in this repository would then be wrong for those files. Do that only as a deliberate licensing
+decision, not as a convenience.

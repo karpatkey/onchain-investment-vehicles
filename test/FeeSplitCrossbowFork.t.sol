@@ -203,7 +203,7 @@ contract FeeSplitCrossbowForkTest is Test {
         IkpkShares(SHARES).processRequests(none, none, USDG, 1.1e8);
 
         uint256 fee = IERC20(SHARES).balanceOf(split);
-        assertGt(fee, 0, "the fee was minted to the split");
+        assertEq(fee, 9090909090909090909, "fee minted to the split: 10% of the 100 USDG gain at 1.10");
         assertEq(IERC20(SHARES).balanceOf(KPK_FEE_SAFE), 0, "nothing was minted to the KPK fee Safe");
 
         address keeper = makeAddr("keeper");
@@ -212,11 +212,11 @@ contract FeeSplitCrossbowForkTest is Test {
 
         uint256 crossbow = IERC20(SHARES).balanceOf(CROSSBOW);
         uint256 kpk = IERC20(SHARES).balanceOf(KPK_FEE_SAFE);
-        assertGt(crossbow, 0, "Crossbow was paid");
-        assertEq(crossbow, kpk, "equal halves");
+        assertEq(crossbow, 4545454545454545454, "Crossbow's half");
+        assertEq(kpk, 4545454545454545454, "the KPK fee Safe's half");
         assertEq(IERC20(SHARES).balanceOf(keeper), 0, "no incentive was configured");
         uint256 left = IERC20(SHARES).balanceOf(split);
-        assertLe(left, 1, "at most 1 wei stays in the split");
+        assertEq(left, 1, "1 wei stays in the split");
         assertEq(crossbow + kpk + left, fee, "every share is accounted for");
 
         // Fund shares are ordinary shares: the recipient redeems them like any holder.
